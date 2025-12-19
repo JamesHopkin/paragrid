@@ -64,9 +64,17 @@ TryEnter = (grid_id, Direction) -> Optional[Cell]
 traverse(
     start: Cell,
     direction: Direction,
-    try_enter: TryEnter
+    try_enter: TryEnter,
+    auto_enter: bool = False,
+    auto_exit: bool = True,
+    max_depth: int = 1000
 ) -> Iterator[Cell]
 ```
+
+**Parameters**:
+- `auto_enter`: If False (default), yields the Ref cell before entering. If True, skips yielding the Ref and enters directly.
+- `auto_exit`: If True (default), skips yielding the Ref cell when exiting. If False, yields the Ref cell on exit and stops.
+- `max_depth`: Maximum consecutive auto-jumps to prevent infinite loops (default 1000).
 
 ### Algorithm
 
@@ -75,12 +83,18 @@ traverse(
    - Compute next coords in current grid based on direction
    - **At edge?**
      - If inside a **secondary** ref: teleport to the **primary** ref of this grid
-     - Exit from primary ref's position in its parent grid, continue in same direction
+     - If `auto_exit=False`: yield the Ref cell and terminate
+     - If `auto_exit=True`: exit from primary ref's position in its parent grid, continue in same direction
      - If no parent (root grid): terminate
-   - Get next cell, yield it
-   - **If `Ref(target_grid)`**: call `try_enter(target_grid, direction)`
-     - If returns `Cell`: move into it, yield it
-     - If `None`: continue without entering
+   - Get next cell
+   - **If next cell is `Ref(target_grid)`**:
+     - If `auto_enter=False`: yield the Ref, call `try_enter(target_grid, direction)`
+       - If returns `Cell`: move into it, yield it
+       - If `None`: terminate
+     - If `auto_enter=True`: skip yielding Ref, call `try_enter(target_grid, direction)`
+       - If returns `Cell`: move into it, yield it
+       - If `None`: terminate before reaching the Ref
+   - **If next cell is not a Ref**: yield it
 
 ### Teleport Semantics
 

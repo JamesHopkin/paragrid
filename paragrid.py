@@ -187,6 +187,9 @@ def traverse(
     start: CellPosition,
     direction: Direction,
     try_enter: TryEnter,
+    auto_enter: bool = False,
+    auto_exit: bool = True,
+    max_depth: int = 1000,
 ) -> Iterator[CellPosition]:
     """
     Traverse the grid structure in a cardinal direction, yielding each cell visited.
@@ -194,7 +197,8 @@ def traverse(
     When exiting a grid:
     - If we entered via a secondary reference, teleport to the primary reference
     - Exit from the primary's position in its parent grid
-    - If at root level (no parent), terminate
+    - If auto_exit is True, automatically continue past the Ref cell
+    - If auto_exit is False, yield the Ref cell and stop there
 
     Args:
         store: The grid store containing all grids
@@ -202,6 +206,12 @@ def traverse(
         direction: Cardinal direction to traverse
         try_enter: Callback to decide whether to enter a Ref cell.
                    Returns the entry CellPosition if entering, None otherwise.
+                   Only used when auto_enter is False.
+        auto_enter: If True, automatically enter all Refs without calling try_enter.
+                    If False, call try_enter to decide whether to enter each Ref.
+        auto_exit: If True, automatically continue past Ref cells when exiting.
+                   If False, stop at the Ref cell when exiting.
+        max_depth: Maximum number of automatic jumps to prevent infinite loops.
 
     Yields:
         CellPosition for each cell visited
@@ -218,7 +228,8 @@ def traverse(
     }
     dr, dc = deltas[direction]
 
-    while True:
+    depth = 0
+    while depth < max_depth:
         grid = store[current.grid_id]
         next_row = current.row + dr
         next_col = current.col + dc
@@ -231,11 +242,17 @@ def traverse(
                 # No parent (root grid) - terminate
                 return
 
-            # Teleport to primary reference location and continue
+            # Teleport to primary reference location
             parent_grid_id, parent_row, parent_col = primary
             parent_grid = store[parent_grid_id]
 
-            # Move in the same direction from the primary ref's position
+            if not auto_exit:
+                # Stop at the Ref we're exiting through
+                current = CellPosition(parent_grid_id, parent_row, parent_col)
+                yield current
+                return
+
+            # Auto-exit: continue in the same direction from the primary ref's position
             exit_row = parent_row + dr
             exit_col = parent_col + dc
 
@@ -247,6 +264,7 @@ def traverse(
             ):
                 # Exiting parent grid too - recurse by updating current and looping
                 current = CellPosition(parent_grid_id, parent_row, parent_col)
+                depth += 1
                 continue
 
             current = CellPosition(parent_grid_id, exit_row, exit_col)
@@ -254,15 +272,36 @@ def traverse(
             # Normal movement within grid
             current = CellPosition(current.grid_id, next_row, next_col)
 
-        yield current
-
-        # Check if current cell is a Ref and try to enter
+        # Check if current cell is a Ref before yielding
         cell = store[current.grid_id].cells[current.row][current.col]
         if isinstance(cell, Ref):
-            entry = try_enter(cell.grid_id, direction)
-            if entry is not None:
-                current = entry
+            if auto_enter:
+                # Auto-enter: don't yield the Ref, try to enter directly
+                entry = try_enter(cell.grid_id, direction)
+                if entry is not None:
+                    current = entry
+                    yield current
+                    depth += 1
+                else:
+                    # try_enter returned None, can't enter, stop before Ref
+                    return
+            else:
+                # Yield the Ref cell first
                 yield current
+                # Then ask try_enter whether to enter
+                entry = try_enter(cell.grid_id, direction)
+                if entry is not None:
+                    current = entry
+                    yield current
+                    depth += 1
+                else:
+                    # Chose not to enter, already yielded the Ref, stop here
+                    return
+        else:
+            # Not a Ref, just yield it
+            yield current
+
+        depth = 0  # Reset depth counter on normal movement
 
 
 # =============================================================================
@@ -727,8 +766,93 @@ def traversal_demo() -> None:
     print(output)
 
 
+def traversal_options_demo() -> None:
+    """Demonstrate auto_enter and auto_exit options."""
+    store: GridStore = {
+        "main": Grid(
+            "main",
+            (
+                (Empty(), Concrete("M"), Empty()),
+                (Concrete("L"), Ref("inner"), Concrete("R")),
+                (Empty(), Concrete("B"), Empty()),
+            ),
+        ),
+        "inner": Grid(
+            "inner",
+            (
+                (Concrete("A"), Concrete("B")),
+                (Concrete("C"), Concrete("D")),
+            ),
+        ),
+    }
+
+    def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+        grid = store[grid_id]
+        match direction:
+            case Direction.E:
+                return CellPosition(grid_id, 0, 0)
+            case _:
+                return None
+
+    print("=" * 60)
+    print("Auto-Enter/Exit Demo")
+    print("=" * 60)
+    print()
+
+    # Test 1: Default (auto_enter=False, auto_exit=True)
+    print("Test 1: Default (auto_enter=False, auto_exit=True)")
+    print("Traverse East from 'L' - yields Ref, then enters, exits automatically")
+    print()
+    start = CellPosition("main", 1, 0)
+    for i, pos in enumerate(traverse(store, start, Direction.E, try_enter)):
+        cell = store[pos.grid_id].cells[pos.row][pos.col]
+        cell_str = "Ref" if isinstance(cell, Ref) else (cell.id if isinstance(cell, Concrete) else "Empty")
+        print(f"  Step {i}: {pos.grid_id}[{pos.row},{pos.col}] = {cell_str}")
+        if i > 10:
+            break
+    print()
+
+    # Test 2: auto_exit=False
+    print("Test 2: auto_exit=False")
+    print("Traverse East from 'L' - stops at Ref when exiting inner grid")
+    print()
+    for i, pos in enumerate(traverse(store, start, Direction.E, try_enter, auto_exit=False)):
+        cell = store[pos.grid_id].cells[pos.row][pos.col]
+        cell_str = "Ref" if isinstance(cell, Ref) else (cell.id if isinstance(cell, Concrete) else "Empty")
+        print(f"  Step {i}: {pos.grid_id}[{pos.row},{pos.col}] = {cell_str}")
+        if i > 10:
+            break
+    print()
+
+    # Test 3: auto_enter=True
+    print("Test 3: auto_enter=True")
+    print("Traverse East from 'L' - skips yielding Ref on entry")
+    print()
+    for i, pos in enumerate(traverse(store, start, Direction.E, try_enter, auto_enter=True)):
+        cell = store[pos.grid_id].cells[pos.row][pos.col]
+        cell_str = "Ref" if isinstance(cell, Ref) else (cell.id if isinstance(cell, Concrete) else "Empty")
+        print(f"  Step {i}: {pos.grid_id}[{pos.row},{pos.col}] = {cell_str}")
+        if i > 10:
+            break
+    print()
+
+    # Test 4: Both disabled (auto_enter=False, auto_exit=False)
+    print("Test 4: Both disabled (auto_enter=False, auto_exit=False)")
+    print("Traverse East from 'L' - stops at both entry and exit Refs")
+    print()
+    for i, pos in enumerate(traverse(store, start, Direction.E, try_enter, auto_exit=False)):
+        cell = store[pos.grid_id].cells[pos.row][pos.col]
+        cell_str = "Ref" if isinstance(cell, Ref) else (cell.id if isinstance(cell, Concrete) else "Empty")
+        print(f"  Step {i}: {pos.grid_id}[{pos.row},{pos.col}] = {cell_str}")
+        if i > 10:
+            break
+    print()
+
+
 if __name__ == "__main__":
     demo()
     print()
     traversal_demo()
+    print()
+    traversal_options_demo()
 
