@@ -19,6 +19,7 @@ from paragrid import (
     GridStore,
     NestedNode,
     Ref,
+    RefNode,
     analyze,
     collect_denominators,
     collect_grid_ids,
@@ -133,10 +134,15 @@ class TestAnalyze:
         result = analyze(store, "outer", Fraction(1), Fraction(1))
         assert isinstance(result, NestedNode)
         assert result.grid_id == "outer"
-        # The referenced grid should be nested
-        nested = result.children[0][0]
-        assert isinstance(nested, NestedNode)
-        assert nested.grid_id == "inner"
+        # The referenced grid should be wrapped in RefNode
+        ref_node = result.children[0][0]
+        assert isinstance(ref_node, RefNode)
+        assert ref_node.grid_id == "outer"
+        assert ref_node.ref_target == "inner"
+        assert ref_node.is_primary is True
+        # The content should be the nested grid
+        assert isinstance(ref_node.content, NestedNode)
+        assert ref_node.content.grid_id == "inner"
 
     def test_analyze_with_threshold_cutoff(self) -> None:
         """Test that analysis stops below threshold."""
@@ -162,8 +168,10 @@ class TestAnalyze:
         assert isinstance(result, NestedNode)
         # The reference should eventually cutoff
         ref_cell = result.children[0][1]
-        # May be nested multiple times before cutoff
-        assert isinstance(ref_cell, (NestedNode, CutoffNode))
+        # Should be wrapped in RefNode
+        assert isinstance(ref_cell, RefNode)
+        # The content may be nested multiple times before cutoff
+        assert isinstance(ref_cell.content, (NestedNode, CutoffNode))
 
 
 # =============================================================================
@@ -750,9 +758,14 @@ class TestIntegration:
 
         # Verify structure
         assert tree.grid_id == "outer"
-        nested_inner = tree.children[0][0]
-        assert isinstance(nested_inner, NestedNode)
-        assert nested_inner.grid_id == "inner"
+        ref_node = tree.children[0][0]
+        assert isinstance(ref_node, RefNode)
+        assert ref_node.grid_id == "outer"
+        assert ref_node.ref_target == "inner"
+        assert ref_node.is_primary is True
+        # The content should be the nested grid
+        assert isinstance(ref_node.content, NestedNode)
+        assert ref_node.content.grid_id == "inner"
 
     def test_analyze_and_traverse(self) -> None:
         """Test analyzing and then traversing the same structure."""

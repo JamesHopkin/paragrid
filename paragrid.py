@@ -106,7 +106,17 @@ class NestedNode:
     children: tuple[tuple[CellNode, ...], ...]
 
 
-CellNode = EmptyNode | CutoffNode | ConcreteNode | NestedNode
+@dataclass(frozen=True)
+class RefNode:
+    """A reference to another grid (wraps the nested content)."""
+
+    grid_id: str  # The grid this ref belongs to
+    ref_target: str  # The grid being referenced
+    is_primary: bool  # Whether this is the primary reference
+    content: "CellNode"  # The analyzed content of the referenced grid
+
+
+CellNode = EmptyNode | CutoffNode | ConcreteNode | NestedNode | RefNode
 
 
 # =============================================================================
@@ -120,11 +130,23 @@ def analyze(
     width: Fraction,
     height: Fraction,
     threshold: Fraction = Fraction(1, 10),
+    primary_refs: set[str] | None = None,
 ) -> CellNode:
     """
     Build a CellTree by DFS traversal with rational dimensions.
     Terminates when cell dimensions fall below threshold.
+
+    Args:
+        store: The grid store
+        grid_id: The grid to analyze
+        width: The width to render this grid at
+        height: The height to render this grid at
+        threshold: Minimum dimension before cutoff
+        primary_refs: Set to track which grids have been referenced (for primary detection)
     """
+    if primary_refs is None:
+        primary_refs = set()
+
     if width < threshold or height < threshold:
         return CutoffNode()
 
@@ -142,7 +164,16 @@ def analyze(
                 case Concrete(id=cell_id):
                     cols.append(ConcreteNode(cell_id, grid_id))
                 case Ref(grid_id=ref_id):
-                    cols.append(analyze(store, ref_id, cell_width, cell_height, threshold))
+                    # Check if this is the primary reference
+                    is_primary = ref_id not in primary_refs
+                    if is_primary:
+                        primary_refs.add(ref_id)
+
+                    # Analyze the referenced grid
+                    content = analyze(store, ref_id, cell_width, cell_height, threshold, primary_refs)
+
+                    # Wrap in RefNode
+                    cols.append(RefNode(grid_id, ref_id, is_primary, content))
                 case _:
                     raise ValueError(f"Unknown cell type: {cell}")
         rows.append(tuple(cols))
@@ -487,6 +518,8 @@ def collect_denominators(node: CellNode) -> set[int]:
                 for row in n.children:
                     for child in row:
                         walk(child, cw, ch)
+        elif isinstance(n, RefNode):
+            walk(n.content, w, h)
 
     walk(node, Fraction(1), Fraction(1))
     return denoms
@@ -511,6 +544,7 @@ def render_to_buffer(
     w: int,
     h: int,
     color_fn: Callable[[str], Callable[[str], str]],
+    parent_grid_id: str | None = None,
 ) -> None:
     """Render a CellNode into a character buffer at the given position."""
     if w <= 0 or h <= 0:
@@ -518,26 +552,30 @@ def render_to_buffer(
 
     match node:
         case EmptyNode():
-            # Draw border with dash (explicitly empty)
+            # Draw border with dash (explicitly empty), colored by parent grid
+            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            char = colorize("-")
             if w >= 3 and h >= 3:
                 # Draw outline
                 for col in range(x, x + w):
-                    buffer[y][col] = "-"  # top edge
-                    buffer[y + h - 1][col] = "-"  # bottom edge
+                    buffer[y][col] = char  # top edge
+                    buffer[y + h - 1][col] = char  # bottom edge
                 for row in range(y, y + h):
-                    buffer[row][x] = "-"  # left edge
-                    buffer[row][x + w - 1] = "-"  # right edge
+                    buffer[row][x] = char  # left edge
+                    buffer[row][x + w - 1] = char  # right edge
             else:
                 # Fill (too small for outline)
                 for row in range(y, y + h):
                     for col in range(x, x + w):
-                        buffer[row][col] = "-"
+                        buffer[row][col] = char
 
         case CutoffNode():
-            # Fill with space (below threshold, had more content)
+            # Fill with dash (below threshold, had more content), colored by parent grid
+            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            char = colorize("-")
             for row in range(y, y + h):
                 for col in range(x, x + w):
-                    buffer[row][col] = "-"
+                    buffer[row][col] = char
 
         case ConcreteNode(id=cell_id, grid_id=gid):
             base_char = cell_id[0] if cell_id else "?"
@@ -557,7 +595,20 @@ def render_to_buffer(
                     for col in range(x, x + w):
                         buffer[row][col] = char
 
-        case NestedNode(children=children):
+        case RefNode(grid_id=gid, ref_target=ref_target, is_primary=is_primary, content=content):
+            # Render the content first
+            render_to_buffer(content, buffer, x, y, w, h, color_fn, gid)
+
+            # For primary refs, fill interior with dots matching the referenced grid's color
+            if is_primary and w >= 3 and h >= 3:
+                colorize = color_fn(ref_target)
+                dot_char = colorize(".")
+                for row in range(y + 1, y + h - 1):
+                    for col in range(x + 1, x + w - 1):
+                        if buffer[row][col] == " ":
+                            buffer[row][col] = dot_char
+
+        case NestedNode(grid_id=gid, children=children):
             rows = len(children)
             cols = len(children[0]) if children else 0
 
@@ -577,6 +628,7 @@ def render_to_buffer(
                         cell_w,
                         cell_h,
                         color_fn,
+                        gid,  # Pass grid_id as parent context
                     )
 
 
@@ -587,7 +639,11 @@ def collect_grid_ids(node: CellNode) -> set[str]:
     def walk(n: CellNode) -> None:
         if isinstance(n, ConcreteNode):
             ids.add(n.grid_id)
+        elif isinstance(n, RefNode):
+            ids.add(n.grid_id)  # Add the grid containing the ref
+            walk(n.content)  # Walk the content
         elif isinstance(n, NestedNode):
+            ids.add(n.grid_id)  # Add the nested grid id
             for row in n.children:
                 for child in row:
                     walk(child)
@@ -640,6 +696,7 @@ def render_to_buffer_with_visits(
     h: int,
     color_fn: Callable[[str], Callable[[str], str]],
     visit_map: dict[tuple[str, int, int], list[int]],
+    parent_grid_id: str | None = None,
 ) -> None:
     """Render a CellNode into a character buffer with visit numbers overlaid."""
     if w <= 0 or h <= 0:
@@ -647,26 +704,30 @@ def render_to_buffer_with_visits(
 
     match node:
         case EmptyNode():
-            # Draw border with dash (explicitly empty)
+            # Draw border with dash (explicitly empty), colored by parent grid
+            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            char = colorize("-")
             if w >= 3 and h >= 3:
                 # Draw outline
                 for col in range(x, x + w):
-                    buffer[y][col] = "-"  # top edge
-                    buffer[y + h - 1][col] = "-"  # bottom edge
+                    buffer[y][col] = char  # top edge
+                    buffer[y + h - 1][col] = char  # bottom edge
                 for row in range(y, y + h):
-                    buffer[row][x] = "-"  # left edge
-                    buffer[row][x + w - 1] = "-"  # right edge
+                    buffer[row][x] = char  # left edge
+                    buffer[row][x + w - 1] = char  # right edge
             else:
                 # Fill (too small for outline)
                 for row in range(y, y + h):
                     for col in range(x, x + w):
-                        buffer[row][col] = "-"
+                        buffer[row][col] = char
 
         case CutoffNode():
-            # Fill with dash (below threshold, had more content)
+            # Fill with dash (below threshold, had more content), colored by parent grid
+            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            char = colorize("-")
             for row in range(y, y + h):
                 for col in range(x, x + w):
-                    buffer[row][col] = "-"
+                    buffer[row][col] = char
 
         case ConcreteNode(id=cell_id, grid_id=gid):
             base_char = cell_id[0] if cell_id else "?"
@@ -685,6 +746,20 @@ def render_to_buffer_with_visits(
                 for row in range(y, y + h):
                     for col in range(x, x + w):
                         buffer[row][col] = char
+
+        case RefNode(grid_id=gid, ref_target=ref_target, is_primary=is_primary, content=content):
+            # Render the content first
+            render_to_buffer_with_visits(content, buffer, x, y, w, h, color_fn, visit_map, gid)
+
+            # For primary refs, fill interior with dots matching the referenced grid's color
+            if is_primary and w >= 3 and h >= 3:
+                colorize = color_fn(ref_target)
+                dot_char = colorize(".")
+                for row in range(y + 1, y + h - 1):
+                    for col in range(x + 1, x + w - 1):
+                        # Don't overwrite visit numbers (non-space characters other than dots)
+                        if buffer[row][col] == " ":
+                            buffer[row][col] = dot_char
 
         case NestedNode(grid_id=gid, children=children):
             rows = len(children)
@@ -711,6 +786,7 @@ def render_to_buffer_with_visits(
                         cell_h,
                         color_fn,
                         visit_map,
+                        gid,  # Pass grid_id as parent context
                     )
 
                     # Overlay visit numbers for this cell position
