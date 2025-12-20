@@ -308,6 +308,170 @@ class TestTraverse:
         # Should stop at the Ref cell
         assert positions[-1] == CellPosition("outer", 0, 0)
 
+    def test_traverse_enter_chain_simple(self) -> None:
+        """Test auto_enter follows Ref chain to final non-Ref."""
+        store: GridStore = {
+            "level3": Grid("level3", ((Concrete("z"),),)),
+            "level2": Grid("level2", ((Ref("level3"),),)),
+            "level1": Grid("level1", ((Concrete("a"), Ref("level2")),)),
+        }
+        start = CellPosition("level1", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            # Always enter at (0, 0)
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
+
+        # Should visit: a -> (enter level2, skip its Ref) -> (enter level3) -> z
+        # With chain following, should only yield: a, z
+        assert CellPosition("level1", 0, 0) in positions  # a
+        assert CellPosition("level3", 0, 0) in positions  # z
+        # Should NOT yield intermediate Ref positions
+        assert CellPosition("level2", 0, 0) not in positions
+
+    def test_traverse_exit_chain_simple(self) -> None:
+        """Test auto_exit follows Ref chain when exit lands on Ref."""
+        store: GridStore = {
+            "target": Grid("target", ((Concrete("t"),),)),
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "outer": Grid(
+                "outer",
+                (
+                    (Ref("inner"), Ref("target")),
+                ),
+            ),
+        }
+        # Start inside inner, traverse east to exit
+        start = CellPosition("inner", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True, auto_exit=True))
+
+        # Should: x -> exit to outer[0,0] (primary Ref) ->
+        # try to exit East -> lands on outer[0,1] which is Ref("target") ->
+        # chain follows through to target[0,0]
+        assert CellPosition("inner", 0, 0) in positions  # x
+        assert CellPosition("target", 0, 0) in positions  # t (final destination after exit chain)
+        # Should not yield the intermediate Ref at outer[0,1]
+        assert CellPosition("outer", 0, 1) not in positions
+
+    def test_traverse_enter_chain_cycle(self) -> None:
+        """Test cycle detection in enter chain."""
+        store: GridStore = {
+            "a": Grid("a", ((Ref("b"),),)),
+            "b": Grid("b", ((Ref("a"),),)),
+            "main": Grid("main", ((Concrete("x"), Ref("a")),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            # Always enter at (0, 0)
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
+
+        # Should visit x, then try to enter a->b->a (cycle)
+        # Traversal should terminate when cycle detected
+        assert CellPosition("main", 0, 0) in positions  # x
+        # Should not continue after detecting cycle
+        assert len(positions) == 1
+
+    def test_traverse_exit_chain_cycle(self) -> None:
+        """Test cycle detection in exit chain."""
+        store: GridStore = {
+            # Create a situation where exiting leads to a cycle
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "loop1": Grid("loop1", ((Ref("loop2"),),)),
+            "loop2": Grid("loop2", ((Ref("loop1"),),)),
+            "main": Grid("main", ((Ref("inner"), Ref("loop1")),)),
+        }
+        # Start in loop1 and try to exit east
+        start = CellPosition("loop1", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True, auto_exit=True))
+
+        # Should start at loop1[0,0], try to exit, detect cycle
+        # The traversal should terminate gracefully
+        assert CellPosition("loop1", 0, 0) in positions
+        # Verify it terminates (doesn't hang)
+        assert len(positions) < 100  # Sanity check
+
+    def test_traverse_enter_chain_denied(self) -> None:
+        """Test try_enter returning None mid-chain."""
+        store: GridStore = {
+            "blocked": Grid("blocked", ((Concrete("b"),),)),
+            "level2": Grid("level2", ((Ref("blocked"),),)),
+            "level1": Grid("level1", ((Concrete("a"), Ref("level2")),)),
+        }
+        start = CellPosition("level1", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            # Allow entering level2, but deny entry to "blocked"
+            if grid_id == "level2":
+                return CellPosition(grid_id, 0, 0)
+            elif grid_id == "blocked":
+                return None  # Deny entry
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
+
+        # Should visit a, then try to enter level2->blocked chain
+        # When blocked entry is denied, traversal should terminate
+        assert CellPosition("level1", 0, 0) in positions  # a
+        # Should not reach blocked
+        assert CellPosition("blocked", 0, 0) not in positions
+        # Should terminate after denied entry
+        assert len(positions) == 1
+
+    def test_traverse_mixed_enter_exit_chains(self) -> None:
+        """Test combination of enter and exit chains."""
+        store: GridStore = {
+            "deep": Grid("deep", ((Concrete("d"),),)),
+            "mid": Grid("mid", ((Ref("deep"),),)),
+            "shallow": Grid("shallow", ((Concrete("s"), Ref("mid")),)),
+            "outer": Grid("outer", ((Ref("shallow"), Ref("deep")),)),
+        }
+        # Start in shallow, move east to trigger enter chain,
+        # then continue to trigger exit chain
+        start = CellPosition("shallow", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True, auto_exit=True))
+
+        # Should: s -> (enter mid->deep chain) -> d -> (exit back through chain)
+        assert CellPosition("shallow", 0, 0) in positions  # s
+        assert CellPosition("deep", 0, 0) in positions  # d (after enter chain)
+        # Should follow chains without yielding intermediate Refs
+        assert CellPosition("mid", 0, 0) not in positions
+
+    def test_traverse_enter_chain_fast_path(self) -> None:
+        """Test that entering a non-Ref doesn't trigger chain following."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"), Concrete("y")),)),
+            "outer": Grid("outer", ((Concrete("a"), Ref("inner")),)),
+        }
+        start = CellPosition("outer", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
+
+        # Should: a -> (enter inner at x, which is not a Ref) -> x -> y
+        assert CellPosition("outer", 0, 0) in positions  # a
+        assert CellPosition("inner", 0, 0) in positions  # x (immediate non-Ref)
+        assert CellPosition("inner", 0, 1) in positions  # y
+        # Should work efficiently without unnecessary chain checks
+        assert len(positions) == 3
+
 
 # =============================================================================
 # Test Rendering Utilities

@@ -182,6 +182,146 @@ def find_primary_ref(store: GridStore, target_grid_id: str) -> tuple[str, int, i
     return None
 
 
+def _follow_enter_chain(
+    store: GridStore,
+    entry: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    max_depth: int,
+) -> tuple[CellPosition | None, bool]:
+    """
+    Follow a chain of Ref cells on entry until hitting a non-Ref or cycle.
+
+    Args:
+        store: The grid store containing all grids
+        entry: Starting position inside the referenced grid
+        direction: Direction of traversal
+        try_enter: Callback to determine entry position for Refs
+        max_depth: Maximum number of jumps to prevent infinite loops
+
+    Returns:
+        (final_position, hit_cycle) where:
+        - final_position is None if try_enter denied entry mid-chain
+        - hit_cycle is True if we detected a cycle
+    """
+    visited: set[tuple[str, int, int]] = set()
+    current = entry
+    depth = 0
+
+    while depth < max_depth:
+        # Check for cycle
+        key = (current.grid_id, current.row, current.col)
+        if key in visited:
+            return (current, True)
+        visited.add(key)
+
+        # Check if current cell is a Ref
+        grid = store[current.grid_id]
+        cell = grid.cells[current.row][current.col]
+
+        if not isinstance(cell, Ref):
+            # Hit a non-Ref, we're done
+            return (current, False)
+
+        # It's a Ref, try to enter it
+        next_entry = try_enter(cell.grid_id, direction)
+        if next_entry is None:
+            # Entry denied mid-chain
+            return (None, False)
+
+        current = next_entry
+        depth += 1
+
+    # Hit max_depth, treat as cycle
+    return (current, True)
+
+
+def _follow_exit_chain(
+    store: GridStore,
+    exit_pos: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    max_depth: int,
+) -> tuple[CellPosition | None, bool]:
+    """
+    Follow a chain of Ref cells on exit until hitting a non-Ref or cycle.
+
+    When landing on a Ref during exit, immediately exit through it
+    until we reach a non-Ref cell or detect a cycle.
+
+    Args:
+        store: The grid store containing all grids
+        exit_pos: Starting position in parent grid after exiting
+        direction: Direction of traversal
+        try_enter: Callback (not used in exit chain, but kept for consistency)
+        max_depth: Maximum number of jumps to prevent infinite loops
+
+    Returns:
+        (final_position, hit_cycle) where:
+        - final_position is None if we exit the root grid
+        - hit_cycle is True if we detected a cycle
+    """
+    visited: set[tuple[str, int, int]] = set()
+    current = exit_pos
+    depth = 0
+
+    # Direction deltas
+    deltas = {
+        Direction.N: (-1, 0),
+        Direction.S: (1, 0),
+        Direction.E: (0, 1),
+        Direction.W: (0, -1),
+    }
+    dr, dc = deltas[direction]
+
+    while depth < max_depth:
+        # Check for cycle
+        key = (current.grid_id, current.row, current.col)
+        if key in visited:
+            return (current, True)
+        visited.add(key)
+
+        # Check if current cell is a Ref
+        grid = store[current.grid_id]
+        cell = grid.cells[current.row][current.col]
+
+        if not isinstance(cell, Ref):
+            # Hit a non-Ref, we're done
+            return (current, False)
+
+        # It's a Ref, we need to exit through it
+        # Find the primary reference for the grid this Ref points to
+        primary = find_primary_ref(store, cell.grid_id)
+        if primary is None:
+            # This Ref points to the root grid, can't exit further
+            return (None, False)
+
+        # Teleport to primary reference location
+        parent_grid_id, parent_row, parent_col = primary
+        parent_grid = store[parent_grid_id]
+
+        # Calculate exit position from primary ref
+        exit_row = parent_row + dr
+        exit_col = parent_col + dc
+
+        if (
+            exit_row < 0
+            or exit_row >= parent_grid.rows
+            or exit_col < 0
+            or exit_col >= parent_grid.cols
+        ):
+            # Exiting parent grid too, need to continue up the chain
+            current = CellPosition(parent_grid_id, parent_row, parent_col)
+        else:
+            # Exit position is valid
+            current = CellPosition(parent_grid_id, exit_row, exit_col)
+
+        depth += 1
+
+    # Hit max_depth, treat as cycle
+    return (current, True)
+
+
 def traverse(
     store: GridStore,
     start: CellPosition,
@@ -262,11 +402,23 @@ def traverse(
                 or exit_col < 0
                 or exit_col >= parent_grid.cols
             ):
-                # Exiting parent grid too - recurse by updating current and looping
+                # Exiting parent grid too - use chain following
                 current = CellPosition(parent_grid_id, parent_row, parent_col)
+                final_pos, hit_cycle = _follow_exit_chain(
+                    store, current, direction, try_enter, max_depth - depth
+                )
+                if hit_cycle:
+                    # Cycle detected, terminate
+                    return
+                if final_pos is None:
+                    # Exited root grid
+                    return
+                current = final_pos
                 depth += 1
                 continue
 
+            # Exit position is valid
+            # Note: if it's a Ref, the main loop will handle it with auto_enter logic
             current = CellPosition(parent_grid_id, exit_row, exit_col)
         else:
             # Normal movement within grid
@@ -276,14 +428,24 @@ def traverse(
         cell = store[current.grid_id].cells[current.row][current.col]
         if isinstance(cell, Ref):
             if auto_enter:
-                # Auto-enter: don't yield the Ref, try to enter directly
+                # Auto-enter: don't yield the Ref, follow chain to non-Ref
                 entry = try_enter(cell.grid_id, direction)
                 if entry is not None:
-                    current = entry
-                    yield current
-                    depth += 1
+                    final_pos, hit_cycle = _follow_enter_chain(
+                        store, entry, direction, try_enter, max_depth - depth
+                    )
+                    if hit_cycle:
+                        # Cycle detected, terminate
+                        return
+                    if final_pos is not None:
+                        current = final_pos
+                        yield current
+                        depth += 1  # Once per chain, not per jump
+                    else:
+                        # try_enter denied mid-chain
+                        return
                 else:
-                    # try_enter returned None, can't enter, stop before Ref
+                    # try_enter returned None immediately, stop before Ref
                     return
             else:
                 # Yield the Ref cell first

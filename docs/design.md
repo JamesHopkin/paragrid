@@ -9,9 +9,14 @@
 - `Concrete(id)` — leaf value (string identifier)
 - `Ref(grid_id)` — reference to another grid
 
-**Primary references**: For each referenced grid, exactly one `Ref` is designated **primary** (can be auto-selected if not specified). All other refs to the same grid are **secondary** — on exit, they teleport to the primary.
+**Primary references**: For each referenced grid, exactly one `Ref` is designated **primary**. All other refs to the same grid are **secondary** — on exit, they teleport to the primary.
 
-**Cycles allowed**: Grids may reference themselves or form mutual recursion. A self-reference is automatically primary (being the only ref).
+**Primary selection**: If not explicitly specified, the primary ref is **auto-selected** as the first `Ref` to that grid found when iterating through the `GridStore` (dictionary iteration order) in row-major order within each grid. This means:
+- Grid insertion order into the store matters
+- Within a grid, top-to-bottom, left-to-right determines precedence
+- A self-reference is automatically primary (being the only ref)
+
+**Cycles allowed**: Grids may reference themselves or form mutual recursion.
 
 ---
 
@@ -72,8 +77,8 @@ traverse(
 ```
 
 **Parameters**:
-- `auto_enter`: If False (default), yields the Ref cell before entering. If True, skips yielding the Ref and enters directly.
-- `auto_exit`: If True (default), skips yielding the Ref cell when exiting. If False, yields the Ref cell on exit and stops.
+- `auto_enter`: If False (default), yields the Ref cell before entering. If True, **follows the Ref chain** to the final non-Ref destination and yields only that.
+- `auto_exit`: If True (default), automatically exits through cascading parent levels. If False, yields the Ref cell on exit and stops.
 - `max_depth`: Maximum consecutive auto-jumps to prevent infinite loops (default 1000).
 
 ### Algorithm
@@ -85,16 +90,30 @@ traverse(
      - If inside a **secondary** ref: teleport to the **primary** ref of this grid
      - If `auto_exit=False`: yield the Ref cell and terminate
      - If `auto_exit=True`: exit from primary ref's position in its parent grid, continue in same direction
+       - If cascading (exiting to another edge): follow exit chain through multiple parent levels
      - If no parent (root grid): terminate
    - Get next cell
    - **If next cell is `Ref(target_grid)`**:
      - If `auto_enter=False`: yield the Ref, call `try_enter(target_grid, direction)`
        - If returns `Cell`: move into it, yield it
        - If `None`: terminate
-     - If `auto_enter=True`: skip yielding Ref, call `try_enter(target_grid, direction)`
-       - If returns `Cell`: move into it, yield it
-       - If `None`: terminate before reaching the Ref
+     - If `auto_enter=True`: **follow the reference chain**:
+       - Call `try_enter(target_grid, direction)` to get entry position
+       - If entry position is a Ref, recursively enter it
+       - Continue until reaching a non-Ref cell or detecting a cycle
+       - Yield only the final non-Ref destination
+       - If `try_enter` returns `None` mid-chain or cycle detected: terminate
    - **If next cell is not a Ref**: yield it
+
+### Reference Chain Following
+
+When `auto_enter=True`, the traversal follows chains of references automatically:
+
+- **Enter chain**: `Ref(A)` → enters A at position with `Ref(B)` → enters B at position with `Concrete(x)` → yields only `x`
+- **Cycle detection**: Tracks positions visited within each chain operation (not entire traversal)
+- **Entry denial**: If `try_enter` returns `None` at any point in the chain, traversal terminates
+
+This allows references to reference other references, with the system transparently resolving them to the final destination.
 
 ### Teleport Semantics
 
