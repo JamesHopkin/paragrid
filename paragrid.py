@@ -581,6 +581,299 @@ def _traverse_generator(
     set_reason(TerminationReason.MAX_DEPTH_REACHED)
 
 
+def get_cell(store: GridStore, pos: CellPosition) -> Cell:
+    """
+    Get the cell at a given position in the grid store.
+
+    Args:
+        store: The grid store containing all grids
+        pos: The position to look up
+
+    Returns:
+        The cell at the given position
+    """
+    grid = store[pos.grid_id]
+    return grid.cells[pos.row][pos.col]
+
+
+def push(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+) -> GridStore | None:
+    """
+    Push cell contents along a path in the given direction.
+
+    The push operation moves cell contents forward along a path, with the contents
+    rotating when the push succeeds. Success occurs when:
+    1. The path ends at an Empty cell, OR
+    2. The path cycles back to the starting position
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position for the push
+        direction: Direction to push
+        try_enter: Callback to determine entry position for Refs
+        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
+        max_depth: Maximum traversal depth to prevent infinite loops
+
+    Returns:
+        New GridStore with pushed contents if successful, None if push fails
+    """
+    # Perform custom traversal to build the path
+    path, reason = push_traverse(store, start, direction, try_enter, tag_fn, max_depth)
+
+    # Check success conditions
+    if reason == TerminationReason.EDGE_REACHED:
+        # Success if path ends at Empty
+        if path and isinstance(path[-1][1], Empty):
+            return apply_push(store, path)
+        else:
+            # Hit edge without Empty - push fails
+            return None
+
+    elif reason == TerminationReason.CYCLE_DETECTED:
+        # Success if cycle returns to start position
+        if path and len(path) >= 2 and path[0][0] == start:
+            # Check if the last attempted position would cycle to start
+            # The path includes the start, so this is a valid cycle
+            return apply_push(store, path)
+        else:
+            # Invalid cycle (to non-start position) - push fails
+            return None
+
+    else:
+        # All other termination reasons are failures
+        # (STOP_TAG, ENTRY_DENIED, MAX_DEPTH_REACHED)
+        return None
+
+
+def push_traverse(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]:
+    """
+    Custom traversal for push operation that tracks cell contents along the path.
+
+    This traversal has special Ref handling:
+    - If try_enter succeeds: Ref acts as PORTAL (not included in path)
+    - If try_enter fails: Ref acts as SOLID object (included in path)
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position
+        direction: Direction to traverse
+        try_enter: Callback to determine entry position for Refs
+        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
+        max_depth: Maximum number of steps to prevent infinite loops
+
+    Returns:
+        Tuple of (path, termination_reason) where:
+        - path is list of (position, original_cell) tuples
+        - termination_reason indicates why traversal stopped
+    """
+    # Direction deltas: N=up, S=down, E=right, W=left
+    deltas = {
+        Direction.N: (-1, 0),
+        Direction.S: (1, 0),
+        Direction.E: (0, 1),
+        Direction.W: (0, -1),
+    }
+
+    path: list[tuple[CellPosition, Cell]] = []
+    visited: set[tuple[str, int, int]] = set()
+    current = start
+    depth = 0
+
+    # Add starting position to path
+    start_cell = get_cell(store, start)
+    path.append((start, start_cell))
+    visited.add((start.grid_id, start.row, start.col))
+
+    while depth < max_depth:
+        depth += 1
+
+        # Get current grid and compute next position
+        grid = store[current.grid_id]
+        dr, dc = deltas[direction]
+        next_row, next_col = current.row + dr, current.col + dc
+
+        # Check if we hit an edge
+        if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
+            # At edge - need to exit to parent grid
+            primary_ref = find_primary_ref(store, current.grid_id)
+
+            if primary_ref is None:
+                # No parent - we're at the root grid edge
+                return (path, TerminationReason.EDGE_REACHED)
+
+            # Exit through the primary ref
+            parent_grid_id, parent_row, parent_col = primary_ref
+            parent_grid = store[parent_grid_id]
+
+            # Continue from the primary ref's position in parent grid
+            next_row = parent_row + dr
+            next_col = parent_col + dc
+
+            # Check if we're still at edge after exiting
+            if (
+                next_row < 0
+                or next_row >= parent_grid.rows
+                or next_col < 0
+                or next_col >= parent_grid.cols
+            ):
+                # Cascading exit - use exit chain logic
+                exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
+                final_pos, hit_cycle = _follow_exit_chain(
+                    store, exit_pos, direction, try_enter, max_depth - depth
+                )
+
+                if final_pos is None:
+                    # Exited root grid
+                    return (path, TerminationReason.EDGE_REACHED)
+
+                if hit_cycle:
+                    return (path, TerminationReason.CYCLE_DETECTED)
+
+                # Continue from final exit position
+                current = final_pos
+                next_grid = store[current.grid_id]
+                next_row = current.row + dr
+                next_col = current.col + dc
+
+                # Check edge again after exit chain
+                if (
+                    next_row < 0
+                    or next_row >= next_grid.rows
+                    or next_col < 0
+                    or next_col >= next_grid.cols
+                ):
+                    return (path, TerminationReason.EDGE_REACHED)
+
+                current = CellPosition(current.grid_id, next_row, next_col)
+            else:
+                # Normal exit to parent
+                current = CellPosition(parent_grid_id, next_row, next_col)
+        else:
+            # Normal move within same grid
+            current = CellPosition(current.grid_id, next_row, next_col)
+
+        # Check for cycle
+        key = (current.grid_id, current.row, current.col)
+        if key in visited:
+            # Check if we cycled back to start (success) or elsewhere (failure)
+            if current == start:
+                # Cycle to start - success condition for push
+                return (path, TerminationReason.CYCLE_DETECTED)
+            else:
+                # Invalid cycle to non-start position
+                return (path, TerminationReason.CYCLE_DETECTED)
+
+        # Get the cell at current position
+        cell = get_cell(store, current)
+
+        # Check for stop tag
+        if tag_fn is not None:
+            tags = tag_fn(cell)
+            if "stop" in tags:
+                return (path, TerminationReason.STOP_TAG)
+
+        # Handle Ref cells with portal/solid logic
+        if isinstance(cell, Ref):
+            # Try to enter the referenced grid
+            entry_pos = try_enter(cell.grid_id, direction)
+
+            if entry_pos is None:
+                # Entry denied - Ref acts as SOLID object
+                path.append((current, cell))
+                visited.add(key)
+            else:
+                # Entry allowed - Ref acts as PORTAL
+                # Follow the enter chain to find final non-Ref destination
+                final_pos, hit_cycle = _follow_enter_chain(
+                    store, entry_pos, direction, try_enter, max_depth - depth
+                )
+
+                if final_pos is None:
+                    # try_enter denied mid-chain
+                    return (path, TerminationReason.ENTRY_DENIED)
+
+                if hit_cycle:
+                    return (path, TerminationReason.CYCLE_DETECTED)
+
+                # Continue from the final position after entering
+                current = final_pos
+                # Don't add the Ref to the path - it's a portal
+                # Add the final destination to path and visited
+                final_cell = get_cell(store, current)
+                path.append((current, final_cell))
+                visited.add((current.grid_id, current.row, current.col))
+        else:
+            # Non-Ref cell - add to path and continue
+            path.append((current, cell))
+            visited.add(key)
+
+    # Exceeded max_depth
+    return (path, TerminationReason.MAX_DEPTH_REACHED)
+
+
+def apply_push(
+    store: GridStore,
+    path: list[tuple[CellPosition, Cell]],
+) -> GridStore:
+    """
+    Apply a push operation by rotating cell contents along the path.
+
+    Rotates cells forward: the last cell's content moves to the first position,
+    and all other cells shift forward by one position.
+
+    Args:
+        store: The grid store containing all grids
+        path: List of (position, original_cell) tuples representing the push path
+
+    Returns:
+        New GridStore with updated grids (original store unchanged)
+    """
+    from collections import defaultdict
+
+    # Extract cells and rotate: [c1, c2, c3] -> [c3, c1, c2]
+    cells = [cell for _, cell in path]
+    rotated = [cells[-1]] + cells[:-1]
+
+    # Group updates by grid_id: grid_id -> list of (row, col, new_cell)
+    updates: dict[str, list[tuple[int, int, Cell]]] = defaultdict(list)
+    for i, (pos, _) in enumerate(path):
+        updates[pos.grid_id].append((pos.row, pos.col, rotated[i]))
+
+    # Reconstruct affected grids immutably
+    new_store = store.copy()
+    for grid_id, grid_updates in updates.items():
+        grid = store[grid_id]
+
+        # Convert to mutable structure
+        mutable_cells = [list(row) for row in grid.cells]
+
+        # Apply all updates for this grid
+        for row, col, new_cell in grid_updates:
+            mutable_cells[row][col] = new_cell
+
+        # Convert back to immutable tuples
+        new_cells = tuple(tuple(row) for row in mutable_cells)
+
+        # Create new Grid instance
+        new_grid = Grid(grid.id, new_cells)
+        new_store[grid_id] = new_grid
+
+    return new_store
+
+
 # =============================================================================
 # Phase 2: Render (ASCII)
 # =============================================================================
