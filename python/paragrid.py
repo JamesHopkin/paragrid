@@ -212,6 +212,22 @@ TryEnter = Callable[[str, Direction], CellPosition | None]
 TagFn = Callable[[Cell], set[str]]
 
 
+@dataclass
+class DecisionPoint:
+    """
+    Decision point for backtracking in push operations.
+
+    Tracks a point where we entered a Ref as a portal. If the push fails after
+    entering, we can backtrack to this point and retry with the Ref as solid.
+    """
+
+    ref_position: CellPosition  # Location of the Ref we entered
+    ref_cell: Ref  # The Ref cell itself
+    path_snapshot: list[tuple[CellPosition, Cell]]  # Path before entering
+    visited_snapshot: set[tuple[str, int, int]]  # Visited set before entering
+    depth_at_decision: int  # Traversal depth at this point
+
+
 class TraversalResult:
     """
     Iterator wrapper for traverse() that tracks termination reason.
@@ -389,6 +405,36 @@ def _follow_exit_chain(
 
     # Hit max_depth, treat as cycle
     return (current, True)
+
+
+def _restore_from_decision(
+    decision: DecisionPoint,
+    blocked_refs: set[tuple[str, int, int]],
+) -> tuple[CellPosition, list[tuple[CellPosition, Cell]], set[tuple[str, int, int]], int]:
+    """
+    Restore state from a decision point for backtracking.
+
+    Marks the Ref from the decision point as "blocked" so it will be treated
+    as a solid object on retry. Returns the restored state components.
+
+    Args:
+        decision: The decision point to backtrack to
+        blocked_refs: Set of blocked Ref positions (mutated by this function)
+
+    Returns:
+        Tuple of (current_position, path, visited, depth) restored from decision point
+    """
+    # Mark this Ref as blocked for future traversal
+    ref_key = (decision.ref_position.grid_id, decision.ref_position.row, decision.ref_position.col)
+    blocked_refs.add(ref_key)
+
+    # Restore state to just before the decision
+    return (
+        decision.ref_position,
+        decision.path_snapshot.copy(),
+        decision.visited_snapshot.copy(),
+        decision.depth_at_decision,
+    )
 
 
 def traverse(
@@ -603,14 +649,19 @@ def push(
     try_enter: TryEnter,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
+    max_backtrack_depth: int = 10,
 ) -> GridStore | None:
     """
-    Push cell contents along a path in the given direction.
+    Push cell contents along a path in the given direction (with backtracking).
 
     The push operation moves cell contents forward along a path, with the contents
     rotating when the push succeeds. Success occurs when:
     1. The path ends at an Empty cell, OR
     2. The path cycles back to the starting position
+
+    When a push fails after entering a Ref as a portal, this algorithm automatically
+    backtracks and retries with that Ref treated as a solid object. Supports multiple
+    levels of backtracking for nested Refs.
 
     Args:
         store: The grid store containing all grids
@@ -619,12 +670,15 @@ def push(
         try_enter: Callback to determine entry position for Refs
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum traversal depth to prevent infinite loops
+        max_backtrack_depth: Maximum number of backtracking attempts (default 10)
 
     Returns:
         New GridStore with pushed contents if successful, None if push fails
     """
-    # Perform custom traversal to build the path
-    path, reason = push_traverse(store, start, direction, try_enter, tag_fn, max_depth)
+    # Perform backtracking traversal to build the path
+    path, reason = push_traverse_backtracking(
+        store, start, direction, try_enter, tag_fn, max_depth, max_backtrack_depth
+    )
 
     # Check success conditions
     if reason == TerminationReason.EDGE_REACHED:
@@ -651,7 +705,65 @@ def push(
         return None
 
 
-def push_traverse(
+def push_simple(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+) -> GridStore | None:
+    """
+    Simple push operation without backtracking.
+
+    The push operation moves cell contents forward along a path, with the contents
+    rotating when the push succeeds. Success occurs when:
+    1. The path ends at an Empty cell, OR
+    2. The path cycles back to the starting position
+
+    When a Ref is entered and push fails inside, the entire push fails.
+    This is the original, simpler algorithm kept for testing.
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position for the push
+        direction: Direction to push
+        try_enter: Callback to determine entry position for Refs
+        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
+        max_depth: Maximum traversal depth to prevent infinite loops
+
+    Returns:
+        New GridStore with pushed contents if successful, None if push fails
+    """
+    # Perform custom traversal to build the path
+    path, reason = push_traverse_simple(store, start, direction, try_enter, tag_fn, max_depth)
+
+    # Check success conditions
+    if reason == TerminationReason.EDGE_REACHED:
+        # Success if path ends at Empty
+        if path and isinstance(path[-1][1], Empty):
+            return apply_push(store, path)
+        else:
+            # Hit edge without Empty - push fails
+            return None
+
+    elif reason == TerminationReason.CYCLE_DETECTED:
+        # Success if cycle returns to start position
+        if path and len(path) >= 2 and path[0][0] == start:
+            # Check if the last attempted position would cycle to start
+            # The path includes the start, so this is a valid cycle
+            return apply_push(store, path)
+        else:
+            # Invalid cycle (to non-start position) - push fails
+            return None
+
+    else:
+        # All other termination reasons are failures
+        # (STOP_TAG, ENTRY_DENIED, MAX_DEPTH_REACHED)
+        return None
+
+
+def push_traverse_simple(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
@@ -660,11 +772,13 @@ def push_traverse(
     max_depth: int = 1000,
 ) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]:
     """
-    Custom traversal for push operation that tracks cell contents along the path.
+    Simple traversal for push operation without backtracking.
 
     This traversal has special Ref handling:
     - If try_enter succeeds: Ref acts as PORTAL (not included in path)
     - If try_enter fails: Ref acts as SOLID object (included in path)
+
+    When push fails after entering a Ref, the entire push fails with no retry.
 
     Args:
         store: The grid store containing all grids
@@ -822,6 +936,266 @@ def push_traverse(
 
     # Exceeded max_depth
     return (path, TerminationReason.MAX_DEPTH_REACHED)
+
+
+def push_traverse_backtracking(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+    max_backtrack_depth: int = 10,
+) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]:
+    """
+    Traversal with backtracking for push operation.
+
+    When push fails after entering a Ref, backtracks to that decision point
+    and retries with the Ref treated as a solid object.
+
+    Special Ref handling:
+    - If try_enter succeeds: Ref acts as PORTAL (not included in path)
+    - If try_enter fails: Ref acts as SOLID object (included in path)
+    - On failure after portal entry: backtrack and retry Ref as solid
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position
+        direction: Direction to traverse
+        try_enter: Callback to determine entry position for Refs
+        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
+        max_depth: Maximum number of steps to prevent infinite loops
+        max_backtrack_depth: Maximum number of backtracking attempts
+
+    Returns:
+        Tuple of (path, termination_reason) where:
+        - path is list of (position, original_cell) tuples
+        - termination_reason indicates why traversal stopped
+    """
+    # Direction deltas: N=up, S=down, E=right, W=left
+    deltas = {
+        Direction.N: (-1, 0),
+        Direction.S: (1, 0),
+        Direction.E: (0, 1),
+        Direction.W: (0, -1),
+    }
+
+    # Initialize state
+    path: list[tuple[CellPosition, Cell]] = []
+    visited: set[tuple[str, int, int]] = set()
+    decision_stack: list[DecisionPoint] = []
+    blocked_refs: set[tuple[str, int, int]] = set()
+    current = start
+    depth = 0
+    backtrack_count = 0
+
+    # Add starting position to path
+    start_cell = get_cell(store, start)
+    path.append((start, start_cell))
+    visited.add((start.grid_id, start.row, start.col))
+
+    while depth < max_depth:
+        depth += 1
+
+        # Get current grid and compute next position
+        grid = store[current.grid_id]
+        dr, dc = deltas[direction]
+        next_row, next_col = current.row + dr, current.col + dc
+
+        # Check if we hit an edge
+        if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
+            # At edge - need to exit to parent grid
+            primary_ref = find_primary_ref(store, current.grid_id)
+
+            if primary_ref is None:
+                # No parent - we're at the root grid edge
+                return (path, TerminationReason.EDGE_REACHED)
+
+            # Exit through the primary ref
+            parent_grid_id, parent_row, parent_col = primary_ref
+            parent_grid = store[parent_grid_id]
+
+            # Continue from the primary ref's position in parent grid
+            next_row = parent_row + dr
+            next_col = parent_col + dc
+
+            # Check if we're still at edge after exiting
+            if (
+                next_row < 0
+                or next_row >= parent_grid.rows
+                or next_col < 0
+                or next_col >= parent_grid.cols
+            ):
+                # Cascading exit - use exit chain logic
+                exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
+                final_pos, hit_cycle = _follow_exit_chain(
+                    store, exit_pos, direction, try_enter, max_depth - depth
+                )
+
+                if final_pos is None:
+                    # Exited root grid
+                    return (path, TerminationReason.EDGE_REACHED)
+
+                if hit_cycle:
+                    # Try to backtrack
+                    if decision_stack and backtrack_count < max_backtrack_depth:
+                        backtrack_count += 1
+                        decision = decision_stack.pop()
+                        current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                        # Add the Ref as solid and continue
+                        ref_cell = get_cell(store, current)
+                        path.append((current, ref_cell))
+                        visited.add((current.grid_id, current.row, current.col))
+                        continue
+                    else:
+                        return (path, TerminationReason.CYCLE_DETECTED)
+
+                # Continue from final exit position
+                current = final_pos
+                next_grid = store[current.grid_id]
+                next_row = current.row + dr
+                next_col = current.col + dc
+
+                # Check edge again after exit chain
+                if (
+                    next_row < 0
+                    or next_row >= next_grid.rows
+                    or next_col < 0
+                    or next_col >= next_grid.cols
+                ):
+                    return (path, TerminationReason.EDGE_REACHED)
+
+                current = CellPosition(current.grid_id, next_row, next_col)
+            else:
+                # Normal exit to parent
+                current = CellPosition(parent_grid_id, next_row, next_col)
+        else:
+            # Normal move within same grid
+            current = CellPosition(current.grid_id, next_row, next_col)
+
+        # Check for cycle
+        key = (current.grid_id, current.row, current.col)
+        if key in visited:
+            # Check if we cycled back to start (success) or elsewhere (failure)
+            if current == start:
+                # Cycle to start - success condition for push
+                return (path, TerminationReason.CYCLE_DETECTED)
+            else:
+                # Invalid cycle to non-start position - try to backtrack
+                if decision_stack and backtrack_count < max_backtrack_depth:
+                    backtrack_count += 1
+                    decision = decision_stack.pop()
+                    current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                    # Add the Ref as solid and continue
+                    ref_cell = get_cell(store, current)
+                    path.append((current, ref_cell))
+                    visited.add((current.grid_id, current.row, current.col))
+                    continue
+                else:
+                    return (path, TerminationReason.CYCLE_DETECTED)
+
+        # Get the cell at current position
+        cell = get_cell(store, current)
+
+        # Check for stop tag
+        if tag_fn is not None:
+            tags = tag_fn(cell)
+            if "stop" in tags:
+                # Hit stop tag - try to backtrack
+                if decision_stack and backtrack_count < max_backtrack_depth:
+                    backtrack_count += 1
+                    decision = decision_stack.pop()
+                    current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                    # Add the Ref as solid and continue
+                    ref_cell = get_cell(store, current)
+                    path.append((current, ref_cell))
+                    visited.add((current.grid_id, current.row, current.col))
+                    continue
+                else:
+                    return (path, TerminationReason.STOP_TAG)
+
+        # Handle Ref cells with portal/solid logic + backtracking
+        if isinstance(cell, Ref):
+            ref_key = (current.grid_id, current.row, current.col)
+
+            # Check if this Ref is blocked from previous backtrack
+            if ref_key not in blocked_refs:
+                # Try to enter the referenced grid (portal behavior)
+                entry_pos = try_enter(cell.grid_id, direction)
+
+                if entry_pos is not None:
+                    # Entry allowed - create decision point for potential backtracking
+                    decision = DecisionPoint(
+                        ref_position=current,
+                        ref_cell=cell,
+                        path_snapshot=path.copy(),
+                        visited_snapshot=visited.copy(),
+                        depth_at_decision=depth,
+                    )
+                    decision_stack.append(decision)
+
+                    # Follow the enter chain to find final non-Ref destination
+                    final_pos, hit_cycle = _follow_enter_chain(
+                        store, entry_pos, direction, try_enter, max_depth - depth
+                    )
+
+                    if final_pos is None:
+                        # try_enter denied mid-chain - backtrack
+                        if backtrack_count < max_backtrack_depth:
+                            backtrack_count += 1
+                            decision = decision_stack.pop()
+                            current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                            # Add the Ref as solid and continue
+                            ref_cell = get_cell(store, current)
+                            path.append((current, ref_cell))
+                            visited.add((current.grid_id, current.row, current.col))
+                            continue
+                        else:
+                            return (path, TerminationReason.ENTRY_DENIED)
+
+                    if hit_cycle:
+                        # Cycle in enter chain - backtrack
+                        if backtrack_count < max_backtrack_depth:
+                            backtrack_count += 1
+                            decision = decision_stack.pop()
+                            current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                            # Add the Ref as solid and continue
+                            ref_cell = get_cell(store, current)
+                            path.append((current, ref_cell))
+                            visited.add((current.grid_id, current.row, current.col))
+                            continue
+                        else:
+                            return (path, TerminationReason.CYCLE_DETECTED)
+
+                    # Successfully entered - continue from the final position
+                    current = final_pos
+                    # Don't add the Ref to the path - it's a portal
+                    # Add the final destination to path and visited
+                    final_cell = get_cell(store, current)
+                    path.append((current, final_cell))
+                    visited.add((current.grid_id, current.row, current.col))
+                else:
+                    # Entry denied - Ref acts as SOLID object
+                    path.append((current, cell))
+                    visited.add(ref_key)
+            else:
+                # This Ref is blocked from previous backtrack - treat as solid
+                path.append((current, cell))
+                visited.add(ref_key)
+        else:
+            # Non-Ref cell - add to path and continue
+            path.append((current, cell))
+            visited.add(key)
+
+    # Exceeded max_depth - try to backtrack
+    if decision_stack and backtrack_count < max_backtrack_depth:
+        backtrack_count += 1
+        decision = decision_stack.pop()
+        current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+        # Continue the loop (but this shouldn't really happen with proper depth tracking)
+        return push_traverse_backtracking(store, start, direction, try_enter, tag_fn, max_depth, max_backtrack_depth)
+    else:
+        return (path, TerminationReason.MAX_DEPTH_REACHED)
 
 
 def apply_push(

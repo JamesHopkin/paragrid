@@ -362,6 +362,64 @@ Grid Main (1×3):
 
 **Key insight**: When entry is denied, the Ref cell itself gets pushed like a `Concrete` cell.
 
+### Push with Backtracking
+
+The default push algorithm (`push()`) includes backtracking to maximize success rate when pushing through Refs.
+
+**Problem**: In the simple algorithm, if `try_enter()` succeeds and traversal enters a referenced grid, any failure inside that grid (stop tag, entry denial, edge without Empty) causes the entire push to fail with no fallback.
+
+**Solution**: Track "decision points" where we enter Refs as portals. When push fails after entering, automatically backtrack to the last decision point and retry with that Ref treated as a solid object.
+
+**Backtracking mechanism**:
+1. **Decision tracking**: Each successful Ref entry creates a `DecisionPoint` that saves:
+   - Ref position and cell
+   - Path state before entering
+   - Visited set before entering
+   - Traversal depth at that point
+
+2. **Failure detection**: On any termination that's not a valid success:
+   - Check if decision stack is not empty and backtrack count < max_backtrack_depth
+   - Pop last DecisionPoint
+   - Mark that Ref as "blocked" (treat as solid going forward)
+   - Restore state to just before that decision
+   - Add the Ref to path as solid and continue traversal
+
+3. **Multi-level support**: Supports multiple levels of backtracking for nested Refs. Each backtrack pops one decision point and marks one Ref as blocked.
+
+**Blocked Refs tracking**: After backtracking from a Ref, that specific Ref position is marked in `blocked_refs` set. During subsequent traversal, blocked Refs are immediately treated as solid objects without attempting portal entry.
+
+**Termination**: Backtracking stops when:
+- Push succeeds (ends at Empty or cycles to start)
+- No more decision points remain
+- `max_backtrack_depth` is exceeded (default 10)
+- All backtracking attempts fail
+
+**Simple algorithm**: For testing or when deterministic behavior is needed without backtracking overhead, use `push_simple()` which fails immediately without retry when portal path fails.
+
+**Example**:
+```
+Setup: Grid Main: [A, Ref(inner), Empty]
+       Grid Inner: [X, STOP]
+```
+
+With `push_simple()`:
+1. Start at A, move East to Ref
+2. `try_enter` succeeds → enter Inner as portal
+3. Arrive at X, move East to STOP
+4. Check stop tag → terminates with STOP_TAG
+5. **Push fails**, returns None
+
+With `push()` (backtracking):
+1. Start at A, move East to Ref
+2. `try_enter` succeeds → create DecisionPoint, enter Inner as portal
+3. Arrive at X, move East to STOP
+4. Check stop tag → triggers backtracking
+5. **Backtrack**: restore to before Ref entry, mark Ref as blocked
+6. Add Ref to path as solid (blocked), continue East to Empty
+7. **Push succeeds**: rotate [A, Ref(inner), Empty] → [Empty, A, Ref(inner)]
+
+**Key insight**: Backtracking enables pushes that would otherwise fail, by automatically trying alternative interpretations of Refs (portal vs solid) when the initial choice doesn't work out.
+
 ---
 
 ## Type Notes

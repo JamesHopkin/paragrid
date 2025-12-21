@@ -14,6 +14,7 @@ from paragrid import (
     Ref,
     analyze,
     push,
+    push_simple,
     render,
     render_with_visits,
     traverse,

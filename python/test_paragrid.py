@@ -30,6 +30,7 @@ from paragrid import (
     compute_scale,
     find_primary_ref,
     push,
+    push_simple,
     render,
     traverse,
 )
@@ -492,7 +493,7 @@ class TestTraverse:
 
 
 class TestPush:
-    """Tests for push operation."""
+    """Tests for simple push operation (without backtracking)."""
 
     def test_push_simple_to_empty(self) -> None:
         """Test basic push of 2-3 cells ending at Empty."""
@@ -513,7 +514,7 @@ class TestPush:
                 return CellPosition(grid_id, grid.rows - 1, 0)
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry)
 
         assert result is not None
         # After push: [A, B, Empty] -> [Empty, A, B]
@@ -564,7 +565,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry)
 
         # Path: [Empty, A], push ends at A (not Empty) -> should fail
         assert result is None
@@ -582,7 +583,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry)
 
         assert result is not None
         # Original store should be unchanged
@@ -600,7 +601,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry)
 
         # Path: [A, B, C], hits edge at non-Empty -> should fail
         assert result is None
@@ -625,7 +626,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_entry_from_west)
+        result = push_simple(store, start, Direction.E, allow_entry_from_west)
 
         assert result is not None
         # After push: A -> X -> Y -> Empty
@@ -652,7 +653,7 @@ class TestPush:
             return CellPosition(grid_id, 0, 0)
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, deny_entry)
+        result = push_simple(store, start, Direction.E, deny_entry)
 
         assert result is not None
         # Path: [A, Ref(locked), Empty]
@@ -678,7 +679,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_entry)
+        result = push_simple(store, start, Direction.E, allow_entry)
 
         assert result is not None
         # Both grids should be updated
@@ -688,6 +689,156 @@ class TestPush:
         # Verify changes
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["inner"].cells[0][0] == Concrete("A")
+
+
+# =============================================================================
+# Test Push with Backtracking
+# =============================================================================
+
+
+class TestPushBacktracking:
+    """Tests for push operation with backtracking."""
+
+    def test_backtrack_on_stop_inside_ref(self) -> None:
+        """Test backtracking when hitting stop tag inside referenced grid."""
+        # Setup: [A, Ref(inner), Empty]
+        #        inner: [X, STOP]
+        # Push from A eastward.
+        # Simple: fails (hits STOP inside inner)
+        # Backtracking: succeeds by treating Ref as solid
+        # Result: [Empty, A, Ref(inner)]
+
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"), Ref("inner"), Empty()),)),
+            "inner": Grid("inner", ((Concrete("X"), Concrete("STOP")),)),
+        }
+
+        def tag_stop(cell: Cell) -> set[str]:
+            """Tag STOP concrete cells with 'stop' tag."""
+            if isinstance(cell, Concrete) and cell.id == "STOP":
+                return {"stop"}
+            return set()
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "inner" and direction == Direction.E:
+                return CellPosition("inner", 0, 0)
+            return None
+
+        start = CellPosition("main", 0, 0)
+
+        # Simple version should fail
+        result_simple = push_simple(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        assert result_simple is None, "Simple push should fail when hitting stop inside Ref"
+
+        # Backtracking version should succeed
+        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        assert result is not None, "Backtracking push should succeed"
+
+        # Result: [Empty, A, Ref(inner)]
+        assert isinstance(result["main"].cells[0][0], Empty)
+        assert result["main"].cells[0][1] == Concrete("A")
+        assert result["main"].cells[0][2] == Ref("inner")
+
+        # Inner grid should be unchanged (Ref treated as solid, not entered)
+        assert result["inner"].cells[0][0] == Concrete("X")
+        assert result["inner"].cells[0][1] == Concrete("STOP")
+
+    def test_no_backtrack_when_simple_succeeds(self) -> None:
+        """Test that backtracking doesn't trigger when portal path succeeds."""
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"), Ref("inner"), Empty()),)),
+            "inner": Grid("inner", ((Concrete("X"), Concrete("Y")),)),
+        }
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "inner" and direction == Direction.E:
+                return CellPosition("inner", 0, 0)
+            return None
+
+        start = CellPosition("main", 0, 0)
+
+        # Both versions should succeed with same result
+        result_simple = push_simple(store, start, Direction.E, allow_entry)
+        result_backtrack = push(store, start, Direction.E, allow_entry)
+
+        assert result_simple is not None
+        assert result_backtrack is not None
+
+        # Results should be identical
+        assert result_simple["main"].cells == result_backtrack["main"].cells
+        assert result_simple["inner"].cells == result_backtrack["inner"].cells
+
+    def test_backtrack_multiple_levels(self) -> None:
+        """Test backtracking through multiple nested Refs."""
+        # Setup: [A, Ref1(B), Empty]
+        #        B: [X, STOP]  (STOP is reached by moving, not entering)
+        # Expected:
+        # 1. Enter Ref1, arrive at X, move to STOP, fail
+        # 2. Backtrack: treat Ref1 as solid -> succeeds
+
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"), Ref("B"), Empty()),)),
+            "B": Grid("B", ((Concrete("X"), Concrete("STOP")),)),
+        }
+
+        def tag_stop(cell: Cell) -> set[str]:
+            if isinstance(cell, Concrete) and cell.id == "STOP":
+                return {"stop"}
+            return set()
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "B" and direction == Direction.E:
+                return CellPosition("B", 0, 0)  # Enter at X
+            return None
+
+        start = CellPosition("main", 0, 0)
+
+        # Simple version should fail (enters B, hits STOP after X)
+        result_simple = push_simple(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        assert result_simple is None
+
+        # Backtracking version should succeed by treating Ref1 as solid
+        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        assert result is not None
+
+        # Result: [Empty, A, Ref(B)]
+        assert isinstance(result["main"].cells[0][0], Empty)
+        assert result["main"].cells[0][1] == Concrete("A")
+        assert result["main"].cells[0][2] == Ref("B")
+
+    def test_backtrack_on_entry_denied_in_chain(self) -> None:
+        """Test backtracking when entry is denied mid-chain."""
+        # Setup: [A, Ref1(B), Empty]
+        #        B: [Ref2(C)]
+        #        C: [X] but entry to C is denied
+        # Expected: Backtrack and treat Ref1 as solid
+
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"), Ref("B"), Empty()),)),
+            "B": Grid("B", ((Ref("C"),),)),
+            "C": Grid("C", ((Concrete("X"),),)),
+        }
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "B" and direction == Direction.E:
+                return CellPosition("B", 0, 0)
+            # Deny entry to C
+            return None
+
+        start = CellPosition("main", 0, 0)
+
+        # Simple version should fail
+        result_simple = push_simple(store, start, Direction.E, allow_entry)
+        assert result_simple is None
+
+        # Backtracking version should succeed
+        result = push(store, start, Direction.E, allow_entry)
+        assert result is not None
+
+        # Result: [Empty, A, Ref(B)]
+        assert isinstance(result["main"].cells[0][0], Empty)
+        assert result["main"].cells[0][1] == Concrete("A")
+        assert result["main"].cells[0][2] == Ref("B")
 
 
 # =============================================================================
