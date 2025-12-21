@@ -5,6 +5,7 @@ Display a grid and allow pushing cells with keyboard commands.
 
 from fractions import Fraction
 
+import readchar
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
@@ -35,6 +36,7 @@ class InteractiveDemo:
         self.push_col = 0
         self.direction = Direction.E
         self.console = Console()
+        self.status_message = "Ready"
 
     def try_enter(self, grid_id: str, direction: Direction) -> CellPosition | None:
         """Standard entry function - enter from the edge based on direction."""
@@ -80,21 +82,28 @@ class InteractiveDemo:
         grid_rich_text = Text.from_ansi(grid_text)
         status.append(grid_rich_text)
         status.append("\n\n")
-        status.append("Commands:\n", style="bold cyan")
-        status.append("  p - Push in current direction\n")
-        status.append("  arrow keys - Move push position (w/a/s/d)\n")
-        status.append("  n/s/e/w - Change direction\n")
-        status.append("  q - Quit\n")
+        status.append("Keys:\n", style="bold cyan")
+        status.append("  SPACE - Push in current direction\n")
+        status.append("  WASD - Move push position\n")
+        status.append("  ↑↓←→ - Change direction\n")
+        status.append("  Q - Quit\n\n")
+
+        # Status line at the bottom
+        status.append("─" * 60 + "\n", style="dim")
+        status.append("Status: ", style="bold")
+        status.append(self.status_message)
 
         return Panel(status, title="Paragrid Interactive Push Demo", border_style="green")
 
     def move_position(self, dr: int, dc: int) -> None:
         """Move push position by delta, wrapping within grid bounds."""
         grid = self.store[self.current_grid]
+        old_row, old_col = self.push_row, self.push_col
         self.push_row = (self.push_row + dr) % grid.rows
         self.push_col = (self.push_col + dc) % grid.cols
+        self.status_message = f"Moved to [{self.push_row}, {self.push_col}]"
 
-    def attempt_push(self) -> tuple[bool, str]:
+    def attempt_push(self) -> None:
         """Attempt to push from current position in current direction."""
         start = CellPosition(self.current_grid, self.push_row, self.push_col)
         result = push(self.store, start, self.direction, self.try_enter)
@@ -115,52 +124,56 @@ class InteractiveDemo:
                 case Direction.W:
                     self.push_col = (self.push_col - 1) % self.store[self.current_grid].cols
 
-            return True, "Push successful!"
+            self.status_message = f"✓ Push {self.direction.value} successful!"
         else:
-            return False, "Push failed - no valid path or empty space"
+            self.status_message = f"✗ Push {self.direction.value} failed - no valid path or empty space"
 
     def run(self) -> None:
-        """Run the interactive demo."""
-        self.console.print("[bold green]Paragrid Interactive Demo[/bold green]")
-        self.console.print("Starting interactive mode...\n")
+        """Run the interactive demo with immediate key press handling."""
+        with Live(self.generate_display(), console=self.console, refresh_per_second=4) as live:
+            try:
+                while True:
+                    # Update display
+                    live.update(self.generate_display())
 
-        try:
-            while True:
-                # Display current state
-                self.console.clear()
-                self.console.print(self.generate_display())
+                    # Get single key press
+                    key = readchar.readkey()
 
-                # Get command
-                cmd = input("\nCommand: ").strip().lower()
+                    # Handle key press
+                    if key.lower() == 'q':
+                        self.status_message = "Quitting..."
+                        live.update(self.generate_display())
+                        break
+                    elif key == ' ':  # Space bar for push
+                        self.attempt_push()
+                    # WASD for movement
+                    elif key.lower() == 'w':
+                        self.move_position(-1, 0)
+                    elif key.lower() == 's':
+                        self.move_position(1, 0)
+                    elif key.lower() == 'a':
+                        self.move_position(0, -1)
+                    elif key.lower() == 'd':
+                        self.move_position(0, 1)
+                    # Arrow keys for direction
+                    elif key == readchar.key.UP:
+                        self.direction = Direction.N
+                        self.status_message = "Direction set to North"
+                    elif key == readchar.key.DOWN:
+                        self.direction = Direction.S
+                        self.status_message = "Direction set to South"
+                    elif key == readchar.key.LEFT:
+                        self.direction = Direction.W
+                        self.status_message = "Direction set to West"
+                    elif key == readchar.key.RIGHT:
+                        self.direction = Direction.E
+                        self.status_message = "Direction set to East"
+                    else:
+                        self.status_message = f"Unknown key: {repr(key)}"
 
-                if cmd == 'q':
-                    break
-                elif cmd == 'p':
-                    success, msg = self.attempt_push()
-                    self.console.print(f"\n[{'green' if success else 'red'}]{msg}[/]")
-                    input("Press Enter to continue...")
-                elif cmd in ('w', 'up'):
-                    self.move_position(-1, 0)
-                elif cmd in ('s', 'down'):
-                    self.move_position(1, 0)
-                elif cmd in ('a', 'left'):
-                    self.move_position(0, -1)
-                elif cmd in ('d', 'right'):
-                    self.move_position(0, 1)
-                elif cmd == 'n':
-                    self.direction = Direction.N
-                elif cmd == 's':
-                    self.direction = Direction.S
-                elif cmd == 'e':
-                    self.direction = Direction.E
-                elif cmd == 'w':
-                    self.direction = Direction.W
-                else:
-                    self.console.print(f"[yellow]Unknown command: {cmd}[/]")
-                    input("Press Enter to continue...")
-
-        except KeyboardInterrupt:
-            self.console.print("\n\n[yellow]Demo interrupted[/yellow]")
+            except KeyboardInterrupt:
+                self.status_message = "Interrupted by user"
+                live.update(self.generate_display())
 
 
 def main() -> None:
