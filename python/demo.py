@@ -13,6 +13,7 @@ from paragrid import (
     GridStore,
     Ref,
     analyze,
+    push,
     render,
     render_with_visits,
     traverse,
@@ -255,9 +256,232 @@ def traversal_options_demo() -> None:
     print()
 
 
+def push_demo() -> None:
+    """Demonstrate the push operation with before/after visualizations."""
+
+    def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+        """Standard entry function - enter from the edge based on direction."""
+        if grid_id not in store:
+            return None
+        grid = store[grid_id]
+        match direction:
+            case Direction.N:
+                return CellPosition(grid_id, grid.rows - 1, 0)
+            case Direction.S:
+                return CellPosition(grid_id, 0, 0)
+            case Direction.E:
+                return CellPosition(grid_id, 0, 0)
+            case Direction.W:
+                return CellPosition(grid_id, 0, grid.cols - 1)
+
+    print("=" * 60)
+    print("Push Demo: Moving cell contents along a path")
+    print("=" * 60)
+    print()
+
+    # Example 1: Simple push into empty space
+    print("Example 1: Push into empty space (SUCCESS)")
+    print("-" * 60)
+    store: GridStore = {
+        "line": Grid(
+            "line",
+            (
+                (Concrete("A"), Concrete("B"), Concrete("C"), Empty()),
+            ),
+        ),
+    }
+
+    print("BEFORE:")
+    tree = analyze(store, "line", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+
+    start = CellPosition("line", 0, 0)
+    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
+    print("Expected: A moves right, creating empty space at start")
+    print()
+
+    result = push(store, start, Direction.E, try_enter)
+
+    if result:
+        print("AFTER:")
+        tree = analyze(result, "line", Fraction(1), Fraction(1))
+        print(render(tree))
+        print("✓ Push succeeded - contents rotated forward")
+    else:
+        print("✗ Push failed")
+    print()
+
+    # Example 2: Push that fails (hits edge)
+    print("Example 2: Push hits edge (FAILURE)")
+    print("-" * 60)
+    store = {
+        "full": Grid(
+            "full",
+            (
+                (Concrete("A"), Concrete("B"), Concrete("C"), Concrete("D")),
+            ),
+        ),
+    }
+
+    print("BEFORE:")
+    tree = analyze(store, "full", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+
+    start = CellPosition("full", 0, 0)
+    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
+    print("Expected: Fails because no empty space found")
+    print()
+
+    result = push(store, start, Direction.E, try_enter)
+
+    if result:
+        print("AFTER:")
+        tree = analyze(result, "full", Fraction(1), Fraction(1))
+        print(render(tree))
+    else:
+        print("✗ Push failed - no empty space, grid unchanged")
+    print()
+
+    # Example 3: Cyclic push (path loops back to start)
+    print("Example 3: Cyclic push in 2×2 grid (SUCCESS)")
+    print("-" * 60)
+    store = {
+        "square": Grid(
+            "square",
+            (
+                (Concrete("A"), Concrete("B")),
+                (Concrete("C"), Concrete("D")),
+            ),
+        ),
+    }
+
+    print("BEFORE:")
+    tree = analyze(store, "square", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+
+    start = CellPosition("square", 0, 0)
+    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
+    print("Expected: Path goes A→B→(edge, goes down)→(wraps somehow or fails)")
+    print("Note: This depends on traversal behavior at edges")
+    print()
+
+    result = push(store, start, Direction.E, try_enter)
+
+    if result:
+        print("AFTER:")
+        tree = analyze(result, "square", Fraction(1), Fraction(1))
+        print(render(tree))
+        print("✓ Push succeeded")
+    else:
+        print("✗ Push failed")
+    print()
+
+    # Example 4: Push through a portal
+    print("Example 4: Push through a Ref portal (SUCCESS)")
+    print("-" * 60)
+    store = {
+        "main": Grid(
+            "main",
+            (
+                (Concrete("A"), Ref("inner"), Empty()),
+            ),
+        ),
+        "inner": Grid(
+            "inner",
+            (
+                (Concrete("X"), Concrete("Y")),
+            ),
+        ),
+    }
+
+    print("BEFORE:")
+    print("Main grid:")
+    tree = analyze(store, "main", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+    print("Inner grid (referenced):")
+    tree = analyze(store, "inner", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+
+    start = CellPosition("main", 0, 0)
+    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
+    print("Expected: A pushes through Ref portal, affecting both grids")
+    print("Path: A → [enter Inner] → X → Y → [exit Inner] → Empty")
+    print("Result: Main[A, Ref, Y], Inner[Empty, X] (rotated)")
+    print()
+
+    result = push(store, start, Direction.E, try_enter)
+
+    if result:
+        print("AFTER:")
+        print("Main grid:")
+        tree = analyze(result, "main", Fraction(1), Fraction(1))
+        print(render(tree))
+        print()
+        print("Inner grid (contents shifted):")
+        tree = analyze(result, "inner", Fraction(1), Fraction(1))
+        print(render(tree))
+        print("✓ Push succeeded - contents moved through portal")
+    else:
+        print("✗ Push failed")
+    print()
+
+    # Example 5: Push blocked by inaccessible Ref
+    print("Example 5: Push blocked by locked Ref (SUCCESS with Ref as object)")
+    print("-" * 60)
+    store = {
+        "main": Grid(
+            "main",
+            (
+                (Concrete("A"), Ref("locked"), Empty()),
+            ),
+        ),
+        "locked": Grid(
+            "locked",
+            (
+                (Concrete("?"), Concrete("?")),
+            ),
+        ),
+    }
+
+    def try_enter_locked(grid_id: str, direction: Direction) -> CellPosition | None:
+        """Entry function that denies access to 'locked' grid."""
+        if grid_id == "locked":
+            return None  # Deny entry
+        return try_enter(grid_id, direction)
+
+    print("BEFORE:")
+    tree = analyze(store, "main", Fraction(1), Fraction(1))
+    print(render(tree))
+    print()
+
+    start = CellPosition("main", 0, 0)
+    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
+    print("Expected: Ref acts as solid object when entry denied")
+    print("Result: [Empty, A, Ref(locked)]")
+    print()
+
+    result = push(store, start, Direction.E, try_enter_locked)
+
+    if result:
+        print("AFTER:")
+        tree = analyze(result, "main", Fraction(1), Fraction(1))
+        print(render(tree))
+        print("✓ Push succeeded - Ref pushed as solid object")
+    else:
+        print("✗ Push failed")
+    print()
+
+
 if __name__ == "__main__":
     demo()
     print()
     traversal_demo()
     print()
     traversal_options_demo()
+    print()
+    push_demo()
