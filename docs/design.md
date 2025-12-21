@@ -9,6 +9,9 @@
 - `Concrete(id)` — leaf value (string identifier)
 - `Ref(grid_id)` — reference to another grid
 
+**Tagging**: Cell contents (concrete values or grid references) can be tagged with metadata. A user-provided function maps content to a set of tag strings. Tags affect traversal behavior:
+- `stop` — Traversal terminates when reaching a cell with this tag
+
 **Primary references**: For each referenced grid, exactly one `Ref` is designated **primary**. All other refs to the same grid are **secondary** — on exit, they teleport to the primary.
 
 **Primary selection**: If not explicitly specified, the primary ref is **auto-selected** as the first `Ref` to that grid found when iterating through the `GridStore` (dictionary iteration order) in row-major order within each grid. This means:
@@ -93,6 +96,7 @@ traverse(
        - If cascading (exiting to another edge): follow exit chain through multiple parent levels
      - If no parent (root grid): terminate
    - Get next cell
+   - **If next cell has `stop` tag**: terminate
    - **If next cell is `Ref(target_grid)`**:
      - If `auto_enter=False`: yield the Ref, call `try_enter(target_grid, direction)`
        - If returns `Cell`: move into it, yield it

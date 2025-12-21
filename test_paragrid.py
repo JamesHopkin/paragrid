@@ -7,6 +7,7 @@ from fractions import Fraction
 import pytest
 
 from paragrid import (
+    Cell,
     CellNode,
     CellPosition,
     Concrete,
@@ -20,6 +21,9 @@ from paragrid import (
     NestedNode,
     Ref,
     RefNode,
+    TagFn,
+    TerminationReason,
+    TraversalResult,
     analyze,
     collect_denominators,
     collect_grid_ids,
@@ -479,6 +483,312 @@ class TestTraverse:
         assert CellPosition("inner", 0, 1) in positions  # y
         # Should work efficiently without unnecessary chain checks
         assert len(positions) == 3
+
+
+# =============================================================================
+# Test Termination Reasons
+# =============================================================================
+
+
+class TestTerminationReasons:
+    """Tests for tracking why traversal terminated."""
+
+    def test_termination_edge_reached(self) -> None:
+        """Test that EDGE_REACHED is set when hitting root grid edge."""
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("a"), Concrete("b")),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        result = traverse(store, start, Direction.E, try_enter)
+        positions = list(result)
+
+        # Should traverse: a -> b -> edge
+        assert len(positions) == 2
+        assert result.termination_reason == TerminationReason.EDGE_REACHED
+
+    def test_termination_cycle_detected_enter(self) -> None:
+        """Test that CYCLE_DETECTED is set when entering a cycle."""
+        store: GridStore = {
+            "a": Grid("a", ((Ref("b"),),)),
+            "b": Grid("b", ((Ref("a"),),)),
+            "main": Grid("main", ((Concrete("x"), Ref("a")),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        result = traverse(store, start, Direction.E, try_enter, auto_enter=True)
+        positions = list(result)
+
+        # Should detect cycle when trying to enter a->b->a
+        assert len(positions) == 1  # Only x
+        assert result.termination_reason == TerminationReason.CYCLE_DETECTED
+
+    def test_termination_cycle_detected_exit(self) -> None:
+        """Test that CYCLE_DETECTED is set when exiting through a cycle."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "loop1": Grid("loop1", ((Ref("loop2"),),)),
+            "loop2": Grid("loop2", ((Ref("loop1"),),)),
+            "main": Grid("main", ((Ref("inner"), Ref("loop1")),)),
+        }
+        start = CellPosition("loop1", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        result = traverse(store, start, Direction.E, try_enter, auto_enter=True, auto_exit=True)
+        positions = list(result)
+
+        # Should detect cycle when trying to exit
+        assert result.termination_reason == TerminationReason.CYCLE_DETECTED
+
+    def test_termination_entry_denied_auto_enter(self) -> None:
+        """Test that ENTRY_DENIED is set when try_enter returns None (auto_enter)."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "main": Grid("main", ((Concrete("a"), Ref("inner")),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None  # Deny entry
+
+        result = traverse(store, start, Direction.E, try_enter, auto_enter=True)
+        positions = list(result)
+
+        # Should stop before the Ref when entry is denied
+        assert len(positions) == 1  # Only a
+        assert result.termination_reason == TerminationReason.ENTRY_DENIED
+
+    def test_termination_entry_denied_manual_enter(self) -> None:
+        """Test that ENTRY_DENIED is set when try_enter returns None (manual enter)."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "main": Grid("main", ((Concrete("a"), Ref("inner")),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None  # Deny entry
+
+        result = traverse(store, start, Direction.E, try_enter, auto_enter=False)
+        positions = list(result)
+
+        # Should yield a, then Ref, then stop when entry is denied
+        assert len(positions) == 2  # a and Ref
+        assert result.termination_reason == TerminationReason.ENTRY_DENIED
+
+    def test_termination_max_depth_reached(self) -> None:
+        """Test that MAX_DEPTH_REACHED is set when hitting depth limit."""
+        # Create a deeply nested structure
+        store: GridStore = {
+            "a": Grid("a", ((Ref("b"),),)),
+            "b": Grid("b", ((Concrete("x"),),)),
+            "main": Grid("main", ((Ref("a"),),)),
+        }
+        start = CellPosition("main", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        # Set a very low max_depth to trigger the limit
+        result = traverse(store, start, Direction.E, try_enter, auto_enter=True, max_depth=0)
+        positions = list(result)
+
+        # Should stop immediately due to max_depth=0
+        assert len(positions) == 1  # Only start position
+        assert result.termination_reason == TerminationReason.MAX_DEPTH_REACHED
+
+
+# =============================================================================
+# Test Tagging
+# =============================================================================
+
+
+class TestTagging:
+    """Tests for cell tagging functionality."""
+
+    def test_stop_tag_terminates_traversal(self) -> None:
+        """Test that traversal stops when encountering a cell with 'stop' tag."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Concrete("b"), Concrete("c")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag 'b' with 'stop'
+            if isinstance(cell, Concrete) and cell.id == "b":
+                return {"stop"}
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit only 'a', stop before 'b'
+        assert len(positions) == 1
+        assert positions[0] == CellPosition("test", 0, 0)  # a
+        assert result.termination_reason == TerminationReason.STOP_TAG
+
+    def test_no_tag_fn_continues_normally(self) -> None:
+        """Test that traversal continues normally when no tag_fn is provided."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Concrete("b"), Concrete("c")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        result = traverse(store, start, Direction.E, try_enter)
+        positions = list(result)
+
+        # Should visit all cells
+        assert len(positions) == 3
+        assert result.termination_reason == TerminationReason.EDGE_REACHED
+
+    def test_empty_tags_continues_traversal(self) -> None:
+        """Test that traversal continues when tag_fn returns empty set."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Concrete("b"), Concrete("c")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Return empty set for all cells
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit all cells
+        assert len(positions) == 3
+        assert result.termination_reason == TerminationReason.EDGE_REACHED
+
+    def test_non_stop_tags_ignored(self) -> None:
+        """Test that non-'stop' tags don't affect traversal."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Concrete("b"), Concrete("c")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag 'b' with something other than 'stop'
+            if isinstance(cell, Concrete) and cell.id == "b":
+                return {"important", "highlight"}
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit all cells (non-stop tags are ignored)
+        assert len(positions) == 3
+        assert result.termination_reason == TerminationReason.EDGE_REACHED
+
+    def test_stop_tag_on_ref_cell(self) -> None:
+        """Test that stop tag works on reference cells."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "outer": Grid("outer", ((Concrete("a"), Ref("inner"), Concrete("b")),)),
+        }
+        start = CellPosition("outer", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return CellPosition(grid_id, 0, 0)
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag the Ref with 'stop'
+            if isinstance(cell, Ref):
+                return {"stop"}
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit only 'a', stop before Ref
+        assert len(positions) == 1
+        assert positions[0] == CellPosition("outer", 0, 0)  # a
+        assert result.termination_reason == TerminationReason.STOP_TAG
+
+    def test_stop_tag_on_empty_cell(self) -> None:
+        """Test that stop tag works on empty cells."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Empty(), Concrete("b")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag Empty cells with 'stop'
+            if isinstance(cell, Empty):
+                return {"stop"}
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit only 'a', stop before Empty
+        assert len(positions) == 1
+        assert positions[0] == CellPosition("test", 0, 0)  # a
+        assert result.termination_reason == TerminationReason.STOP_TAG
+
+    def test_stop_tag_with_multiple_tags(self) -> None:
+        """Test that stop tag works when multiple tags are present."""
+        store: GridStore = {
+            "test": Grid(
+                "test",
+                ((Concrete("a"), Concrete("b"), Concrete("c")),),
+            )
+        }
+        start = CellPosition("test", 0, 0)
+
+        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag 'b' with multiple tags including 'stop'
+            if isinstance(cell, Concrete) and cell.id == "b":
+                return {"important", "stop", "highlight"}
+            return set()
+
+        result = traverse(store, start, Direction.E, try_enter, tag_fn=tag_fn)
+        positions = list(result)
+
+        # Should visit only 'a', stop before 'b'
+        assert len(positions) == 1
+        assert positions[0] == CellPosition("test", 0, 0)  # a
+        assert result.termination_reason == TerminationReason.STOP_TAG
 
 
 # =============================================================================

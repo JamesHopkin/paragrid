@@ -23,6 +23,16 @@ class Direction(Enum):
     W = "W"  # Left (decreasing col)
 
 
+class TerminationReason(Enum):
+    """Reason why traversal terminated."""
+
+    EDGE_REACHED = "edge_reached"  # Hit edge of root grid
+    CYCLE_DETECTED = "cycle_detected"  # Detected cycle in enter/exit chain
+    ENTRY_DENIED = "entry_denied"  # try_enter returned None
+    MAX_DEPTH_REACHED = "max_depth_reached"  # Hit max_depth limit
+    STOP_TAG = "stop_tag"  # Cell has 'stop' tag
+
+
 # =============================================================================
 # Data Structures: Grid Definition
 # =============================================================================
@@ -198,6 +208,34 @@ class CellPosition:
 # Type alias for the try_enter callback
 TryEnter = Callable[[str, Direction], CellPosition | None]
 
+# Type alias for the tagging function
+TagFn = Callable[[Cell], set[str]]
+
+
+class TraversalResult:
+    """
+    Iterator wrapper for traverse() that tracks termination reason.
+
+    Usage:
+        result = traverse(store, start, direction, try_enter)
+        for pos in result:
+            print(pos)
+        print(result.termination_reason)  # Why traversal ended
+    """
+
+    def __init__(
+        self,
+        generator: Iterator[CellPosition],
+    ):
+        self._iterator = generator
+        self.termination_reason: TerminationReason | None = None
+
+    def __iter__(self) -> Iterator[CellPosition]:
+        return self
+
+    def __next__(self) -> CellPosition:
+        return next(self._iterator)
+
 
 def find_primary_ref(store: GridStore, target_grid_id: str) -> tuple[str, int, int] | None:
     """
@@ -361,7 +399,8 @@ def traverse(
     auto_enter: bool = False,
     auto_exit: bool = True,
     max_depth: int = 1000,
-) -> Iterator[CellPosition]:
+    tag_fn: TagFn | None = None,
+) -> TraversalResult:
     """
     Traverse the grid structure in a cardinal direction, yielding each cell visited.
 
@@ -383,10 +422,37 @@ def traverse(
         auto_exit: If True, automatically continue past Ref cells when exiting.
                    If False, stop at the Ref cell when exiting.
         max_depth: Maximum number of automatic jumps to prevent infinite loops.
+        tag_fn: Optional function to tag cell contents. If a cell has the 'stop' tag,
+                traversal terminates before yielding that cell.
 
-    Yields:
-        CellPosition for each cell visited
+    Returns:
+        TraversalResult iterator that yields CellPosition and tracks termination reason
     """
+    result = TraversalResult.__new__(TraversalResult)
+    result.termination_reason = None
+    result._iterator = _traverse_generator(
+        store, start, direction, try_enter, auto_enter, auto_exit, max_depth, tag_fn, result
+    )
+    return result
+
+
+def _traverse_generator(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    auto_enter: bool,
+    auto_exit: bool,
+    max_depth: int,
+    tag_fn: TagFn | None,
+    result: TraversalResult,
+) -> Iterator[CellPosition]:
+    """Internal generator for traverse(). Do not call directly."""
+
+    def set_reason(reason: TerminationReason) -> None:
+        if result.termination_reason is None:  # Only set first reason
+            result.termination_reason = reason
+
     current = start
     yield current
 
@@ -411,6 +477,7 @@ def traverse(
             primary = find_primary_ref(store, current.grid_id)
             if primary is None:
                 # No parent (root grid) - terminate
+                set_reason(TerminationReason.EDGE_REACHED)
                 return
 
             # Teleport to primary reference location
@@ -421,6 +488,7 @@ def traverse(
                 # Stop at the Ref we're exiting through
                 current = CellPosition(parent_grid_id, parent_row, parent_col)
                 yield current
+                set_reason(TerminationReason.EDGE_REACHED)
                 return
 
             # Auto-exit: continue in the same direction from the primary ref's position
@@ -440,9 +508,11 @@ def traverse(
                 )
                 if hit_cycle:
                     # Cycle detected, terminate
+                    set_reason(TerminationReason.CYCLE_DETECTED)
                     return
                 if final_pos is None:
                     # Exited root grid
+                    set_reason(TerminationReason.EDGE_REACHED)
                     return
                 current = final_pos
                 depth += 1
@@ -455,8 +525,15 @@ def traverse(
             # Normal movement within grid
             current = CellPosition(current.grid_id, next_row, next_col)
 
-        # Check if current cell is a Ref before yielding
+        # Get the cell at current position
         cell = store[current.grid_id].cells[current.row][current.col]
+
+        # Check if cell has 'stop' tag
+        if tag_fn is not None and "stop" in tag_fn(cell):
+            set_reason(TerminationReason.STOP_TAG)
+            return
+
+        # Check if current cell is a Ref before yielding
         if isinstance(cell, Ref):
             if auto_enter:
                 # Auto-enter: don't yield the Ref, follow chain to non-Ref
@@ -467,6 +544,7 @@ def traverse(
                     )
                     if hit_cycle:
                         # Cycle detected, terminate
+                        set_reason(TerminationReason.CYCLE_DETECTED)
                         return
                     if final_pos is not None:
                         current = final_pos
@@ -474,9 +552,11 @@ def traverse(
                         depth += 1  # Once per chain, not per jump
                     else:
                         # try_enter denied mid-chain
+                        set_reason(TerminationReason.ENTRY_DENIED)
                         return
                 else:
                     # try_enter returned None immediately, stop before Ref
+                    set_reason(TerminationReason.ENTRY_DENIED)
                     return
             else:
                 # Yield the Ref cell first
@@ -489,12 +569,16 @@ def traverse(
                     depth += 1
                 else:
                     # Chose not to enter, already yielded the Ref, stop here
+                    set_reason(TerminationReason.ENTRY_DENIED)
                     return
         else:
             # Not a Ref, just yield it
             yield current
 
         depth = 0  # Reset depth counter on normal movement
+
+    # If we exit the while loop, max_depth was reached
+    set_reason(TerminationReason.MAX_DEPTH_REACHED)
 
 
 # =============================================================================
