@@ -176,6 +176,194 @@ flowchart RL
 
 ---
 
+## Push
+
+The **push** operation moves cell contents along a path in a direction, rotating cells forward when successful.
+
+### Design Specification
+
+**Concept**: Given a starting cell and direction, traverse to build a path of positions, then rotate the cell contents within that path.
+
+**Traversal semantics**:
+- Uses `auto_enter=True` and `auto_exit=True` (standard traversal with reference chain following)
+- **Special Ref handling**:
+  - Call `try_enter(grid_id, direction)` when encountering a Ref
+  - **Entry succeeds**: Ref acts as **portal** — NOT included in push path, traversal continues from inside referenced grid
+  - **Entry fails** (returns `None`): Ref acts as **solid object** — IS included in push path, traversal continues from next cell in parent grid
+- This behavior applies at any nesting depth
+
+**Success conditions** (push is applied):
+1. Path ends at an `Empty` cell — rotation fills the empty, starting cell becomes empty
+2. Path cycles back to starting position — all cells in cycle rotate
+
+**Failure conditions** (push returns `None`, no changes):
+- Hit edge of root grid without finding `Empty`
+- Cycle to non-start position (invalid cycle)
+- `MAX_DEPTH_REACHED`
+- Any other termination reason
+
+**Rotation mechanics**:
+- Cell contents shift forward along the path
+- Last cell's content moves to first position: `[c1, c2, c3]` → `[c3, c1, c2]`
+- Push may affect cells across multiple grids (due to traversing through Refs)
+- All affected grids get new immutable instances
+
+**Immutability**: Original `GridStore` unchanged; push returns new `GridStore` or `None`.
+
+### Implementation
+
+**Three-function architecture**:
+
+```python
+def push(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    max_depth: int = 1000,
+) -> GridStore | None
+```
+
+Main API that orchestrates traversal and application.
+
+```python
+def push_traverse(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    try_enter: TryEnter,
+    max_depth: int = 1000,
+) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]
+```
+
+Custom traversal that tracks original cell contents and implements Ref-as-object fallback.
+
+```python
+def apply_push(
+    store: GridStore,
+    path: list[tuple[CellPosition, Cell]],
+) -> GridStore
+```
+
+Rotates cell contents and creates new Grid instances (immutable reconstruction).
+
+**Key algorithm details**:
+
+1. **push_traverse()**: Similar to `traverse()` but:
+   - Returns list of `(position, original_cell)` tuples
+   - When encountering Ref: try to enter first
+   - If entry succeeds: pop Ref from path, follow enter chain via `_follow_enter_chain()`
+   - If entry fails: keep Ref in path, continue from next cell in same grid
+   - Cycle detection: track visited positions, success if cycling to start
+
+2. **apply_push()**:
+   - Extract cells: `[cell1, cell2, ..., cellN]`
+   - Rotate right: `[cellN, cell1, ..., cellN-1]`
+   - Group updates by `grid_id`
+   - For each affected grid: convert to mutable list, apply updates, convert back to tuple
+   - Create new `Grid` instances, return new `GridStore`
+
+3. **push()**:
+   - Call `push_traverse()` to get path and reason
+   - Check success conditions (Empty at end OR cycle to start)
+   - If success: call `apply_push()` and return new store
+   - Otherwise: return `None`
+
+**Reuses from traversal**:
+- `find_primary_ref()` — for exit/teleportation logic
+- `_follow_enter_chain()` — for Ref chain traversal
+- Direction deltas — same cardinal direction movement
+- `TerminationReason` enum — shared termination semantics
+
+**Edge cases**:
+- Single-cell path (start at Empty): Valid but no-op
+- Start at inaccessible Ref: Ref pushed as solid object
+- Multi-level nesting: Enter chain handles depth automatically
+- Exit via secondary ref: Teleports to primary correctly
+- Cycle in Ref chain during entry: Detected by `_follow_enter_chain()`, push fails
+- Invalid cycle (to non-start): Detected and rejected
+
+### Example: Push Through Portal
+
+**Setup**:
+```
+Grid Main (1×3):         Grid Inner (1×2):
+┌───┬──────────┬───┐     ┌───┬───┐
+│ A │ Ref(Inner)│ B │     │ X │ Y │
+└───┴──────────┴───┘     └───┴───┘
+     col 0    1    2          0   1
+```
+
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter)`
+
+Assume `try_enter` allows entry from East at `Inner[0, 0]`.
+
+**Traversal**:
+1. Start at `Main[0,0]` (cell A) → add to path
+2. Move East to `Main[0,1]` (Ref) → try_enter succeeds
+3. Pop Ref, enter at `Inner[0,0]` (cell X) → add to path
+4. Move East to `Inner[0,1]` (cell Y) → add to path
+5. Move East → hit edge, exit via primary (same Ref)
+6. Continue from `Main[0,1]` + East = `Main[0,2]` (cell B) → add to path
+7. Move East → hit edge of root grid, terminate with EDGE_REACHED
+
+**Path**: `[(Main[0,0], A), (Inner[0,0], X), (Inner[0,1], Y), (Main[0,2], B)]`
+
+**Check termination**: Last cell B is not Empty → push fails, return `None`.
+
+**Alternative**: If cell B were Empty:
+
+**Path**: `[(Main[0,0], A), (Inner[0,0], X), (Inner[0,1], Y), (Main[0,2], Empty)]`
+
+**Rotation**: `[A, X, Y, Empty]` → `[Empty, A, X, Y]`
+
+**Result**:
+```
+Grid Main (1×3):         Grid Inner (1×2):
+┌─────┬──────────┬───┐   ┌───┬───┐
+│Empty│ Ref(Inner)│ Y │   │ A │ X │
+└─────┴──────────┴───┘   └───┴───┘
+```
+
+**Key insight**: The push moved contents through the Ref portal, affecting both grids. The Ref itself didn't move.
+
+### Example: Push Blocked by Ref
+
+**Setup**:
+```
+Grid Main (1×3):
+┌───┬──────────┬─────┐
+│ A │ Ref(Lock)│Empty│
+└───┴──────────┴─────┘
+     col 0    1     2
+```
+
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter)`
+
+Assume `try_enter` **denies** entry to "Lock" grid (returns `None`).
+
+**Traversal**:
+1. Start at `Main[0,0]` (cell A) → add to path
+2. Move East to `Main[0,1]` (Ref) → try_enter returns `None`
+3. Keep Ref in path (solid object), continue from `Main[0,1]` + East = `Main[0,2]`
+4. At `Main[0,2]` (Empty) → success!
+
+**Path**: `[(Main[0,0], A), (Main[0,1], Ref(Lock)), (Main[0,2], Empty)]`
+
+**Rotation**: `[A, Ref(Lock), Empty]` → `[Empty, A, Ref(Lock)]`
+
+**Result**:
+```
+Grid Main (1×3):
+┌─────┬───┬──────────┐
+│Empty│ A │ Ref(Lock)│
+└─────┴───┴──────────┘
+```
+
+**Key insight**: When entry is denied, the Ref cell itself gets pushed like a `Concrete` cell.
+
+---
+
 ## Type Notes
 
 - Uses `mypy --strict`
