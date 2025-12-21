@@ -81,6 +81,73 @@ class Grid:
 GridStore = dict[str, Grid]
 
 
+def parse_grids(definitions: dict[str, str]) -> GridStore:
+    """
+    Parse grid definitions from a compact string format.
+
+    Format:
+    - Rows separated by |
+    - Cells separated by spaces
+    - Numbers (0-9): Concrete cells (e.g., "1" -> Concrete("1"))
+    - Letters (a-zA-Z): Ref cells (e.g., "A" -> Ref("A"), "a" -> Ref("a"))
+    - Underscore (_): Empty cell
+    - Multiple adjacent spaces: multiple Empty cells
+
+    Example:
+        {
+            "main": "1 2|3 A",
+            "A": "5|6"
+        }
+        Creates:
+        - Grid "main": 2x2 with [Concrete("1"), Concrete("2")], [Concrete("3"), Ref("A")]
+        - Grid "A": 2x1 with [Concrete("5")], [Concrete("6")]
+
+    Args:
+        definitions: Dict mapping grid_id to string definition
+
+    Returns:
+        GridStore with parsed grids
+    """
+    store: GridStore = {}
+
+    for grid_id, definition in definitions.items():
+        # Split into rows
+        row_strings = definition.split("|")
+        rows: list[tuple[Cell, ...]] = []
+
+        for row_str in row_strings:
+            # Split by single space to get individual cells
+            # Multiple spaces = multiple empty cells
+            cell_strings = row_str.split(" ")
+            cells: list[Cell] = []
+
+            for cell_str in cell_strings:
+                if not cell_str:  # Empty string from split = Empty cell
+                    cells.append(Empty())
+                elif cell_str == "_":  # Explicit empty marker
+                    cells.append(Empty())
+                elif cell_str.isdigit():  # Number = Concrete
+                    cells.append(Concrete(cell_str))
+                elif cell_str.isalpha():  # Letter = Ref
+                    cells.append(Ref(cell_str))
+                else:
+                    raise ValueError(f"Invalid cell string: '{cell_str}' in grid '{grid_id}'")
+
+            rows.append(tuple(cells))
+
+        # Validate all rows have same length
+        if rows:
+            cols = len(rows[0])
+            if any(len(row) != cols for row in rows):
+                raise ValueError(f"All rows in grid '{grid_id}' must have same number of cells")
+
+        # Create Grid
+        grid = Grid(grid_id, tuple(rows))
+        store[grid_id] = grid
+
+    return store
+
+
 # =============================================================================
 # Data Structures: Analysis Result (CellTree)
 # =============================================================================

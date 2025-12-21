@@ -29,6 +29,7 @@ from paragrid import (
     collect_grid_ids,
     compute_scale,
     find_primary_ref,
+    parse_grids,
     push,
     push_simple,
     render,
@@ -85,6 +86,174 @@ class TestGridStructures:
         )
         assert grid.rows == 2
         assert grid.cols == 3
+
+
+# =============================================================================
+# Test String Parsing
+# =============================================================================
+
+
+class TestParseGrids:
+    """Tests for the parse_grids function."""
+
+    def test_parse_simple_concrete_grid(self) -> None:
+        """Test parsing a simple grid with concrete cells."""
+        definitions = {
+            "test": "1 2|3 4"
+        }
+        store = parse_grids(definitions)
+
+        assert "test" in store
+        grid = store["test"]
+        assert grid.id == "test"
+        assert grid.rows == 2
+        assert grid.cols == 2
+
+        # Check cells
+        assert isinstance(grid.cells[0][0], Concrete)
+        assert grid.cells[0][0].id == "1"
+        assert isinstance(grid.cells[0][1], Concrete)
+        assert grid.cells[0][1].id == "2"
+        assert isinstance(grid.cells[1][0], Concrete)
+        assert grid.cells[1][0].id == "3"
+        assert isinstance(grid.cells[1][1], Concrete)
+        assert grid.cells[1][1].id == "4"
+
+    def test_parse_with_refs(self) -> None:
+        """Test parsing grids with references."""
+        definitions = {
+            "main": "1 A|2 3",
+            "A": "5 6"
+        }
+        store = parse_grids(definitions)
+
+        # Check main grid
+        assert "main" in store
+        main = store["main"]
+        assert main.rows == 2
+        assert main.cols == 2
+        assert isinstance(main.cells[0][0], Concrete)
+        assert main.cells[0][0].id == "1"
+        assert isinstance(main.cells[0][1], Ref)
+        assert main.cells[0][1].grid_id == "A"
+
+        # Check referenced grid
+        assert "A" in store
+        grid_a = store["A"]
+        assert grid_a.rows == 1
+        assert grid_a.cols == 2
+
+    def test_parse_with_empty_cells(self) -> None:
+        """Test parsing grids with empty cells (spaces)."""
+        definitions = {
+            "test": "1  3|4 5 6"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        assert grid.rows == 2
+        assert grid.cols == 3
+
+        # First row: 1, Empty, 3
+        assert isinstance(grid.cells[0][0], Concrete)
+        assert grid.cells[0][0].id == "1"
+        assert isinstance(grid.cells[0][1], Empty)
+        assert isinstance(grid.cells[0][2], Concrete)
+        assert grid.cells[0][2].id == "3"
+
+    def test_parse_with_underscore_empty(self) -> None:
+        """Test parsing grids with explicit empty marker (_)."""
+        definitions = {
+            "test": "1 _|_ 2"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        assert grid.rows == 2
+        assert grid.cols == 2
+
+        assert isinstance(grid.cells[0][0], Concrete)
+        assert isinstance(grid.cells[0][1], Empty)
+        assert isinstance(grid.cells[1][0], Empty)
+        assert isinstance(grid.cells[1][1], Concrete)
+
+    def test_parse_multiple_grids(self) -> None:
+        """Test parsing multiple grid definitions."""
+        definitions = {
+            "grid1": "1 2",
+            "grid2": "3|4",
+            "grid3": "A B|C D"
+        }
+        store = parse_grids(definitions)
+
+        assert len(store) == 3
+        assert "grid1" in store
+        assert "grid2" in store
+        assert "grid3" in store
+
+        # Check grid1
+        assert store["grid1"].rows == 1
+        assert store["grid1"].cols == 2
+
+        # Check grid2
+        assert store["grid2"].rows == 2
+        assert store["grid2"].cols == 1
+
+        # Check grid3 has refs
+        assert isinstance(store["grid3"].cells[0][0], Ref)
+        assert store["grid3"].cells[0][0].grid_id == "A"
+
+    def test_parse_single_row(self) -> None:
+        """Test parsing a single-row grid."""
+        definitions = {
+            "row": "1 2 3 4"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["row"]
+        assert grid.rows == 1
+        assert grid.cols == 4
+
+    def test_parse_single_column(self) -> None:
+        """Test parsing a single-column grid."""
+        definitions = {
+            "col": "1|2|3|4"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["col"]
+        assert grid.rows == 4
+        assert grid.cols == 1
+
+    def test_parse_case_sensitive_refs(self) -> None:
+        """Test that uppercase and lowercase refs are distinct."""
+        definitions = {
+            "test": "A a|B b"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # Both should be Refs, but with different grid_ids
+        assert isinstance(grid.cells[0][0], Ref)
+        assert grid.cells[0][0].grid_id == "A"
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].grid_id == "a"
+
+    def test_parse_invalid_cell_raises_error(self) -> None:
+        """Test that invalid cell strings raise an error."""
+        definitions = {
+            "bad": "1 @ 2"
+        }
+        with pytest.raises(ValueError, match="Invalid cell string"):
+            parse_grids(definitions)
+
+    def test_parse_inconsistent_row_length_raises_error(self) -> None:
+        """Test that inconsistent row lengths raise an error."""
+        definitions = {
+            "bad": "1 2|3 4 5"
+        }
+        with pytest.raises(ValueError, match="same number of cells"):
+            parse_grids(definitions)
 
 
 # =============================================================================
