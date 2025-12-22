@@ -27,7 +27,9 @@ class TerminationReason(Enum):
     """Reason why traversal terminated."""
 
     EDGE_REACHED = "edge_reached"  # Hit edge of root grid
-    CYCLE_DETECTED = "cycle_detected"  # Detected cycle in enter/exit chain
+    ENTRY_CYCLE_DETECTED = "entry_cycle_detected"  # Cycle in Ref chain during entry
+    EXIT_CYCLE_DETECTED = "exit_cycle_detected"  # Cycle in exit chain through parents
+    PATH_CYCLE_DETECTED = "path_cycle_detected"  # Cycle in traversal path (push only)
     ENTRY_DENIED = "entry_denied"  # try_enter returned None
     MAX_DEPTH_REACHED = "max_depth_reached"  # Hit max_depth limit
     STOP_TAG = "stop_tag"  # Cell has 'stop' tag
@@ -620,8 +622,8 @@ def _traverse_generator(
                     store, current, direction, try_enter, max_depth - depth
                 )
                 if hit_cycle:
-                    # Cycle detected, terminate
-                    set_reason(TerminationReason.CYCLE_DETECTED)
+                    # Exit cycle detected, terminate
+                    set_reason(TerminationReason.EXIT_CYCLE_DETECTED)
                     return
                 if final_pos is None:
                     # Exited root grid
@@ -656,8 +658,8 @@ def _traverse_generator(
                         store, entry, direction, try_enter, max_depth - depth
                     )
                     if hit_cycle:
-                        # Cycle detected, terminate
-                        set_reason(TerminationReason.CYCLE_DETECTED)
+                        # Entry cycle detected, terminate
+                        set_reason(TerminationReason.ENTRY_CYCLE_DETECTED)
                         return
                     if final_pos is not None:
                         current = final_pos
@@ -756,7 +758,7 @@ def push(
             # Hit edge without Empty - push fails
             return None
 
-    elif reason == TerminationReason.CYCLE_DETECTED:
+    elif reason == TerminationReason.PATH_CYCLE_DETECTED:
         # Success if cycle returns to start position
         if path and len(path) >= 2 and path[0][0] == start:
             # Check if the last attempted position would cycle to start
@@ -768,7 +770,7 @@ def push(
 
     else:
         # All other termination reasons are failures
-        # (STOP_TAG, ENTRY_DENIED, MAX_DEPTH_REACHED)
+        # (STOP_TAG, ENTRY_DENIED, ENTRY_CYCLE_DETECTED, EXIT_CYCLE_DETECTED, MAX_DEPTH_REACHED)
         return None
 
 
@@ -814,7 +816,7 @@ def push_simple(
             # Hit edge without Empty - push fails
             return None
 
-    elif reason == TerminationReason.CYCLE_DETECTED:
+    elif reason == TerminationReason.PATH_CYCLE_DETECTED:
         # Success if cycle returns to start position
         if path and len(path) >= 2 and path[0][0] == start:
             # Check if the last attempted position would cycle to start
@@ -826,7 +828,7 @@ def push_simple(
 
     else:
         # All other termination reasons are failures
-        # (STOP_TAG, ENTRY_DENIED, MAX_DEPTH_REACHED)
+        # (STOP_TAG, ENTRY_DENIED, ENTRY_CYCLE_DETECTED, EXIT_CYCLE_DETECTED, MAX_DEPTH_REACHED)
         return None
 
 
@@ -921,7 +923,7 @@ def push_traverse_simple(
                     return (path, TerminationReason.EDGE_REACHED)
 
                 if hit_cycle:
-                    return (path, TerminationReason.CYCLE_DETECTED)
+                    return (path, TerminationReason.EXIT_CYCLE_DETECTED)
 
                 # Continue from final exit position
                 current = final_pos
@@ -952,10 +954,10 @@ def push_traverse_simple(
             # Check if we cycled back to start (success) or elsewhere (failure)
             if current == start:
                 # Cycle to start - success condition for push
-                return (path, TerminationReason.CYCLE_DETECTED)
+                return (path, TerminationReason.PATH_CYCLE_DETECTED)
             else:
                 # Invalid cycle to non-start position
-                return (path, TerminationReason.CYCLE_DETECTED)
+                return (path, TerminationReason.PATH_CYCLE_DETECTED)
 
         # Get the cell at current position
         cell = get_cell(store, current)
@@ -987,7 +989,7 @@ def push_traverse_simple(
                     return (path, TerminationReason.ENTRY_DENIED)
 
                 if hit_cycle:
-                    return (path, TerminationReason.CYCLE_DETECTED)
+                    return (path, TerminationReason.ENTRY_CYCLE_DETECTED)
 
                 # Continue from the final position after entering
                 current = final_pos
@@ -1115,7 +1117,7 @@ def push_traverse_backtracking(
                         visited.add((current.grid_id, current.row, current.col))
                         continue
                     else:
-                        return (path, TerminationReason.CYCLE_DETECTED)
+                        return (path, TerminationReason.EXIT_CYCLE_DETECTED)
 
                 # Continue from final exit position
                 current = final_pos
@@ -1146,7 +1148,7 @@ def push_traverse_backtracking(
             # Check if we cycled back to start (success) or elsewhere (failure)
             if current == start:
                 # Cycle to start - success condition for push
-                return (path, TerminationReason.CYCLE_DETECTED)
+                return (path, TerminationReason.PATH_CYCLE_DETECTED)
             else:
                 # Invalid cycle to non-start position - try to backtrack
                 if decision_stack and backtrack_count < max_backtrack_depth:
@@ -1159,7 +1161,7 @@ def push_traverse_backtracking(
                     visited.add((current.grid_id, current.row, current.col))
                     continue
                 else:
-                    return (path, TerminationReason.CYCLE_DETECTED)
+                    return (path, TerminationReason.PATH_CYCLE_DETECTED)
 
         # Get the cell at current position
         cell = get_cell(store, current)
@@ -1232,7 +1234,7 @@ def push_traverse_backtracking(
                             visited.add((current.grid_id, current.row, current.col))
                             continue
                         else:
-                            return (path, TerminationReason.CYCLE_DETECTED)
+                            return (path, TerminationReason.ENTRY_CYCLE_DETECTED)
 
                     # Successfully entered - continue from the final position
                     current = final_pos

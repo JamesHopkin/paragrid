@@ -13,6 +13,7 @@ from paragrid import (
     GridStore,
     Ref,
     analyze,
+    parse_grids,
     push,
     push_simple,
     render,

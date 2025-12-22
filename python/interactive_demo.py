@@ -19,6 +19,7 @@ from paragrid import (
     Grid,
     GridStore,
     Ref,
+    TagFn,
     analyze,
     push,
     push_simple,
@@ -29,9 +30,10 @@ from paragrid import (
 class InteractiveDemo:
     """Interactive demo for push operations."""
 
-    def __init__(self, store: GridStore, start_grid: str) -> None:
+    def __init__(self, store: GridStore, start_grid: str, tag_fn: TagFn | None = None) -> None:
         self.store = store
         self.current_grid = start_grid
+        self.tag_fn = tag_fn
         # Start at top-left of the starting grid
         self.push_row = 0
         self.push_col = 0
@@ -107,7 +109,7 @@ class InteractiveDemo:
     def attempt_push(self) -> None:
         """Attempt to push from current position in current direction."""
         start = CellPosition(self.current_grid, self.push_row, self.push_col)
-        result = push(self.store, start, self.direction, self.try_enter)
+        result = push(self.store, start, self.direction, self.try_enter, self.tag_fn)
 
         if result:
             # Push succeeded - update store and follow the pushed content

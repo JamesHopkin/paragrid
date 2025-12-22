@@ -84,6 +84,23 @@ traverse(
 - `auto_exit`: If True (default), automatically exits through cascading parent levels. If False, yields the Ref cell on exit and stops.
 - `max_depth`: Maximum consecutive auto-jumps to prevent infinite loops (default 1000).
 
+**Termination Reasons**:
+Traversal terminates and provides a reason via the iterator result:
+
+- `EDGE_REACHED`: Traversal reached the edge of the root grid
+- `ENTRY_CYCLE_DETECTED`: Cycle detected while following a chain of Refs during entry
+- `EXIT_CYCLE_DETECTED`: Cycle detected while following exit chain through parent levels
+- `PATH_CYCLE_DETECTED`: Position visited twice in the traversal path (only used in push operations)
+- `ENTRY_DENIED`: `try_enter` returned `None` (refused entry to a Ref)
+- `STOP_TAG`: Encountered a cell tagged with `stop`
+- `MAX_DEPTH_REACHED`: Hit the `max_depth` limit for consecutive auto-jumps
+
+**Important distinction**:
+- **Entry/Exit cycles** are detected within their respective chain operations (when following Refs on entry or exit). These are separate from the main traversal path.
+- **Path cycles** are detected in the main traversal path during push operations, where visiting the same position twice may indicate a successful cycle (if cycling to start) or a failure (if cycling to non-start position).
+
+This allows the same position to be visited multiple times during normal traversal, as long as individual chain operations don't cycle.
+
 ### Algorithm
 
 1. **Initialize**: current = start, yield start
@@ -114,7 +131,7 @@ traverse(
 When `auto_enter=True`, the traversal follows chains of references automatically:
 
 - **Enter chain**: `Ref(A)` → enters A at position with `Ref(B)` → enters B at position with `Concrete(x)` → yields only `x`
-- **Cycle detection**: Tracks positions visited within each chain operation (not entire traversal)
+- **Entry cycle detection**: Tracks positions visited within each enter chain operation (not entire traversal). If a position is visited twice while following an enter chain, an entry cycle is detected.
 - **Entry denial**: If `try_enter` returns `None` at any point in the chain, traversal terminates
 
 This allows references to reference other references, with the system transparently resolving them to the final destination.
@@ -126,6 +143,16 @@ When exiting a grid via a **secondary** reference:
 - Exit from the primary's position in its parent
 
 This means secondary refs act as "portals" — you can enter anywhere, but always exit through the primary.
+
+### Exit Chain Following
+
+When exiting through cascading parent levels (exiting to an edge that requires further exit):
+
+- **Exit chain**: Exit from nested grid → lands on Ref in parent → immediately exit through that Ref → lands on another Ref → continue until reaching non-Ref or root edge
+- **Exit cycle detection**: Tracks positions visited within each exit chain operation. If a position is visited twice while following an exit chain, an exit cycle is detected.
+- **Root exit**: If the exit chain reaches the edge of the root grid (no parent), traversal terminates with `EDGE_REACHED`
+
+This allows automatic cascading exits through multiple nesting levels.
 
 ### Worked Example
 
@@ -193,14 +220,17 @@ The **push** operation moves cell contents along a path in a direction, rotating
 - This behavior applies at any nesting depth
 
 **Success conditions** (push is applied):
-1. Path ends at an `Empty` cell — rotation fills the empty, starting cell becomes empty
-2. Path cycles back to starting position — all cells in cycle rotate
+1. Path ends at an `Empty` cell (termination reason: `EDGE_REACHED`) — rotation fills the empty, starting cell becomes empty
+2. Path cycles back to starting position (termination reason: `PATH_CYCLE_DETECTED`) — all cells in cycle rotate
 
 **Failure conditions** (push returns `None`, no changes):
-- Hit edge of root grid without finding `Empty`
-- Cycle to non-start position (invalid cycle)
-- `MAX_DEPTH_REACHED`
-- Any other termination reason
+- Hit edge of root grid without finding `Empty` (`EDGE_REACHED`)
+- Path cycles to non-start position (`PATH_CYCLE_DETECTED` but not cycling to start)
+- Entry cycle while following Ref chain (`ENTRY_CYCLE_DETECTED`)
+- Exit cycle while following exit chain (`EXIT_CYCLE_DETECTED`)
+- Stop tag encountered (`STOP_TAG`)
+- Entry denied (`ENTRY_DENIED`)
+- Maximum depth reached (`MAX_DEPTH_REACHED`)
 
 **Rotation mechanics**:
 - Cell contents shift forward along the path
@@ -237,6 +267,10 @@ def push_traverse(
 ```
 
 Custom traversal that tracks original cell contents and implements Ref-as-object fallback.
+
+Returns a tuple of:
+- `path`: List of `(position, original_cell)` tuples representing cells visited
+- `reason`: Termination reason (see below for specific meanings in push context)
 
 ```python
 def apply_push(

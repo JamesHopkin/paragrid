@@ -1052,10 +1052,10 @@ class TestTerminationReasons:
 
         # Should detect cycle when trying to enter a->b->a
         assert len(positions) == 1  # Only x
-        assert result.termination_reason == TerminationReason.CYCLE_DETECTED
+        assert result.termination_reason == TerminationReason.ENTRY_CYCLE_DETECTED
 
     def test_termination_cycle_detected_exit(self) -> None:
-        """Test that CYCLE_DETECTED is set when exiting through a cycle."""
+        """Test that EXIT_CYCLE_DETECTED is set when exiting through a cycle."""
         store: GridStore = {
             "inner": Grid("inner", ((Concrete("x"),),)),
             "loop1": Grid("loop1", ((Ref("loop2"),),)),
@@ -1071,7 +1071,7 @@ class TestTerminationReasons:
         positions = list(result)
 
         # Should detect cycle when trying to exit
-        assert result.termination_reason == TerminationReason.CYCLE_DETECTED
+        assert result.termination_reason == TerminationReason.EXIT_CYCLE_DETECTED
 
     def test_termination_entry_denied_auto_enter(self) -> None:
         """Test that ENTRY_DENIED is set when try_enter returns None (auto_enter)."""
