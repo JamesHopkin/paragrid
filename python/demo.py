@@ -122,13 +122,13 @@ def traversal_demo() -> None:
         grid = store[grid_id]
         match direction:
             case Direction.N:
-                return CellPosition(grid_id, grid.rows - 1, 0)  # Enter from bottom
+                return CellPosition(grid_id, grid.rows - 1, grid.cols // 2)  # Enter from bottom (middle)
             case Direction.S:
-                return CellPosition(grid_id, 0, 0)  # Enter from top
+                return CellPosition(grid_id, 0, grid.cols // 2)  # Enter from top (middle)
             case Direction.E:
-                return CellPosition(grid_id, 0, 0)  # Enter from left
+                return CellPosition(grid_id, grid.rows // 2, 0)  # Enter from left (middle)
             case Direction.W:
-                return CellPosition(grid_id, 0, grid.cols - 1)  # Enter from right
+                return CellPosition(grid_id, grid.rows // 2, grid.cols - 1)  # Enter from right (middle)
 
     print("=" * 60)
     print("Traversal Demo: Main grid with two refs to Inner")
@@ -199,7 +199,7 @@ def traversal_options_demo() -> None:
         grid = store[grid_id]
         match direction:
             case Direction.E:
-                return CellPosition(grid_id, 0, 0)
+                return CellPosition(grid_id, grid.rows // 2, 0)
             case _:
                 return None
 
@@ -262,19 +262,19 @@ def push_demo() -> None:
     """Demonstrate the push operation with before/after visualizations."""
 
     def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-        """Standard entry function - enter from the edge based on direction."""
+        """Standard entry function - enter at middle of edge based on direction."""
         if grid_id not in store:
             return None
         grid = store[grid_id]
         match direction:
             case Direction.N:
-                return CellPosition(grid_id, grid.rows - 1, 0)
+                return CellPosition(grid_id, grid.rows - 1, grid.cols // 2)
             case Direction.S:
-                return CellPosition(grid_id, 0, 0)
+                return CellPosition(grid_id, 0, grid.cols // 2)
             case Direction.E:
-                return CellPosition(grid_id, 0, 0)
+                return CellPosition(grid_id, grid.rows // 2, 0)
             case Direction.W:
-                return CellPosition(grid_id, 0, grid.cols - 1)
+                return CellPosition(grid_id, grid.rows // 2, grid.cols - 1)
 
     print("=" * 60)
     print("Push Demo: Moving cell contents along a path")

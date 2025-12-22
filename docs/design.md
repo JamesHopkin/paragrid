@@ -66,6 +66,14 @@ Cell = (grid_id, row, col)
 TryEnter = (grid_id, Direction) -> Optional[Cell]
 ```
 
+**Entry Convention**: When entering a grid via a Ref, the standard convention is to enter at the **middle of the edge** corresponding to the direction of entry:
+- **East** (entering from left): `(rows // 2, 0)` — middle of left edge
+- **West** (entering from right): `(rows // 2, cols - 1)` — middle of right edge
+- **South** (entering from top): `(0, cols // 2)` — middle of top edge
+- **North** (entering from bottom): `(rows - 1, cols // 2)` — middle of bottom edge
+
+When the dimension is even, round down (use integer division). For example, a 4-row grid entered from the East enters at row 2 (index counting from 0).
+
 ### Function Signature
 
 ```

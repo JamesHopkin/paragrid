@@ -21,7 +21,6 @@ from paragrid import (
     NestedNode,
     Ref,
     RefNode,
-    TagFn,
     TerminationReason,
     TraversalResult,
     analyze,
@@ -1023,7 +1022,8 @@ class TestPush:
             grid_id: str, direction: Direction
         ) -> CellPosition | None:
             if grid_id == "inner" and direction == Direction.E:
-                return CellPosition("inner", 0, 0)  # Enter from west
+                grid = store["inner"]
+                return CellPosition("inner", grid.rows // 2, 0)  # Enter from west
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1076,7 +1076,8 @@ class TestPush:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "inner" and direction == Direction.E:
-                return CellPosition("inner", 0, 0)
+                grid = store["inner"]
+                return CellPosition("inner", grid.rows // 2, 0)
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1132,7 +1133,8 @@ class TestPush:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "inner" and direction == Direction.E:
-                return CellPosition("inner", 0, 0)
+                grid = store["inner"]
+                return CellPosition("inner", grid.rows // 2, 0)
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1179,7 +1181,8 @@ class TestPushBacktracking:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "inner" and direction == Direction.E:
-                return CellPosition("inner", 0, 0)
+                grid = store["inner"]
+                return CellPosition("inner", grid.rows // 2, 0)
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1210,7 +1213,8 @@ class TestPushBacktracking:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "inner" and direction == Direction.E:
-                return CellPosition("inner", 0, 0)
+                grid = store["inner"]
+                return CellPosition("inner", grid.rows // 2, 0)
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1246,7 +1250,8 @@ class TestPushBacktracking:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "B" and direction == Direction.E:
-                return CellPosition("B", 0, 0)  # Enter at X
+                grid = store["B"]
+                return CellPosition("B", grid.rows // 2, 0)  # Enter at X
             return None
 
         start = CellPosition("main", 0, 0)
@@ -1279,7 +1284,8 @@ class TestPushBacktracking:
 
         def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
             if grid_id == "B" and direction == Direction.E:
-                return CellPosition("B", 0, 0)
+                grid = store["B"]
+                return CellPosition("B", grid.rows // 2, 0)
             # Deny entry to C
             return None
 
