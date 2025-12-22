@@ -239,6 +239,68 @@ class TestParseGrids:
         assert isinstance(grid.cells[0][1], Ref)
         assert grid.cells[0][1].grid_id == "a"
 
+    def test_parse_explicit_primary_ref(self) -> None:
+        """Test parsing explicitly marked primary references."""
+        definitions = {
+            "test": "1 *A|2 3"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # Check that *A creates a Ref with is_primary=True
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].grid_id == "A"
+        assert grid.cells[0][1].is_primary is True
+
+    def test_parse_explicit_secondary_ref(self) -> None:
+        """Test parsing explicitly marked secondary references."""
+        definitions = {
+            "test": "~A 1|2 3"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # Check that ~A creates a Ref with is_primary=False
+        assert isinstance(grid.cells[0][0], Ref)
+        assert grid.cells[0][0].grid_id == "A"
+        assert grid.cells[0][0].is_primary is False
+
+    def test_parse_auto_determined_ref(self) -> None:
+        """Test parsing auto-determined references (plain letters)."""
+        definitions = {
+            "test": "1 A|2 3"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # Check that A creates a Ref with is_primary=None
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].grid_id == "A"
+        assert grid.cells[0][1].is_primary is None
+
+    def test_parse_mixed_primary_markers(self) -> None:
+        """Test parsing mixed primary/secondary/auto markers."""
+        definitions = {
+            "test": "*A ~A A|~B B *B"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # First row: *A (primary), ~A (secondary), A (auto)
+        assert isinstance(grid.cells[0][0], Ref)
+        assert grid.cells[0][0].is_primary is True
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].is_primary is False
+        assert isinstance(grid.cells[0][2], Ref)
+        assert grid.cells[0][2].is_primary is None
+        # Second row: ~B (secondary), B (auto), *B (primary)
+        assert isinstance(grid.cells[1][0], Ref)
+        assert grid.cells[1][0].is_primary is False
+        assert isinstance(grid.cells[1][1], Ref)
+        assert grid.cells[1][1].is_primary is None
+        assert isinstance(grid.cells[1][2], Ref)
+        assert grid.cells[1][2].is_primary is True
+
     def test_parse_invalid_cell_raises_error(self) -> None:
         """Test that invalid cell strings raise an error."""
         definitions = {
@@ -247,6 +309,25 @@ class TestParseGrids:
         with pytest.raises(ValueError, match="Invalid cell string"):
             parse_grids(definitions)
 
+    def test_parse_invalid_cell_error_details(self) -> None:
+        """Test that invalid cell error includes detailed diagnostic information."""
+        definitions = {
+            "TestGrid": "1 2|3 @ 5"
+        }
+        try:
+            parse_grids(definitions)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            error_msg = str(e)
+            # Verify all diagnostic information is present
+            assert "Invalid cell string: '@'" in error_msg
+            assert "Grid: 'TestGrid'" in error_msg
+            assert "Row 1:" in error_msg
+            assert "Position: column 1" in error_msg
+            assert "Valid formats:" in error_msg
+            assert "Digit start" in error_msg
+            assert "Letter start" in error_msg
+
     def test_parse_inconsistent_row_length_raises_error(self) -> None:
         """Test that inconsistent row lengths raise an error."""
         definitions = {
@@ -254,6 +335,125 @@ class TestParseGrids:
         }
         with pytest.raises(ValueError, match="same number of cells"):
             parse_grids(definitions)
+
+    def test_parse_inconsistent_row_length_error_details(self) -> None:
+        """Test that inconsistent row length error includes detailed information."""
+        definitions = {
+            "TestGrid": "1 2|3 4 5|6 7"
+        }
+        try:
+            parse_grids(definitions)
+            assert False, "Should have raised ValueError"
+        except ValueError as e:
+            error_msg = str(e)
+            # Verify diagnostic information is present
+            assert "Inconsistent row lengths in grid 'TestGrid'" in error_msg
+            assert "Expected: 2 columns" in error_msg
+            assert "Mismatched rows:" in error_msg
+            assert "Row 1: 3 columns" in error_msg
+
+    def test_parse_multichar_concrete(self) -> None:
+        """Test parsing multi-character concrete cells."""
+        definitions = {
+            "test": "123 456abc|789xyz 0"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        assert grid.rows == 2
+        assert grid.cols == 2
+
+        # First row: "123", "456abc"
+        assert isinstance(grid.cells[0][0], Concrete)
+        assert grid.cells[0][0].id == "123"
+        assert isinstance(grid.cells[0][1], Concrete)
+        assert grid.cells[0][1].id == "456abc"
+
+        # Second row: "789xyz", "0"
+        assert isinstance(grid.cells[1][0], Concrete)
+        assert grid.cells[1][0].id == "789xyz"
+        assert isinstance(grid.cells[1][1], Concrete)
+        assert grid.cells[1][1].id == "0"
+
+    def test_parse_multichar_refs(self) -> None:
+        """Test parsing multi-character grid references."""
+        definitions = {
+            "Main": "100 Inner|200 Grid2",
+            "Inner": "x",
+            "Grid2": "y"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["Main"]
+        assert grid.rows == 2
+        assert grid.cols == 2
+
+        # First row: Concrete("100"), Ref("Inner")
+        assert isinstance(grid.cells[0][0], Concrete)
+        assert grid.cells[0][0].id == "100"
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].grid_id == "Inner"
+
+        # Second row: Concrete("200"), Ref("Grid2")
+        assert isinstance(grid.cells[1][0], Concrete)
+        assert grid.cells[1][0].id == "200"
+        assert isinstance(grid.cells[1][1], Ref)
+        assert grid.cells[1][1].grid_id == "Grid2"
+
+    def test_parse_multichar_explicit_primary_refs(self) -> None:
+        """Test parsing multi-character refs with explicit primary markers."""
+        definitions = {
+            "test": "*MainGrid ~OtherGrid",
+            "MainGrid": "1",
+            "OtherGrid": "2"
+        }
+        store = parse_grids(definitions)
+
+        grid = store["test"]
+        # First cell: *MainGrid -> Ref("MainGrid", is_primary=True)
+        assert isinstance(grid.cells[0][0], Ref)
+        assert grid.cells[0][0].grid_id == "MainGrid"
+        assert grid.cells[0][0].is_primary is True
+
+        # Second cell: ~OtherGrid -> Ref("OtherGrid", is_primary=False)
+        assert isinstance(grid.cells[0][1], Ref)
+        assert grid.cells[0][1].grid_id == "OtherGrid"
+        assert grid.cells[0][1].is_primary is False
+
+    def test_parse_mixed_multichar_content(self) -> None:
+        """Test parsing a realistic grid with multi-character content and refs."""
+        definitions = {
+            "MainGrid": "1item Portal 2item|100 200 Portal",
+            "Portal": "9x 8y"
+        }
+        store = parse_grids(definitions)
+
+        main = store["MainGrid"]
+        assert main.rows == 2
+        assert main.cols == 3
+
+        # First row: Concrete("1item"), Ref("Portal"), Concrete("2item")
+        assert isinstance(main.cells[0][0], Concrete)
+        assert main.cells[0][0].id == "1item"
+        assert isinstance(main.cells[0][1], Ref)
+        assert main.cells[0][1].grid_id == "Portal"
+        assert isinstance(main.cells[0][2], Concrete)
+        assert main.cells[0][2].id == "2item"
+
+        # Second row: Concrete("100"), Concrete("200"), Ref("Portal")
+        assert isinstance(main.cells[1][0], Concrete)
+        assert main.cells[1][0].id == "100"
+        assert isinstance(main.cells[1][1], Concrete)
+        assert main.cells[1][1].id == "200"
+        assert isinstance(main.cells[1][2], Ref)
+        assert main.cells[1][2].grid_id == "Portal"
+
+        # Verify Portal grid
+        portal = store["Portal"]
+        assert isinstance(portal.cells[0][0], Concrete)
+        assert portal.cells[0][0].id == "9x"
+        assert isinstance(portal.cells[0][1], Concrete)
+        assert portal.cells[0][1].id == "8y"
 
 
 # =============================================================================
@@ -388,6 +588,38 @@ class TestFindPrimaryRef:
         }
         result = find_primary_ref(store, "inner")
         assert result == ("outer", 0, 0)  # First ref should be primary
+
+    def test_find_primary_ref_explicit_primary(self) -> None:
+        """Test that explicitly marked primary is found first."""
+        store: GridStore = {
+            "inner": Grid("inner", ((Concrete("x"),),)),
+            "outer": Grid(
+                "outer",
+                (
+                    (Ref("inner", is_primary=False), Ref("inner", is_primary=True)),
+                ),
+            ),
+        }
+        result = find_primary_ref(store, "inner")
+        assert result == ("outer", 0, 1)  # Second ref is explicitly primary
+
+    def test_find_primary_ref_explicit_overrides_order(self) -> None:
+        """Test that explicit primary marking overrides discovery order."""
+        # Parse with explicit markers - second ref is primary
+        store = parse_grids({
+            "inner": "1",
+            "outer": "~A *A"
+        })
+        # Rename refs to point to "inner" instead of "A"
+        store = {
+            "inner": store["inner"],
+            "outer": Grid(
+                "outer",
+                ((Ref("inner", is_primary=False), Ref("inner", is_primary=True)),)
+            ),
+        }
+        result = find_primary_ref(store, "inner")
+        assert result == ("outer", 0, 1)  # Explicit primary wins
 
 
 class TestTraverse:
@@ -858,6 +1090,63 @@ class TestPush:
         # Verify changes
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["inner"].cells[0][0] == Concrete("A")
+
+    def test_push_stops_at_empty(self) -> None:
+        """Test that push stops immediately when encountering Empty, not continuing past it."""
+        # Setup: [A, B, Empty, C, D]
+        # Push from A eastward should stop at Empty, creating path [A, B, Empty]
+        # NOT continuing to C and D
+        store: GridStore = {
+            "main": Grid(
+                "main",
+                ((Concrete("A"), Concrete("B"), Empty(), Concrete("C"), Concrete("D")),),
+            ),
+        }
+
+        def allow_all_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            return None
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, allow_all_entry)
+
+        assert result is not None
+        # After push: [A, B, Empty, C, D] -> [Empty, A, B, C, D]
+        # Only the first 3 cells should be affected
+        assert isinstance(result["main"].cells[0][0], Empty)
+        assert result["main"].cells[0][1] == Concrete("A")
+        assert result["main"].cells[0][2] == Concrete("B")
+        # C and D should remain unchanged
+        assert result["main"].cells[0][3] == Concrete("C")
+        assert result["main"].cells[0][4] == Concrete("D")
+
+    def test_push_stops_at_empty_through_portal(self) -> None:
+        """Test that push stops at Empty even when entering through a portal."""
+        # Setup: Main: [A, Ref(inner), C]
+        #        Inner: [X, Empty]
+        # Push from A eastward, entering inner at X
+        # Should stop at Empty inside inner
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"), Ref("inner"), Concrete("C")),)),
+            "inner": Grid("inner", ((Concrete("X"), Empty()),)),
+        }
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "inner" and direction == Direction.E:
+                return CellPosition("inner", 0, 0)
+            return None
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, allow_entry)
+
+        assert result is not None
+        # Path should be: [A, X, Empty]
+        # After rotation: [Empty, A, X]
+        # Main[0,0] should be Empty, Main[0,2] should still be C (unchanged)
+        assert isinstance(result["main"].cells[0][0], Empty)
+        assert result["main"].cells[0][2] == Concrete("C")  # C unchanged
+        # Inner should have [A, X]
+        assert result["inner"].cells[0][0] == Concrete("A")
+        assert result["inner"].cells[0][1] == Concrete("X")
 
 
 # =============================================================================

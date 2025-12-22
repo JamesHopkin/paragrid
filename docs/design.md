@@ -220,17 +220,19 @@ The **push** operation moves cell contents along a path in a direction, rotating
 - This behavior applies at any nesting depth
 
 **Success conditions** (push is applied):
-1. Path ends at an `Empty` cell (termination reason: `EDGE_REACHED`) — rotation fills the empty, starting cell becomes empty
+1. Path ends at an `Empty` cell (termination reason: `EDGE_REACHED`) — traversal stops immediately when Empty is encountered, rotation fills the empty, starting cell becomes empty
 2. Path cycles back to starting position (termination reason: `PATH_CYCLE_DETECTED`) — all cells in cycle rotate
 
 **Failure conditions** (push returns `None`, no changes):
-- Hit edge of root grid without finding `Empty` (`EDGE_REACHED`)
+- Hit edge of root grid without finding `Empty` (`EDGE_REACHED` but last cell is not Empty)
 - Path cycles to non-start position (`PATH_CYCLE_DETECTED` but not cycling to start)
 - Entry cycle while following Ref chain (`ENTRY_CYCLE_DETECTED`)
 - Exit cycle while following exit chain (`EXIT_CYCLE_DETECTED`)
 - Stop tag encountered (`STOP_TAG`)
 - Entry denied (`ENTRY_DENIED`)
 - Maximum depth reached (`MAX_DEPTH_REACHED`)
+
+**Key behavior**: Traversal terminates immediately upon encountering an Empty cell. The Empty cell is included in the path and becomes the destination for the push. This prevents unnecessary iteration past the target.
 
 **Rotation mechanics**:
 - Cell contents shift forward along the path

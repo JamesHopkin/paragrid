@@ -5,6 +5,7 @@ Two-phase algorithm: analyze (builds CellTree) -> render (ASCII output).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
@@ -12,6 +13,8 @@ from math import lcm
 from typing import Callable, Iterator, Union
 
 import simple_chalk as chalk  # type: ignore[import-untyped]
+
+logger = logging.getLogger(__name__)
 
 
 class Direction(Enum):
@@ -59,6 +62,7 @@ class Ref:
     """A cell referencing another grid."""
 
     grid_id: str
+    is_primary: bool | None = None  # None = auto-determine, True/False = explicit
 
 
 Cell = Empty | Concrete | Ref
@@ -90,19 +94,26 @@ def parse_grids(definitions: dict[str, str]) -> GridStore:
     Format:
     - Rows separated by |
     - Cells separated by spaces
-    - Numbers (0-9): Concrete cells (e.g., "1" -> Concrete("1"))
-    - Letters (a-zA-Z): Ref cells (e.g., "A" -> Ref("A"), "a" -> Ref("a"))
-    - Underscore (_): Empty cell
-    - Multiple adjacent spaces: multiple Empty cells
+    - Cell type determined by FIRST CHARACTER (allows multi-character content/refs):
+      * First char is digit (0-9): Concrete cell with entire string as content
+        Examples: "1" -> Concrete("1"), "123abc" -> Concrete("123abc")
+      * First char is letter (a-zA-Z): Ref cell with entire string as grid_id (auto-determined primary)
+        Examples: "A" -> Ref("A"), "Main" -> Ref("Main"), "Grid2" -> Ref("Grid2")
+      * First char is '*': Primary ref, remainder is grid_id (must have at least 1 char after *)
+        Examples: "*A" -> Ref("A", is_primary=True), "*Main" -> Ref("Main", is_primary=True)
+      * First char is '~': Secondary ref, remainder is grid_id (must have at least 1 char after ~)
+        Examples: "~A" -> Ref("A", is_primary=False), "~Grid2" -> Ref("Grid2", is_primary=False)
+      * Underscore only (_): Empty cell
+      * Empty string (from multiple adjacent spaces): Empty cell
 
     Example:
         {
-            "main": "1 2|3 A",
-            "A": "5|6"
+            "main": "123 abc|xyz *Main",
+            "Main": "5|6"
         }
         Creates:
-        - Grid "main": 2x2 with [Concrete("1"), Concrete("2")], [Concrete("3"), Ref("A")]
-        - Grid "A": 2x1 with [Concrete("5")], [Concrete("6")]
+        - Grid "main": 2x2 with [Concrete("123"), Concrete("abc")], [Concrete("xyz"), Ref("Main", is_primary=True)]
+        - Grid "Main": 2x1 with [Concrete("5")], [Concrete("6")]
 
     Args:
         definitions: Dict mapping grid_id to string definition
@@ -117,31 +128,60 @@ def parse_grids(definitions: dict[str, str]) -> GridStore:
         row_strings = definition.split("|")
         rows: list[tuple[Cell, ...]] = []
 
-        for row_str in row_strings:
+        for row_idx, row_str in enumerate(row_strings):
             # Split by single space to get individual cells
             # Multiple spaces = multiple empty cells
             cell_strings = row_str.split(" ")
             cells: list[Cell] = []
 
-            for cell_str in cell_strings:
+            for col_idx, cell_str in enumerate(cell_strings):
                 if not cell_str:  # Empty string from split = Empty cell
                     cells.append(Empty())
                 elif cell_str == "_":  # Explicit empty marker
                     cells.append(Empty())
-                elif cell_str.isdigit():  # Number = Concrete
+                elif cell_str[0].isdigit():  # First char is digit = Concrete
                     cells.append(Concrete(cell_str))
-                elif cell_str.isalpha():  # Letter = Ref
-                    cells.append(Ref(cell_str))
+                elif cell_str[0].isalpha():  # First char is letter = Ref (auto-determined)
+                    cells.append(Ref(cell_str, is_primary=None))
+                elif cell_str.startswith("*") and len(cell_str) >= 2:
+                    # *... = Primary ref (rest is grid_id)
+                    cells.append(Ref(cell_str[1:], is_primary=True))
+                elif cell_str.startswith("~") and len(cell_str) >= 2:
+                    # ~... = Secondary ref (rest is grid_id)
+                    cells.append(Ref(cell_str[1:], is_primary=False))
                 else:
-                    raise ValueError(f"Invalid cell string: '{cell_str}' in grid '{grid_id}'")
+                    # Provide detailed error information
+                    error_msg = (
+                        f"Invalid cell string: '{cell_str}'\n"
+                        f"  Grid: '{grid_id}'\n"
+                        f"  Row {row_idx}: \"{row_str}\"\n"
+                        f"  Position: column {col_idx}\n"
+                        f"  Valid formats:\n"
+                        f"    - Digit start (0-9...): Concrete cell (e.g., '1', '123abc')\n"
+                        f"    - Letter start (a-zA-Z...): Ref cell (e.g., 'A', 'Main')\n"
+                        f"    - '*' prefix: Primary ref (e.g., '*A', '*Main')\n"
+                        f"    - '~' prefix: Secondary ref (e.g., '~A', '~Main')\n"
+                        f"    - '_': Empty cell\n"
+                        f"    - Empty string (multiple spaces): Empty cell"
+                    )
+                    raise ValueError(error_msg)
 
             rows.append(tuple(cells))
 
         # Validate all rows have same length
         if rows:
             cols = len(rows[0])
-            if any(len(row) != cols for row in rows):
-                raise ValueError(f"All rows in grid '{grid_id}' must have same number of cells")
+            mismatched = [(i, len(row)) for i, row in enumerate(rows) if len(row) != cols]
+            if mismatched:
+                error_msg = (
+                    f"Inconsistent row lengths in grid '{grid_id}'\n"
+                    f"  Expected: {cols} columns (from row 0)\n"
+                    f"  Mismatched rows:\n"
+                )
+                for row_idx, actual_cols in mismatched:
+                    error_msg += f"    Row {row_idx}: {actual_cols} columns - \"{row_strings[row_idx]}\"\n"
+                error_msg += f"  All rows must have the same number of cells"
+                raise ValueError(error_msg)
 
         # Create Grid
         grid = Grid(grid_id, tuple(rows))
@@ -242,11 +282,20 @@ def analyze(
                     cols.append(EmptyNode())
                 case Concrete(id=cell_id):
                     cols.append(ConcreteNode(cell_id, grid_id))
-                case Ref(grid_id=ref_id):
+                case Ref(grid_id=ref_id, is_primary=explicit_primary):
                     # Check if this is the primary reference
-                    is_primary = ref_id not in primary_refs
-                    if is_primary:
+                    if explicit_primary is True:
+                        # Explicitly marked as primary
+                        is_primary = True
                         primary_refs.add(ref_id)
+                    elif explicit_primary is False:
+                        # Explicitly marked as non-primary
+                        is_primary = False
+                    else:
+                        # Auto-determine: first ref to this grid is primary
+                        is_primary = ref_id not in primary_refs
+                        if is_primary:
+                            primary_refs.add(ref_id)
 
                     # Analyze the referenced grid
                     content = analyze(store, ref_id, cell_width, cell_height, threshold, primary_refs)
@@ -325,9 +374,17 @@ class TraversalResult:
 def find_primary_ref(store: GridStore, target_grid_id: str) -> tuple[str, int, int] | None:
     """
     Find the primary reference to a grid.
-    For now, returns the first reference found (could be extended to support explicit marking).
+    First looks for explicitly marked primary (is_primary=True), then falls back to first ref found.
     Returns (parent_grid_id, row, col) or None if not found.
     """
+    # First pass: look for explicitly marked primary
+    for grid in store.values():
+        for r, row in enumerate(grid.cells):
+            for c, cell in enumerate(row):
+                if isinstance(cell, Ref) and cell.grid_id == target_grid_id and cell.is_primary is True:
+                    return (grid.id, r, c)
+
+    # Second pass: fall back to first ref found
     for grid in store.values():
         for r, row in enumerate(grid.cells):
             for c, cell in enumerate(row):
@@ -998,10 +1055,18 @@ def push_traverse_simple(
                 final_cell = get_cell(store, current)
                 path.append((current, final_cell))
                 visited.add((current.grid_id, current.row, current.col))
+
+                # Check if we just added an Empty cell - if so, push succeeds
+                if isinstance(final_cell, Empty):
+                    return (path, TerminationReason.EDGE_REACHED)
         else:
             # Non-Ref cell - add to path and continue
             path.append((current, cell))
             visited.add(key)
+
+            # Check if we just added an Empty cell - if so, push succeeds
+            if isinstance(cell, Empty):
+                return (path, TerminationReason.EDGE_REACHED)
 
     # Exceeded max_depth
     return (path, TerminationReason.MAX_DEPTH_REACHED)
@@ -1243,6 +1308,10 @@ def push_traverse_backtracking(
                     final_cell = get_cell(store, current)
                     path.append((current, final_cell))
                     visited.add((current.grid_id, current.row, current.col))
+
+                    # Check if we just added an Empty cell - if so, push succeeds
+                    if isinstance(final_cell, Empty):
+                        return (path, TerminationReason.EDGE_REACHED)
                 else:
                     # Entry denied - Ref acts as SOLID object
                     path.append((current, cell))
@@ -1255,6 +1324,10 @@ def push_traverse_backtracking(
             # Non-Ref cell - add to path and continue
             path.append((current, cell))
             visited.add(key)
+
+            # Check if we just added an Empty cell - if so, push succeeds
+            if isinstance(cell, Empty):
+                return (path, TerminationReason.EDGE_REACHED)
 
     # Exceeded max_depth - try to backtrack
     if decision_stack and backtrack_count < max_backtrack_depth:
@@ -1323,11 +1396,20 @@ def apply_push(
 
 
 def collect_denominators(node: CellNode) -> set[int]:
-    """Collect all denominators from nested grid dimensions."""
+    """Collect all denominators from nested grid dimensions.
+
+    Tracks visited grids to prevent infinite recursion on cyclic references.
+    """
     denoms: set[int] = set()
+    visited_grids: set[str] = set()
 
     def walk(n: CellNode, w: Fraction, h: Fraction) -> None:
         if isinstance(n, NestedNode):
+            # Check if we've already visited this grid
+            if n.grid_id in visited_grids:
+                return
+            visited_grids.add(n.grid_id)
+
             rows = len(n.children)
             cols = len(n.children[0]) if n.children else 0
             if cols > 0 and rows > 0:
@@ -1339,20 +1421,43 @@ def collect_denominators(node: CellNode) -> set[int]:
                     for child in row:
                         walk(child, cw, ch)
         elif isinstance(n, RefNode):
+            # Just walk the content - the NestedNode inside will handle cycle detection
             walk(n.content, w, h)
 
     walk(node, Fraction(1), Fraction(1))
     return denoms
 
 
-def compute_scale(node: CellNode) -> tuple[int, int]:
-    """Compute character dimensions that give exact integer cell sizes."""
+def compute_scale(node: CellNode, max_scale: int = 10000) -> tuple[int, int]:
+    """
+    Compute character dimensions that give exact integer cell sizes.
+
+    Args:
+        node: The cell tree to compute scale for
+        max_scale: Maximum scale to prevent excessive memory usage (default 10000)
+
+    Returns:
+        Tuple of (width, height) in characters
+    """
     denoms = collect_denominators(node)
     if not denoms:
         return (1, 1)
     scale = 1
+    capped = False
     for d in denoms:
-        scale = lcm(scale, d)
+        new_scale = lcm(scale, d)
+        if new_scale > max_scale:
+            # Stop growing - use current scale
+            capped = True
+            break
+        scale = new_scale
+
+    logger.info(
+        "compute_scale: common denominator=%d, capped=%s (max_scale=%d)",
+        scale,
+        capped,
+        max_scale,
+    )
     return (scale, scale)
 
 
@@ -1365,15 +1470,30 @@ def render_to_buffer(
     h: int,
     color_fn: Callable[[str], Callable[[str], str]],
     parent_grid_id: str | None = None,
+    highlight_pos: CellPosition | None = None,
+    current_grid_id: str | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
 ) -> None:
     """Render a CellNode into a character buffer at the given position."""
     if w <= 0 or h <= 0:
         return
 
+    # Check if this cell should be highlighted
+    is_highlighted = (
+        highlight_pos is not None
+        and current_grid_id == highlight_pos.grid_id
+        and current_row == highlight_pos.row
+        and current_col == highlight_pos.col
+    )
+
     match node:
         case EmptyNode():
             # Draw border with dash (explicitly empty), colored by parent grid
-            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            if is_highlighted:
+                colorize = chalk.white
+            else:
+                colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
             char = colorize("-")
             if w >= 3 and h >= 3:
                 # Draw outline
@@ -1391,7 +1511,10 @@ def render_to_buffer(
 
         case CutoffNode():
             # Fill with dash (below threshold, had more content), colored by parent grid
-            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
+            if is_highlighted:
+                colorize = chalk.white
+            else:
+                colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
             char = colorize("-")
             for row in range(y, y + h):
                 for col in range(x, x + w):
@@ -1399,7 +1522,10 @@ def render_to_buffer(
 
         case ConcreteNode(id=cell_id, grid_id=gid):
             base_char = cell_id[0] if cell_id else "?"
-            colorize = color_fn(gid)
+            if is_highlighted:
+                colorize = chalk.white
+            else:
+                colorize = color_fn(gid)
             char = colorize(base_char)
             if w >= 3 and h >= 3:
                 # Draw outline
@@ -1417,7 +1543,10 @@ def render_to_buffer(
 
         case RefNode(grid_id=gid, ref_target=ref_target, is_primary=is_primary, content=content):
             # Render the content first
-            render_to_buffer(content, buffer, x, y, w, h, color_fn, gid)
+            render_to_buffer(
+                content, buffer, x, y, w, h, color_fn, gid,
+                highlight_pos, current_grid_id, current_row, current_col
+            )
 
             # For primary refs, fill interior with dots matching the referenced grid's color
             if is_primary and w >= 3 and h >= 3:
@@ -1449,6 +1578,10 @@ def render_to_buffer(
                         cell_h,
                         color_fn,
                         gid,  # Pass grid_id as parent context
+                        highlight_pos,
+                        gid,  # Current grid_id for this cell
+                        r_idx,  # Current row
+                        c_idx,  # Current col
                     )
 
 
@@ -1472,9 +1605,19 @@ def collect_grid_ids(node: CellNode) -> set[str]:
     return ids
 
 
-def render(node: CellNode) -> str:
-    """Render a CellTree to an ASCII string with colors."""
-    char_w, char_h = compute_scale(node)
+def render(node: CellNode, max_scale: int = 10000, highlight_pos: CellPosition | None = None) -> str:
+    """
+    Render a CellTree to an ASCII string with colors.
+
+    Args:
+        node: The cell tree to render
+        max_scale: Maximum scale for rendering (default 10000)
+        highlight_pos: Optional cell position to highlight in white
+
+    Returns:
+        Rendered ASCII string with ANSI color codes
+    """
+    char_w, char_h = compute_scale(node, max_scale)
 
     # Build color palette for grids
     colors: list[Callable[[str], str]] = [
@@ -1501,7 +1644,7 @@ def render(node: CellNode) -> str:
     buffer: list[list[str]] = [[" " for _ in range(char_w)] for _ in range(char_h)]
 
     # Render into buffer
-    render_to_buffer(node, buffer, 0, 0, char_w, char_h, color_fn)
+    render_to_buffer(node, buffer, 0, 0, char_w, char_h, color_fn, highlight_pos=highlight_pos)
 
     # Convert to string
     return "\n".join("".join(row) for row in buffer)
