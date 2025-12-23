@@ -215,16 +215,33 @@ flowchart RL
 
 The **push** operation moves cell contents along a path in a direction, rotating cells forward when successful.
 
+### Rule Sets
+
+Operations in Paragrid are governed by **rule sets** that control how various interactions are handled. Each operation (currently just push) requires a rule set parameter.
+
+**Rule Set Options**:
+- `ref_strategy`: Controls how Ref cells are handled when encountered during the operation
+  - `"try_enter_first"`: Attempt to enter the Ref as a portal first; if entry fails, treat it as a solid object
+  - `"push_first"`: Attempt to push the Ref as a solid object first; if push fails, try entering as a portal
+
+The rule set determines the initial behavior when encountering Refs, affecting both the primary operation and backtracking logic.
+
 ### Design Specification
 
-**Concept**: Given a starting cell and direction, traverse to build a path of positions, then rotate the cell contents within that path.
+**Concept**: Given a starting cell, direction, and rule set, traverse to build a path of positions, then rotate the cell contents within that path.
 
 **Traversal semantics**:
 - Uses `auto_enter=True` and `auto_exit=True` (standard traversal with reference chain following)
-- **Special Ref handling**:
-  - Call `try_enter(grid_id, direction)` when encountering a Ref
-  - **Entry succeeds**: Ref acts as **portal** — NOT included in push path, traversal continues from inside referenced grid
-  - **Entry fails** (returns `None`): Ref acts as **solid object** — IS included in push path, traversal continues from next cell in parent grid
+- **Special Ref handling** (governed by rule set):
+  - When encountering a Ref, call `try_enter(grid_id, direction)`
+  - **If `ref_strategy="try_enter_first"`**:
+    - Try entry first
+    - **Entry succeeds**: Ref acts as **portal** — NOT included in push path, traversal continues from inside referenced grid
+    - **Entry fails** (returns `None`): Ref acts as **solid object** — IS included in push path, traversal continues from next cell in parent grid
+  - **If `ref_strategy="push_first"`**:
+    - Try pushing Ref as solid object first
+    - Add Ref to path immediately, continue traversal from next cell in parent grid
+    - If push fails, backtracking can retry with portal behavior
 - This behavior applies at any nesting depth
 
 **Success conditions** (push is applied):
@@ -260,11 +277,12 @@ def push(
     start: CellPosition,
     direction: Direction,
     try_enter: TryEnter,
+    rules: RuleSet,
     max_depth: int = 1000,
 ) -> GridStore | None
 ```
 
-Main API that orchestrates traversal and application.
+Main API that orchestrates traversal and application. Takes a `RuleSet` parameter to control Ref handling behavior.
 
 ```python
 def push_traverse(
@@ -272,11 +290,12 @@ def push_traverse(
     start: CellPosition,
     direction: Direction,
     try_enter: TryEnter,
+    rules: RuleSet,
     max_depth: int = 1000,
 ) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]
 ```
 
-Custom traversal that tracks original cell contents and implements Ref-as-object fallback.
+Custom traversal that tracks original cell contents and implements Ref handling according to the rule set.
 
 Returns a tuple of:
 - `path`: List of `(position, original_cell)` tuples representing cells visited
@@ -295,9 +314,15 @@ Rotates cell contents and creates new Grid instances (immutable reconstruction).
 
 1. **push_traverse()**: Similar to `traverse()` but:
    - Returns list of `(position, original_cell)` tuples
-   - When encountering Ref: try to enter first
-   - If entry succeeds: pop Ref from path, follow enter chain via `_follow_enter_chain()`
-   - If entry fails: keep Ref in path, continue from next cell in same grid
+   - When encountering Ref: behavior depends on `rules.ref_strategy`
+   - **If `ref_strategy="try_enter_first"`**:
+     - Try to enter first
+     - If entry succeeds: pop Ref from path, follow enter chain via `_follow_enter_chain()`
+     - If entry fails: keep Ref in path, continue from next cell in same grid
+   - **If `ref_strategy="push_first"`**:
+     - Add Ref to path immediately as solid object
+     - Continue from next cell in same grid
+     - Backtracking may later retry with portal behavior
    - Cycle detection: track visited positions, success if cycling to start
 
 2. **apply_push()**:
@@ -338,9 +363,9 @@ Grid Main (1×3):         Grid Inner (1×2):
      col 0    1    2          0   1
 ```
 
-**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter)`
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter, rules)`
 
-Assume `try_enter` allows entry from East at `Inner[0, 0]`.
+Assume `rules.ref_strategy="try_enter_first"` and `try_enter` allows entry from East at `Inner[0, 0]`.
 
 **Traversal**:
 1. Start at `Main[0,0]` (cell A) → add to path
@@ -382,9 +407,9 @@ Grid Main (1×3):
      col 0    1     2
 ```
 
-**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter)`
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter, rules)`
 
-Assume `try_enter` **denies** entry to "Lock" grid (returns `None`).
+Assume `rules.ref_strategy="try_enter_first"` and `try_enter` **denies** entry to "Lock" grid (returns `None`).
 
 **Traversal**:
 1. Start at `Main[0,0]` (cell A) → add to path
@@ -408,29 +433,35 @@ Grid Main (1×3):
 
 ### Push with Backtracking
 
-The default push algorithm (`push()`) includes backtracking to maximize success rate when pushing through Refs.
+The default push algorithm (`push()`) includes backtracking to maximize success rate when handling Refs.
 
-**Problem**: In the simple algorithm, if `try_enter()` succeeds and traversal enters a referenced grid, any failure inside that grid (stop tag, entry denial, edge without Empty) causes the entire push to fail with no fallback.
+**Problem**: When the initial Ref handling strategy fails (either portal or solid), any failure (stop tag, entry denial, edge without Empty) causes the entire push to fail with no fallback.
 
-**Solution**: Track "decision points" where we enter Refs as portals. When push fails after entering, automatically backtrack to the last decision point and retry with that Ref treated as a solid object.
+**Solution**: Track "decision points" where Ref handling choices are made. When push fails, automatically backtrack to the last decision point and retry with the alternative Ref handling strategy.
 
 **Backtracking mechanism**:
-1. **Decision tracking**: Each successful Ref entry creates a `DecisionPoint` that saves:
+1. **Decision tracking**: Each Ref handling attempt creates a `DecisionPoint` that saves:
    - Ref position and cell
-   - Path state before entering
-   - Visited set before entering
+   - Path state before the decision
+   - Visited set before the decision
    - Traversal depth at that point
+   - The strategy used (`"portal"` or `"solid"`)
 
 2. **Failure detection**: On any termination that's not a valid success:
    - Check if decision stack is not empty and backtrack count < max_backtrack_depth
    - Pop last DecisionPoint
-   - Mark that Ref as "blocked" (treat as solid going forward)
+   - Mark that Ref for alternative handling (opposite of what was tried)
    - Restore state to just before that decision
-   - Add the Ref to path as solid and continue traversal
+   - Retry with alternative strategy
 
-3. **Multi-level support**: Supports multiple levels of backtracking for nested Refs. Each backtrack pops one decision point and marks one Ref as blocked.
+3. **Strategy flipping**:
+   - **If `ref_strategy="try_enter_first"`**: Initial attempt is portal; backtrack tries solid
+   - **If `ref_strategy="push_first"`**: Initial attempt is solid; backtrack tries portal
+   - After backtracking, that specific Ref uses the alternative strategy for remaining traversal
 
-**Blocked Refs tracking**: After backtracking from a Ref, that specific Ref position is marked in `blocked_refs` set. During subsequent traversal, blocked Refs are immediately treated as solid objects without attempting portal entry.
+4. **Multi-level support**: Supports multiple levels of backtracking for nested Refs. Each backtrack pops one decision point and flips one Ref's handling strategy.
+
+**Alternative strategy tracking**: After backtracking from a Ref, that specific Ref position is marked in `alternative_refs` set with its alternative strategy. During subsequent traversal, these Refs use their marked strategy instead of the rule set default.
 
 **Termination**: Backtracking stops when:
 - Push succeeds (ends at Empty or cycles to start)
@@ -438,7 +469,7 @@ The default push algorithm (`push()`) includes backtracking to maximize success 
 - `max_backtrack_depth` is exceeded (default 10)
 - All backtracking attempts fail
 
-**Simple algorithm**: For testing or when deterministic behavior is needed without backtracking overhead, use `push_simple()` which fails immediately without retry when portal path fails.
+**Simple algorithm**: For testing or when deterministic behavior is needed without backtracking overhead, use `push_simple()` which fails immediately without retry when the initial strategy fails.
 
 **Example**:
 ```
@@ -446,23 +477,29 @@ Setup: Grid Main: [A, Ref(inner), Empty]
        Grid Inner: [X, STOP]
 ```
 
-With `push_simple()`:
+With `push_simple()` and `ref_strategy="try_enter_first"`:
 1. Start at A, move East to Ref
 2. `try_enter` succeeds → enter Inner as portal
 3. Arrive at X, move East to STOP
 4. Check stop tag → terminates with STOP_TAG
 5. **Push fails**, returns None
 
-With `push()` (backtracking):
+With `push()` (backtracking) and `ref_strategy="try_enter_first"`:
 1. Start at A, move East to Ref
 2. `try_enter` succeeds → create DecisionPoint, enter Inner as portal
 3. Arrive at X, move East to STOP
 4. Check stop tag → triggers backtracking
-5. **Backtrack**: restore to before Ref entry, mark Ref as blocked
-6. Add Ref to path as solid (blocked), continue East to Empty
+5. **Backtrack**: restore to before Ref, mark Ref for solid handling
+6. Add Ref to path as solid, continue East to Empty
 7. **Push succeeds**: rotate [A, Ref(inner), Empty] → [Empty, A, Ref(inner)]
 
-**Key insight**: Backtracking enables pushes that would otherwise fail, by automatically trying alternative interpretations of Refs (portal vs solid) when the initial choice doesn't work out.
+With `push_simple()` and `ref_strategy="push_first"`:
+1. Start at A, move East to Ref
+2. Add Ref to path as solid (per rule set)
+3. Continue East to Empty
+4. **Push succeeds**: rotate [A, Ref(inner), Empty] → [Empty, A, Ref(inner)]
+
+**Key insight**: The rule set controls the initial Ref handling strategy. Backtracking enables pushes that would otherwise fail by automatically trying the alternative strategy when the initial choice doesn't work out.
 
 ---
 

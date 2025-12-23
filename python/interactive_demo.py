@@ -215,6 +215,9 @@ def create_demo_store() -> GridStore:
         'inner': '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
     })
 
+def create_demo_store() -> GridStore:
+    return parse_grids(LEVEL_SWAP)
+
 
 def main() -> None:
     """Run interactive demo with a sample grid setup."""
