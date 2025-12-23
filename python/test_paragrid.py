@@ -21,6 +21,8 @@ from paragrid import (
     NestedNode,
     Ref,
     RefNode,
+    RefStrategy,
+    RuleSet,
     TerminationReason,
     TraversalResult,
     analyze,
@@ -914,7 +916,8 @@ class TestPush:
                 return CellPosition(grid_id, grid.rows - 1, 0)
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_all_entry)
+        rules = RuleSet()  # Default: TRY_ENTER_FIRST
+        result = push_simple(store, start, Direction.E, allow_all_entry, rules)
 
         assert result is not None
         # After push: [A, B, Empty] -> [Empty, A, B]
@@ -965,7 +968,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry, RuleSet())
 
         # Path: [Empty, A], push ends at A (not Empty) -> should fail
         assert result is None
@@ -983,7 +986,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry, RuleSet())
 
         assert result is not None
         # Original store should be unchanged
@@ -1001,7 +1004,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry, RuleSet())
 
         # Path: [A, B, C], hits edge at non-Empty -> should fail
         assert result is None
@@ -1027,7 +1030,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_entry_from_west)
+        result = push_simple(store, start, Direction.E, allow_entry_from_west, RuleSet())
 
         assert result is not None
         # After push: A -> X -> Y -> Empty
@@ -1054,7 +1057,7 @@ class TestPush:
             return CellPosition(grid_id, 0, 0)
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, deny_entry)
+        result = push_simple(store, start, Direction.E, deny_entry, RuleSet())
 
         assert result is not None
         # Path: [A, Ref(locked), Empty]
@@ -1081,7 +1084,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_entry)
+        result = push_simple(store, start, Direction.E, allow_entry, RuleSet())
 
         assert result is not None
         # Both grids should be updated
@@ -1108,7 +1111,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_all_entry)
+        result = push_simple(store, start, Direction.E, allow_all_entry, RuleSet())
 
         assert result is not None
         # After push: [A, B, Empty, C, D] -> [Empty, A, B, C, D]
@@ -1138,7 +1141,7 @@ class TestPush:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, allow_entry)
+        result = push_simple(store, start, Direction.E, allow_entry, RuleSet())
 
         assert result is not None
         # Path should be: [A, X, Empty]
@@ -1188,11 +1191,11 @@ class TestPushBacktracking:
         start = CellPosition("main", 0, 0)
 
         # Simple version should fail
-        result_simple = push_simple(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        result_simple = push_simple(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_stop)
         assert result_simple is None, "Simple push should fail when hitting stop inside Ref"
 
         # Backtracking version should succeed
-        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        result = push(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_stop)
         assert result is not None, "Backtracking push should succeed"
 
         # Result: [Empty, A, Ref(inner)]
@@ -1220,8 +1223,8 @@ class TestPushBacktracking:
         start = CellPosition("main", 0, 0)
 
         # Both versions should succeed with same result
-        result_simple = push_simple(store, start, Direction.E, allow_entry)
-        result_backtrack = push(store, start, Direction.E, allow_entry)
+        result_simple = push_simple(store, start, Direction.E, allow_entry, RuleSet())
+        result_backtrack = push(store, start, Direction.E, allow_entry, RuleSet())
 
         assert result_simple is not None
         assert result_backtrack is not None
@@ -1257,11 +1260,11 @@ class TestPushBacktracking:
         start = CellPosition("main", 0, 0)
 
         # Simple version should fail (enters B, hits STOP after X)
-        result_simple = push_simple(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        result_simple = push_simple(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_stop)
         assert result_simple is None
 
         # Backtracking version should succeed by treating Ref1 as solid
-        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_stop)
+        result = push(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_stop)
         assert result is not None
 
         # Result: [Empty, A, Ref(B)]
@@ -1292,11 +1295,11 @@ class TestPushBacktracking:
         start = CellPosition("main", 0, 0)
 
         # Simple version should fail
-        result_simple = push_simple(store, start, Direction.E, allow_entry)
+        result_simple = push_simple(store, start, Direction.E, allow_entry, RuleSet())
         assert result_simple is None
 
         # Backtracking version should succeed
-        result = push(store, start, Direction.E, allow_entry)
+        result = push(store, start, Direction.E, allow_entry, RuleSet())
         assert result is not None
 
         # Result: [Empty, A, Ref(B)]
@@ -1639,7 +1642,7 @@ class TestTagging:
             return None
 
         start = CellPosition("main", 0, 0)
-        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_fn)
+        result = push(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_fn)
 
         # The push should fail because the '9' cell has a stop tag
         assert result is None, "Push should fail when encountering stop-tagged cell in reference chain"

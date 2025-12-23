@@ -5,6 +5,7 @@ Demonstration scripts for the Paragrid visualization system.
 from fractions import Fraction
 
 from paragrid import (
+    RuleSet,
     CellPosition,
     Concrete,
     Direction,
@@ -303,7 +304,7 @@ def push_demo() -> None:
     print("Expected: A moves right, creating empty space at start")
     print()
 
-    result = push(store, start, Direction.E, try_enter)
+    result = push(store, start, Direction.E, try_enter, RuleSet())
 
     if result:
         print("AFTER:")
@@ -336,7 +337,7 @@ def push_demo() -> None:
     print("Expected: Fails because no empty space found")
     print()
 
-    result = push(store, start, Direction.E, try_enter)
+    result = push(store, start, Direction.E, try_enter, RuleSet())
 
     if result:
         print("AFTER:")
@@ -370,7 +371,7 @@ def push_demo() -> None:
     print("Note: This depends on traversal behavior at edges")
     print()
 
-    result = push(store, start, Direction.E, try_enter)
+    result = push(store, start, Direction.E, try_enter, RuleSet())
 
     if result:
         print("AFTER:")
@@ -416,7 +417,7 @@ def push_demo() -> None:
     print("Result: Main[A, Ref, Y], Inner[Empty, X] (rotated)")
     print()
 
-    result = push(store, start, Direction.E, try_enter)
+    result = push(store, start, Direction.E, try_enter, RuleSet())
 
     if result:
         print("AFTER:")
@@ -467,7 +468,7 @@ def push_demo() -> None:
     print("Result: [Empty, A, Ref(locked)]")
     print()
 
-    result = push(store, start, Direction.E, try_enter_locked)
+    result = push(store, start, Direction.E, try_enter_locked, RuleSet())
 
     if result:
         print("AFTER:")

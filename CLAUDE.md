@@ -30,3 +30,10 @@
 - **Single-cell references**: Each ref occupies exactly one cell (no multi-cell spans)
 - **Aspect ratio inheritance**: Referenced grids stretch/squash to fill their parent cell
 - **Type checking**: Uses `mypy --strict`
+
+## Development Setup
+
+**Python Environment**: Always use the virtual environment (`venv`) for all Python testing and development:
+- Location: `python/venv/`
+- Activate with: `source python/venv/bin/activate` (Unix/Mac) or `python\venv\Scripts\activate` (Windows)
+- Run tests with: `python/venv/bin/python -m pytest python/test_paragrid.py` (or use the activated venv)

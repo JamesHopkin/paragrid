@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from paragrid import (
+    RuleSet,
     CellPosition,
     Concrete,
     Direction,
@@ -114,7 +115,7 @@ class InteractiveDemo:
     def attempt_push(self) -> None:
         """Attempt to push from current position in current direction."""
         start = CellPosition(self.current_grid, self.push_row, self.push_col)
-        result = push(self.store, start, self.direction, self.try_enter, self.tag_fn)
+        result = push(self.store, start, self.direction, self.try_enter, RuleSet(), self.tag_fn)
 
         if result:
             # Push succeeded - update store and follow the pushed content
@@ -190,30 +191,11 @@ class InteractiveDemo:
                 self.status_message = "Interrupted by user"
                 live.update(self.generate_display())
 
-def create_demo_store() -> GridStore:
-    """Create the demo grid store."""
-    # return {
-    #     "main": Grid(
-    #         "main",
-    #         (
-    #             (Concrete("A"), Concrete("B"), Concrete("C"), Empty()),
-    #             (Concrete("D"), Ref("inner"), Concrete("F"), Empty()),
-    #             (Concrete("G"), Concrete("H"), Concrete("I"), Empty()),
-    #         ),
-    #     ),
-    #     "inner": Grid(
-    #         "inner",
-    #         (
-    #             (Concrete("1"), Concrete("2")),
-    #             (Concrete("3"), Concrete("4")),
-    #         ),
-    #     ),
-    # }
 
-    return parse_grids({
-        'main': '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-        'inner': '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
-    })
+LEVEL_SWAP = dict(
+    main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+)
 
 def create_demo_store() -> GridStore:
     return parse_grids(LEVEL_SWAP)
