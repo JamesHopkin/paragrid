@@ -45,21 +45,6 @@ class InteractiveDemo:
         self.console = Console()
         self.status_message = "Ready"
 
-    def try_enter(self, grid_id: str, direction: Direction) -> CellPosition | None:
-        """Standard entry function - enter at middle of edge based on direction."""
-        if grid_id not in self.store:
-            return None
-        grid = self.store[grid_id]
-        match direction:
-            case Direction.N:
-                return CellPosition(grid_id, grid.rows - 1, grid.cols // 2)
-            case Direction.S:
-                return CellPosition(grid_id, 0, grid.cols // 2)
-            case Direction.E:
-                return CellPosition(grid_id, grid.rows // 2, 0)
-            case Direction.W:
-                return CellPosition(grid_id, grid.rows // 2, grid.cols - 1)
-
     def generate_display(self) -> Panel:
         """Generate the current display with grid and status."""
         # Analyze and render current grid
@@ -115,7 +100,7 @@ class InteractiveDemo:
     def attempt_push(self) -> None:
         """Attempt to push from current position in current direction."""
         start = CellPosition(self.current_grid, self.push_row, self.push_col)
-        result = push(self.store, start, self.direction, self.try_enter, RuleSet(), self.tag_fn)
+        result = push(self.store, start, self.direction, RuleSet(), self.tag_fn)
 
         if result:
             # Push succeeded - update store and follow the pushed content

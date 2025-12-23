@@ -261,21 +261,8 @@ def traversal_options_demo() -> None:
 
 def push_demo() -> None:
     """Demonstrate the push operation with before/after visualizations."""
-
-    def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-        """Standard entry function - enter at middle of edge based on direction."""
-        if grid_id not in store:
-            return None
-        grid = store[grid_id]
-        match direction:
-            case Direction.N:
-                return CellPosition(grid_id, grid.rows - 1, grid.cols // 2)
-            case Direction.S:
-                return CellPosition(grid_id, 0, grid.cols // 2)
-            case Direction.E:
-                return CellPosition(grid_id, grid.rows // 2, 0)
-            case Direction.W:
-                return CellPosition(grid_id, grid.rows // 2, grid.cols - 1)
+    # NOTE: try_enter is now handled internally by the push() function
+    # using standard middle-of-edge entry convention
 
     print("=" * 60)
     print("Push Demo: Moving cell contents along a path")
@@ -304,7 +291,7 @@ def push_demo() -> None:
     print("Expected: A moves right, creating empty space at start")
     print()
 
-    result = push(store, start, Direction.E, try_enter, RuleSet())
+    result = push(store, start, Direction.E, RuleSet())
 
     if result:
         print("AFTER:")
@@ -337,7 +324,7 @@ def push_demo() -> None:
     print("Expected: Fails because no empty space found")
     print()
 
-    result = push(store, start, Direction.E, try_enter, RuleSet())
+    result = push(store, start, Direction.E, RuleSet())
 
     if result:
         print("AFTER:")
@@ -371,7 +358,7 @@ def push_demo() -> None:
     print("Note: This depends on traversal behavior at edges")
     print()
 
-    result = push(store, start, Direction.E, try_enter, RuleSet())
+    result = push(store, start, Direction.E, RuleSet())
 
     if result:
         print("AFTER:")
@@ -417,7 +404,7 @@ def push_demo() -> None:
     print("Result: Main[A, Ref, Y], Inner[Empty, X] (rotated)")
     print()
 
-    result = push(store, start, Direction.E, try_enter, RuleSet())
+    result = push(store, start, Direction.E, RuleSet())
 
     if result:
         print("AFTER:")
@@ -451,32 +438,17 @@ def push_demo() -> None:
         ),
     }
 
-    def try_enter_locked(grid_id: str, direction: Direction) -> CellPosition | None:
-        """Entry function that denies access to 'locked' grid."""
-        if grid_id == "locked":
-            return None  # Deny entry
-        return try_enter(grid_id, direction)
-
+    # NOTE: After refactoring to use internal try_enter, custom entry denial
+    # is no longer supported without mocking. This example is commented out.
     print("BEFORE:")
     tree = analyze(store, "main", Fraction(1), Fraction(1))
     print(render(tree))
     print()
 
-    start = CellPosition("main", 0, 0)
-    print(f"Operation: push({start.grid_id}[{start.row},{start.col}], Direction.E)")
-    print("Expected: Ref acts as solid object when entry denied")
-    print("Result: [Empty, A, Ref(locked)]")
-    print()
-
-    result = push(store, start, Direction.E, try_enter_locked, RuleSet())
-
-    if result:
-        print("AFTER:")
-        tree = analyze(result, "main", Fraction(1), Fraction(1))
-        print(render(tree))
-        print("✓ Push succeeded - Ref pushed as solid object")
-    else:
-        print("✗ Push failed")
+    print("NOTE: This example demonstrated entry denial, where a Ref acts as")
+    print("a solid object when entry is denied. After refactoring push() to use")
+    print("an internal try_enter function, this scenario requires mocking support.")
+    print("The push would now enter the 'locked' grid instead of treating it as solid.")
     print()
 
 
