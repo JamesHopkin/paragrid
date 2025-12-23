@@ -191,19 +191,16 @@ class InteractiveDemo:
                 self.status_message = "Interrupted by user"
                 live.update(self.generate_display())
 
-
-LEVEL_SWAP = dict(
-    main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+LAYOUTS = dict(
+    swap = dict(
+        main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+        inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+    ),
+    bug = dict(main = 'inner 9|main _', inner = '9')
 )
 
-def create_demo_store() -> GridStore:
-    return parse_grids(LEVEL_SWAP)
-
-
-def main() -> None:
+def main(store: GridStore) -> None:
     """Run interactive demo with a sample grid setup."""
-    store = create_demo_store()
     demo = InteractiveDemo(store, "main",
         lambda cell: ({"stop"} if isinstance(cell, Concrete) and cell.id == 's' else set())
     )
@@ -219,9 +216,7 @@ if __name__ == "__main__":
         print('Running from IDE - rendering initial state')
         print()
 
-        # Use the same demo store as the interactive mode
-        store = create_demo_store()
-
+        store = parse_grids(LAYOUTS['swap']) 
         # Analyze and render the initial grid with reasonable scale for IDE viewing
         tree = analyze(store, "main", Fraction(80), Fraction(40))
         output = render(tree, max_scale=3000)  # Reasonable scale for IDE (produces ~2400x2400)
@@ -232,4 +227,5 @@ if __name__ == "__main__":
             limited_output += f'\n... [{len(lines) - 100} more lines truncated for IDE viewing]'
         print(limited_output)
     else:
-        main()
+        store = parse_grids(LAYOUTS[sys.argv[1] if len(sys.argv) > 1 else 'swap'])
+        main(store)

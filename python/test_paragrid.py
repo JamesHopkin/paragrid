@@ -1647,6 +1647,52 @@ class TestTagging:
         # The push should fail because the '9' cell has a stop tag
         assert result is None, "Push should fail when encountering stop-tagged cell in reference chain"
 
+    def test_stop_tagged_cell_cannot_push_itself(self) -> None:
+        """Test that a cell with stop tag cannot initiate a push.
+
+        Bug reproduction: When pushing FROM a stop-tagged cell, the push succeeds
+        and the stop-tagged cell moves. However, stop-tagged cells should be immovable
+        and unable to participate in any push operation, including initiating one.
+
+        Grid layout:
+        main: [Ref(inner), 9]
+              [Ref(main),  _]
+        inner: [9]
+
+        The '9' cells have stop tags.
+        Push east from (0,1) [the stop-tagged '9'] should fail immediately.
+        Currently the push succeeds and the '9' moves.
+        """
+        store = parse_grids({
+            "main": "inner 9|main _",
+            "inner": "9"
+        })
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag cells containing '9' with stop
+            if isinstance(cell, Concrete) and '9' in cell.id:
+                return {"stop"}
+            return set()
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            grid = store[grid_id]
+            if direction == Direction.E:
+                return CellPosition(grid_id, grid.rows // 2, 0)
+            elif direction == Direction.W:
+                return CellPosition(grid_id, grid.rows // 2, grid.cols - 1)
+            elif direction == Direction.S:
+                return CellPosition(grid_id, 0, grid.cols // 2)
+            elif direction == Direction.N:
+                return CellPosition(grid_id, grid.rows - 1, grid.cols // 2)
+            return None
+
+        # Push FROM the stop-tagged '9' at (0,1)
+        start = CellPosition("main", 0, 1)
+        result = push(store, start, Direction.E, allow_entry, RuleSet(), tag_fn=tag_fn)
+
+        # The push should fail because stop-tagged cells cannot move
+        assert result is None, "Push should fail when initiating from a stop-tagged cell"
+
 
 # =============================================================================
 # Test Rendering Utilities
