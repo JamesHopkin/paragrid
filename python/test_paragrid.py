@@ -1626,8 +1626,9 @@ class TestRenderingUtilities:
                 (ConcreteNode("c", "test"), ConcreteNode("d", "test")),
             ),
         )
-        denoms = collect_denominators(node)
-        assert 2 in denoms  # 1/2 from dividing by 2 rows/cols
+        width_denoms, height_denoms = collect_denominators(node)
+        assert 2 in width_denoms  # 1/2 from dividing by 2 cols
+        assert 2 in height_denoms  # 1/2 from dividing by 2 rows
 
     def test_collect_denominators_nested(self) -> None:
         """Test collecting denominators with nested grids."""
@@ -1644,9 +1645,10 @@ class TestRenderingUtilities:
                 (ConcreteNode("b", "outer"), ConcreteNode("c", "outer")),
             ),
         )
-        denoms = collect_denominators(outer)
+        width_denoms, height_denoms = collect_denominators(outer)
         # Should have denominators from both levels
-        assert 2 in denoms
+        assert 2 in width_denoms  # From outer 2 cols and inner 2 cols
+        assert 2 in height_denoms  # From outer 2 rows
 
     def test_compute_scale_simple(self) -> None:
         """Test computing scale for a simple grid."""
@@ -1711,8 +1713,8 @@ class TestRender:
         # Should produce some output
         assert isinstance(result, str)
         assert len(result) > 0
-        # Should contain newlines (multi-line output)
-        assert "\n" in result
+        # With separate X/Y scaling, a 1-row grid will render as a single line
+        # (height_scale=1 since no vertical subdivision occurs)
 
     def test_render_with_empty_cells(self) -> None:
         """Test rendering a grid with empty cells."""

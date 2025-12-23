@@ -1530,12 +1530,16 @@ def apply_push(
 # =============================================================================
 
 
-def collect_denominators(node: CellNode) -> set[int]:
-    """Collect all denominators from nested grid dimensions.
+def collect_denominators(node: CellNode) -> tuple[set[int], set[int]]:
+    """Collect all denominators from nested grid dimensions separately for width and height.
 
     Tracks visited grids to prevent infinite recursion on cyclic references.
+
+    Returns:
+        Tuple of (width_denoms, height_denoms)
     """
-    denoms: set[int] = set()
+    width_denoms: set[int] = set()
+    height_denoms: set[int] = set()
     visited_grids: set[str] = set()
 
     def walk(n: CellNode, w: Fraction, h: Fraction) -> None:
@@ -1550,8 +1554,8 @@ def collect_denominators(node: CellNode) -> set[int]:
             if cols > 0 and rows > 0:
                 cw = w / cols
                 ch = h / rows
-                denoms.add(cw.denominator)
-                denoms.add(ch.denominator)
+                width_denoms.add(cw.denominator)
+                height_denoms.add(ch.denominator)
                 for row in n.children:
                     for child in row:
                         walk(child, cw, ch)
@@ -1560,12 +1564,14 @@ def collect_denominators(node: CellNode) -> set[int]:
             walk(n.content, w, h)
 
     walk(node, Fraction(1), Fraction(1))
-    return denoms
+    return (width_denoms, height_denoms)
 
 
 def compute_scale(node: CellNode, max_scale: int = 10000) -> tuple[int, int]:
     """
     Compute character dimensions that give exact integer cell sizes.
+
+    Uses separate LCM calculations for width and height to minimize output size.
 
     Args:
         node: The cell tree to compute scale for
@@ -1574,26 +1580,39 @@ def compute_scale(node: CellNode, max_scale: int = 10000) -> tuple[int, int]:
     Returns:
         Tuple of (width, height) in characters
     """
-    denoms = collect_denominators(node)
-    if not denoms:
-        return (1, 1)
-    scale = 1
-    capped = False
-    for d in denoms:
-        new_scale = lcm(scale, d)
-        if new_scale > max_scale:
-            # Stop growing - use current scale
-            capped = True
-            break
-        scale = new_scale
+    width_denoms, height_denoms = collect_denominators(node)
+
+    # Compute width scale
+    width_scale = 1
+    width_capped = False
+    if width_denoms:
+        for d in width_denoms:
+            new_scale = lcm(width_scale, d)
+            if new_scale > max_scale:
+                width_capped = True
+                break
+            width_scale = new_scale
+
+    # Compute height scale
+    height_scale = 1
+    height_capped = False
+    if height_denoms:
+        for d in height_denoms:
+            new_scale = lcm(height_scale, d)
+            if new_scale > max_scale:
+                height_capped = True
+                break
+            height_scale = new_scale
 
     logger.info(
-        "compute_scale: common denominator=%d, capped=%s (max_scale=%d)",
-        scale,
-        capped,
+        "compute_scale: width=%d (capped=%s), height=%d (capped=%s), max_scale=%d",
+        width_scale,
+        width_capped,
+        height_scale,
+        height_capped,
         max_scale,
     )
-    return (scale, scale)
+    return (width_scale, height_scale)
 
 
 def render_to_buffer(
