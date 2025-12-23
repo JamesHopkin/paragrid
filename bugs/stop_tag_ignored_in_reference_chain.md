@@ -66,5 +66,5 @@ This ensures stop tags are respected on cells reached through reference chains, 
 
 
 ## Resolution Commit Hash
-809921da28064acf58f30d7562a99a77cbd398f9
+5bc0b16ede1296629f6d0ae64b58eb02fc43ffb0
 
