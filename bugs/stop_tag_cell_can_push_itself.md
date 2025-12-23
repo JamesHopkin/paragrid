@@ -51,12 +51,20 @@ The test verifies that when initiating a push from a stop-tagged cell, the push 
 
 
 ## Resolution
-Not yet resolved.
+Fixed by adding stop tag check at the beginning of both `push_traverse_simple` and `push_traverse_backtracking` functions. Before beginning traversal, both functions now check if the starting cell has a stop tag and immediately return failure (empty path with STOP_TAG termination reason) if so.
+
+The fix ensures that stop-tagged cells are completely immovable, preventing them from:
+1. Being pushed by other cells (already worked correctly)
+2. Initiating a push themselves (now fixed)
+
+Changes made:
+- `push_traverse_simple` (python/paragrid.py:1008-1012): Added stop tag check after getting start_cell
+- `push_traverse_backtracking` (python/paragrid.py:1222-1226): Added stop tag check after getting start_cell
 
 
 ## Resolution Date
-N/A
+2025-12-23
 
 
 ## Resolution Commit Hash
-N/A
+(To be filled after commit)

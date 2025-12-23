@@ -1004,6 +1004,13 @@ def push_traverse_simple(
 
     # Add starting position to path
     start_cell = get_cell(store, start)
+
+    # Check if starting cell has stop tag
+    if tag_fn is not None:
+        tags = tag_fn(start_cell)
+        if "stop" in tags:
+            return ([], TerminationReason.STOP_TAG)
+
     path.append((start, start_cell))
     visited.add((start.grid_id, start.row, start.col))
 
@@ -1211,6 +1218,13 @@ def push_traverse_backtracking(
 
     # Add starting position to path
     start_cell = get_cell(store, start)
+
+    # Check if starting cell has stop tag
+    if tag_fn is not None:
+        tags = tag_fn(start_cell)
+        if "stop" in tags:
+            return ([], TerminationReason.STOP_TAG)
+
     path.append((start, start_cell))
     visited.add((start.grid_id, start.row, start.col))
 
