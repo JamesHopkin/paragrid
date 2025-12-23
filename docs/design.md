@@ -233,7 +233,7 @@ The rule set determines the initial behavior when encountering Refs, affecting b
 **Traversal semantics**:
 - Uses `auto_enter=True` and `auto_exit=True` (standard traversal with reference chain following)
 - **Special Ref handling** (governed by rule set):
-  - When encountering a Ref, call `try_enter(grid_id, direction)`
+  - When encountering a Ref, call internal `try_enter(store, grid_id, direction, rules)`
   - **If `ref_strategy="try_enter_first"`**:
     - Try entry first
     - **Entry succeeds**: Ref acts as **portal** — NOT included in push path, traversal continues from inside referenced grid
@@ -276,7 +276,6 @@ def push(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     max_depth: int = 1000,
 ) -> GridStore | None
@@ -284,18 +283,28 @@ def push(
 
 Main API that orchestrates traversal and application. Takes a `RuleSet` parameter to control Ref handling behavior.
 
+**Entry point logic**: Uses an internal `try_enter()` function that determines where to enter when traversing into a Ref:
+```python
+def try_enter(
+    store: GridStore,
+    grid_id: str,
+    direction: Direction,
+    rules: RuleSet
+) -> CellPosition | None
+```
+Currently implements only the standard middle-of-edge entry convention. The `rules` parameter is reserved for future rule-based entry point selection.
+
 ```python
 def push_traverse(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     max_depth: int = 1000,
 ) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]
 ```
 
-Custom traversal that tracks original cell contents and implements Ref handling according to the rule set.
+Custom traversal that tracks original cell contents and implements Ref handling according to the rule set. Uses the internal `try_enter()` function to determine entry points.
 
 Returns a tuple of:
 - `path`: List of `(position, original_cell)` tuples representing cells visited
@@ -363,9 +372,9 @@ Grid Main (1×3):         Grid Inner (1×2):
      col 0    1    2          0   1
 ```
 
-**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter, rules)`
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, rules)`
 
-Assume `rules.ref_strategy="try_enter_first"` and `try_enter` allows entry from East at `Inner[0, 0]`.
+Assume `rules.ref_strategy="try_enter_first"` and entry from East enters at `Inner[0, 0]` (middle of left edge).
 
 **Traversal**:
 1. Start at `Main[0,0]` (cell A) → add to path
@@ -407,9 +416,9 @@ Grid Main (1×3):
      col 0    1     2
 ```
 
-**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, try_enter, rules)`
+**Operation**: `push(store, CellPosition("Main", 0, 0), Direction.E, rules)`
 
-Assume `rules.ref_strategy="try_enter_first"` and `try_enter` **denies** entry to "Lock" grid (returns `None`).
+Assume `rules.ref_strategy="try_enter_first"` and the internal `try_enter` **denies** entry to "Lock" grid (returns `None`).
 
 **Traversal**:
 1. Start at `Main[0,0]` (cell A) → add to path
