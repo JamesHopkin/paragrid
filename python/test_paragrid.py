@@ -1610,6 +1610,40 @@ class TestTagging:
         assert positions[0] == CellPosition("test", 0, 0)  # a
         assert result.termination_reason == TerminationReason.STOP_TAG
 
+    def test_stop_tag_in_referenced_grid_during_push(self) -> None:
+        """Test that stop tag is respected when pushing through reference chain.
+
+        Bug reproduction: When pushing through a Ref into a referenced grid,
+        cells with 'stop' tag inside the referenced grid should prevent the push,
+        but they are currently being moved.
+        """
+        # Setup: main: [1, Ref(inner)]
+        #        inner: [9, _]
+        # Tag function: '9' has stop tag
+        # Push from (0,0) eastward should fail (can't push the stop-tagged cell)
+
+        store = parse_grids({
+            "main": "1 inner",
+            "inner": "9 _"
+        })
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag cells containing '9' with stop
+            if isinstance(cell, Concrete) and '9' in cell.id:
+                return {"stop"}
+            return set()
+
+        def allow_entry(grid_id: str, direction: Direction) -> CellPosition | None:
+            if grid_id == "inner" and direction == Direction.E:
+                return CellPosition("inner", 0, 0)
+            return None
+
+        start = CellPosition("main", 0, 0)
+        result = push(store, start, Direction.E, allow_entry, tag_fn=tag_fn)
+
+        # The push should fail because the '9' cell has a stop tag
+        assert result is None, "Push should fail when encountering stop-tagged cell in reference chain"
+
 
 # =============================================================================
 # Test Rendering Utilities

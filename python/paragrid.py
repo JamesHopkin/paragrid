@@ -1051,8 +1051,16 @@ def push_traverse_simple(
                 # Continue from the final position after entering
                 current = final_pos
                 # Don't add the Ref to the path - it's a portal
-                # Add the final destination to path and visited
+                # Get the final destination cell
                 final_cell = get_cell(store, current)
+
+                # Check for stop tag on the final cell after following the chain
+                if tag_fn is not None:
+                    tags = tag_fn(final_cell)
+                    if "stop" in tags:
+                        return (path, TerminationReason.STOP_TAG)
+
+                # Add the final destination to path and visited
                 path.append((current, final_cell))
                 visited.add((current.grid_id, current.row, current.col))
 
@@ -1304,8 +1312,27 @@ def push_traverse_backtracking(
                     # Successfully entered - continue from the final position
                     current = final_pos
                     # Don't add the Ref to the path - it's a portal
-                    # Add the final destination to path and visited
+                    # Get the final destination cell
                     final_cell = get_cell(store, current)
+
+                    # Check for stop tag on the final cell after following the chain
+                    if tag_fn is not None:
+                        tags = tag_fn(final_cell)
+                        if "stop" in tags:
+                            # Hit stop tag after entering - try to backtrack
+                            if backtrack_count < max_backtrack_depth:
+                                backtrack_count += 1
+                                decision = decision_stack.pop()
+                                current, path, visited, depth = _restore_from_decision(decision, blocked_refs)
+                                # Add the Ref as solid and continue
+                                ref_cell = get_cell(store, current)
+                                path.append((current, ref_cell))
+                                visited.add((current.grid_id, current.row, current.col))
+                                continue
+                            else:
+                                return (path, TerminationReason.STOP_TAG)
+
+                    # Add the final destination to path and visited
                     path.append((current, final_cell))
                     visited.add((current.grid_id, current.row, current.col))
 
