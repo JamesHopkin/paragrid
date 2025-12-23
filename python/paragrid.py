@@ -412,7 +412,7 @@ def _follow_enter_chain(
     store: GridStore,
     entry: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
+    rules: RuleSet,
     max_depth: int,
 ) -> tuple[CellPosition | None, bool]:
     """
@@ -422,7 +422,7 @@ def _follow_enter_chain(
         store: The grid store containing all grids
         entry: Starting position inside the referenced grid
         direction: Direction of traversal
-        try_enter: Callback to determine entry position for Refs
+        rules: RuleSet governing entry behavior
         max_depth: Maximum number of jumps to prevent infinite loops
 
     Returns:
@@ -450,7 +450,7 @@ def _follow_enter_chain(
             return (current, False)
 
         # It's a Ref, try to enter it
-        next_entry = try_enter(cell.grid_id, direction)
+        next_entry = try_enter(store, cell.grid_id, direction, rules)
         if next_entry is None:
             # Entry denied mid-chain
             return (None, False)
@@ -466,7 +466,7 @@ def _follow_exit_chain(
     store: GridStore,
     exit_pos: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
+    rules: RuleSet,
     max_depth: int,
 ) -> tuple[CellPosition | None, bool]:
     """
@@ -479,7 +479,7 @@ def _follow_exit_chain(
         store: The grid store containing all grids
         exit_pos: Starting position in parent grid after exiting
         direction: Direction of traversal
-        try_enter: Callback (not used in exit chain, but kept for consistency)
+        rules: RuleSet governing entry behavior
         max_depth: Maximum number of jumps to prevent infinite loops
 
     Returns:
@@ -785,11 +785,60 @@ def get_cell(store: GridStore, pos: CellPosition) -> Cell:
     return grid.cells[pos.row][pos.col]
 
 
+def try_enter(
+    store: GridStore, grid_id: str, direction: Direction, rules: RuleSet
+) -> CellPosition | None:
+    """
+    Determine entry point when entering a grid via a Ref.
+
+    Returns the CellPosition to enter at, or None to deny entry.
+    Currently implements only standard middle-of-edge entry based on direction.
+
+    Entry Convention:
+    - East (from left): (rows // 2, 0) — middle of left edge
+    - West (from right): (rows // 2, cols - 1) — middle of right edge
+    - South (from top): (0, cols // 2) — middle of top edge
+    - North (from bottom): (rows - 1, cols // 2) — middle of bottom edge
+
+    Args:
+        store: The grid store containing all grids
+        grid_id: ID of the grid to enter
+        direction: Direction of entry
+        rules: RuleSet governing entry behavior (currently unused)
+
+    Returns:
+        CellPosition for entry point, or None to deny entry
+    """
+    # Get the target grid
+    if grid_id not in store:
+        return None
+
+    grid = store[grid_id]
+    rows = grid.rows
+    cols = grid.cols
+
+    # Calculate middle-of-edge entry point based on direction
+    if direction == Direction.E:
+        # Entering from left edge
+        return CellPosition(grid_id, rows // 2, 0)
+    elif direction == Direction.W:
+        # Entering from right edge
+        return CellPosition(grid_id, rows // 2, cols - 1)
+    elif direction == Direction.S:
+        # Entering from top edge
+        return CellPosition(grid_id, 0, cols // 2)
+    elif direction == Direction.N:
+        # Entering from bottom edge
+        return CellPosition(grid_id, rows - 1, cols // 2)
+    else:
+        # Unknown direction
+        return None
+
+
 def push(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
@@ -811,7 +860,6 @@ def push(
         store: The grid store containing all grids
         start: Starting position for the push
         direction: Direction to push
-        try_enter: Callback to determine entry position for Refs
         rules: RuleSet governing Ref handling behavior
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum traversal depth to prevent infinite loops
@@ -822,7 +870,7 @@ def push(
     """
     # Perform backtracking traversal to build the path
     path, reason = push_traverse_backtracking(
-        store, start, direction, try_enter, rules, tag_fn, max_depth, max_backtrack_depth
+        store, start, direction, rules, tag_fn, max_depth, max_backtrack_depth
     )
 
     # Check success conditions
@@ -854,7 +902,6 @@ def push_simple(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
@@ -874,7 +921,6 @@ def push_simple(
         store: The grid store containing all grids
         start: Starting position for the push
         direction: Direction to push
-        try_enter: Callback to determine entry position for Refs
         rules: RuleSet governing Ref handling behavior
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum traversal depth to prevent infinite loops
@@ -883,7 +929,7 @@ def push_simple(
         New GridStore with pushed contents if successful, None if push fails
     """
     # Perform custom traversal to build the path
-    path, reason = push_traverse_simple(store, start, direction, try_enter, rules, tag_fn, max_depth)
+    path, reason = push_traverse_simple(store, start, direction, rules, tag_fn, max_depth)
 
     # Check success conditions
     if reason == TerminationReason.EDGE_REACHED:
@@ -914,7 +960,6 @@ def push_traverse_simple(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
@@ -935,7 +980,6 @@ def push_traverse_simple(
         store: The grid store containing all grids
         start: Starting position
         direction: Direction to traverse
-        try_enter: Callback to determine entry position for Refs
         rules: RuleSet governing Ref handling behavior
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum number of steps to prevent infinite loops
@@ -998,7 +1042,7 @@ def push_traverse_simple(
                 # Cascading exit - use exit chain logic
                 exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
                 final_pos, hit_cycle = _follow_exit_chain(
-                    store, exit_pos, direction, try_enter, max_depth - depth
+                    store, exit_pos, direction, rules, max_depth - depth
                 )
 
                 if final_pos is None:
@@ -1059,7 +1103,7 @@ def push_traverse_simple(
                 visited.add(key)
             else:
                 # TRY_ENTER_FIRST: Try to enter the referenced grid first
-                entry_pos = try_enter(cell.grid_id, direction)
+                entry_pos = try_enter(store, cell.grid_id, direction, rules)
 
                 if entry_pos is None:
                     # Entry denied - Ref acts as SOLID object
@@ -1069,7 +1113,7 @@ def push_traverse_simple(
                     # Entry allowed - Ref acts as PORTAL
                     # Follow the enter chain to find final non-Ref destination
                     final_pos, hit_cycle = _follow_enter_chain(
-                        store, entry_pos, direction, try_enter, max_depth - depth
+                        store, entry_pos, direction, rules, max_depth - depth
                     )
 
                     if final_pos is None:
@@ -1115,7 +1159,6 @@ def push_traverse_backtracking(
     store: GridStore,
     start: CellPosition,
     direction: Direction,
-    try_enter: TryEnter,
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
@@ -1136,7 +1179,6 @@ def push_traverse_backtracking(
         store: The grid store containing all grids
         start: Starting position
         direction: Direction to traverse
-        try_enter: Callback to determine entry position for Refs
         rules: RuleSet governing Ref handling behavior
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum number of steps to prevent infinite loops
@@ -1211,7 +1253,7 @@ def push_traverse_backtracking(
                     # Cascading exit - use exit chain logic
                     exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
                     final_pos, hit_cycle = _follow_exit_chain(
-                        store, exit_pos, direction, try_enter, max_depth - depth
+                        store, exit_pos, direction, rules, max_depth - depth
                     )
 
                     if final_pos is None:
@@ -1307,7 +1349,7 @@ def push_traverse_backtracking(
 
             if strategy == "portal":
                 # Try to enter the referenced grid (portal behavior)
-                entry_pos = try_enter(cell.grid_id, direction)
+                entry_pos = try_enter(store, cell.grid_id, direction, rules)
 
                 if entry_pos is not None:
                     # Entry allowed - create decision point for potential backtracking
@@ -1323,7 +1365,7 @@ def push_traverse_backtracking(
 
                     # Follow the enter chain to find final non-Ref destination
                     final_pos, hit_cycle = _follow_enter_chain(
-                        store, entry_pos, direction, try_enter, max_depth - depth
+                        store, entry_pos, direction, rules, max_depth - depth
                     )
 
                     if final_pos is None:
