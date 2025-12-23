@@ -693,7 +693,7 @@ def _traverse_generator(
                 # Exiting parent grid too - use chain following
                 current = CellPosition(parent_grid_id, parent_row, parent_col)
                 final_pos, hit_cycle = _follow_exit_chain(
-                    store, current, direction, try_enter, max_depth - depth
+                    store, current, direction, RuleSet(), max_depth - depth
                 )
                 if hit_cycle:
                     # Exit cycle detected, terminate
@@ -729,7 +729,7 @@ def _traverse_generator(
                 entry = try_enter(cell.grid_id, direction)
                 if entry is not None:
                     final_pos, hit_cycle = _follow_enter_chain(
-                        store, entry, direction, try_enter, max_depth - depth
+                        store, entry, direction, RuleSet(), max_depth - depth
                     )
                     if hit_cycle:
                         # Entry cycle detected, terminate
@@ -1470,7 +1470,7 @@ def push_traverse_backtracking(
         current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
         skip_movement = True
         # Continue the loop (but this shouldn't really happen with proper depth tracking)
-        return push_traverse_backtracking(store, start, direction, try_enter, rules, tag_fn, max_depth, max_backtrack_depth)
+        return push_traverse_backtracking(store, start, direction, rules, tag_fn, max_depth, max_backtrack_depth)
     else:
         return (path, TerminationReason.MAX_DEPTH_REACHED)
 
