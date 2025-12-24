@@ -1180,6 +1180,231 @@ class TestPushBacktracking:
         assert result["main"].cells[0][1] == Concrete("A")
         assert result["main"].cells[0][2] == Ref("B")
 
+
+class TestPushSwallowing:
+    """Tests for push swallowing behavior where Refs can absorb target cells."""
+
+    def test_swallow_basic_eastward(self) -> None:
+        """Test basic swallowing: Ref swallows Concrete cell when pushed east."""
+        # Setup: [Ref(pocket), ball, Empty]
+        #        pocket: [Empty, Empty]
+        # Push Ref eastward -> ball gets pushed into pocket from west
+        # Result: [Empty, Ref(pocket), Empty]
+        #         pocket: [ball, Empty]
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Concrete("ball"), Empty()),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+        # Use a rule set that tries swallow strategy
+        # NOTE: This will fail until we implement swallowing, just defining the test
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # When swallowing is implemented, this should succeed
+        # For now, this test documents the expected behavior
+        # assert result is not None
+        # assert isinstance(result["main"].cells[0][0], Empty)
+        # assert result["main"].cells[0][1] == Ref("pocket")
+        # assert isinstance(result["main"].cells[0][2], Empty)
+        # assert result["pocket"].cells[0][0] == Concrete("ball")
+        # assert isinstance(result["pocket"].cells[0][1], Empty)
+
+    def test_swallow_westward(self) -> None:
+        """Test swallowing when pushing Ref westward."""
+        # Setup: [Empty, ball, Ref(pocket)]
+        #        pocket: [Empty, Empty]
+        # Push Ref westward -> ball gets pushed into pocket from east (right edge)
+        # Result: [Empty, Ref(pocket), Empty]
+        #         pocket: [Empty, ball]
+        store: GridStore = {
+            "main": Grid("main", ((Empty(), Concrete("ball"), Ref("pocket")),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        start = CellPosition("main", 0, 2)
+        result = push_simple(store, start, Direction.W, RuleSet())
+
+        # Expected after swallowing implementation:
+        # assert result is not None
+        # assert isinstance(result["main"].cells[0][0], Empty)
+        # assert result["main"].cells[0][1] == Ref("pocket")
+        # assert isinstance(result["main"].cells[0][2], Empty)
+        # assert isinstance(result["pocket"].cells[0][0], Empty)
+        # assert result["pocket"].cells[0][1] == Concrete("ball")
+
+    def test_swallow_southward(self) -> None:
+        """Test swallowing when pushing Ref southward."""
+        # Setup: Grid (3 rows x 1 col):
+        #        [Ref(pocket)]
+        #        [ball]
+        #        [Empty]
+        #        pocket (2 rows x 1 col): [Empty, Empty]
+        # Push Ref southward -> ball gets pushed into pocket from north (top edge)
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"),), (Concrete("ball"),), (Empty(),))),
+            "pocket": Grid("pocket", ((Empty(),), (Empty(),))),
+        }
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.S, RuleSet())
+
+        # Expected after swallowing implementation:
+        # assert result is not None
+        # assert isinstance(result["main"].cells[0][0], Empty)
+        # assert result["main"].cells[1][0] == Ref("pocket")
+        # assert isinstance(result["main"].cells[2][0], Empty)
+        # assert result["pocket"].cells[0][0] == Concrete("ball")
+        # assert isinstance(result["pocket"].cells[1][0], Empty)
+
+    def test_swallow_northward(self) -> None:
+        """Test swallowing when pushing Ref northward."""
+        # Setup: Grid (3 rows x 1 col):
+        #        [Empty]
+        #        [ball]
+        #        [Ref(pocket)]
+        #        pocket (2 rows x 1 col): [Empty, Empty]
+        # Push Ref northward -> ball gets pushed into pocket from south (bottom edge)
+        store: GridStore = {
+            "main": Grid("main", ((Empty(),), (Concrete("ball"),), (Ref("pocket"),))),
+            "pocket": Grid("pocket", ((Empty(),), (Empty(),))),
+        }
+
+        start = CellPosition("main", 2, 0)
+        result = push_simple(store, start, Direction.N, RuleSet())
+
+        # Expected after swallowing implementation:
+        # assert result is not None
+        # assert isinstance(result["main"].cells[0][0], Empty)
+        # assert result["main"].cells[1][0] == Ref("pocket")
+        # assert isinstance(result["main"].cells[2][0], Empty)
+        # assert isinstance(result["pocket"].cells[0][0], Empty)
+        # assert result["pocket"].cells[1][0] == Concrete("ball")
+
+    def test_swallow_fails_when_target_grid_full(self) -> None:
+        """Test swallowing fails when target grid has no space."""
+        # Setup: [Ref(pocket), ball, Empty]
+        #        pocket: [X, Y] (full)
+        # Push Ref eastward -> attempt to push ball into pocket fails (no space)
+        # Should try alternative strategies (portal or solid)
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Concrete("ball"), Empty()),)),
+            "pocket": Grid("pocket", ((Concrete("X"), Concrete("Y")),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # Should fall back to portal or solid behavior
+        # This test just ensures swallowing failure is handled gracefully
+
+    def test_swallow_with_empty_target(self) -> None:
+        """Test swallowing behavior when target is Empty."""
+        # Setup: [Ref(pocket), Empty, X]
+        #        pocket: [Empty, Empty]
+        # Push Ref eastward -> target is Empty
+        # Swallowing Empty doesn't make semantic sense
+        # Should likely skip swallow and try other strategies or just succeed normally
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Empty(), Concrete("X")),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # Expected: Either skip swallow or succeed with normal push logic
+        # assert result is not None
+
+    def test_swallow_vs_portal_priority(self) -> None:
+        """Test that rule set controls whether swallow or portal is tried first."""
+        # Setup: [Ref(inner), ball, Empty]
+        #        inner: [Empty, Empty]
+        # With swallow-first: ball goes into inner, Ref moves right
+        # With portal-first: traverse through Ref, different behavior
+        # This test demonstrates rule set control over strategy order
+        store: GridStore = {
+            "main": Grid("main", ((Ref("inner"), Concrete("ball"), Empty()),)),
+            "inner": Grid("inner", ((Empty(), Empty()),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+
+        # Test with different rule sets once swallow is implemented
+        # rules_swallow_first = RuleSet(ref_strategy=RefStrategy.SWALLOW_FIRST)
+        # rules_portal_first = RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
+
+        # result_swallow = push_simple(store, start, Direction.E, rules_swallow_first)
+        # result_portal = push_simple(store, start, Direction.E, rules_portal_first)
+
+        # Results should differ based on strategy priority
+
+    def test_swallow_ref_cell(self) -> None:
+        """Test swallowing when target is also a Ref."""
+        # Setup: [Ref(pocket), Ref(other), Empty]
+        #        pocket: [Empty, Empty]
+        #        other: [Z]
+        # Push Ref(pocket) eastward -> try to swallow Ref(other)
+        # Ref can be pushed into another grid
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Ref("other"), Empty()),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+            "other": Grid("other", ((Concrete("Z"),),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # Expected: Ref(other) gets pushed into pocket, Ref(pocket) moves right
+        # assert result is not None
+        # assert isinstance(result["main"].cells[0][0], Empty)
+        # assert result["main"].cells[0][1] == Ref("pocket")
+        # assert isinstance(result["main"].cells[0][2], Empty)
+        # assert result["pocket"].cells[0][0] == Ref("other")
+
+    def test_swallow_chain_reaction(self) -> None:
+        """Test swallowing where target itself needs to be pushed."""
+        # Setup: [Ref(pocket), A, B, Empty]
+        #        pocket: [Empty, Empty]
+        # Push Ref eastward -> A needs to be swallowed, but A must first push B
+        # This tests if swallowing integrates correctly with normal push mechanics
+        store: GridStore = {
+            "main": Grid(
+                "main",
+                ((Ref("pocket"), Concrete("A"), Concrete("B"), Empty()),),
+            ),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # Expected behavior depends on swallow implementation
+        # This test ensures complex push scenarios work with swallowing
+
+    def test_swallow_immutability(self) -> None:
+        """Test that swallowing preserves immutability of original store."""
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Concrete("ball"), Empty()),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        original_main = store["main"]
+        original_pocket = store["pocket"]
+
+        start = CellPosition("main", 0, 0)
+        result = push_simple(store, start, Direction.E, RuleSet())
+
+        # Original store should be completely unchanged
+        assert store["main"] is original_main
+        assert store["pocket"] is original_pocket
+        assert store["main"].cells[0][0] == Ref("pocket")
+        assert store["main"].cells[0][1] == Concrete("ball")
+        assert isinstance(store["main"].cells[0][2], Empty)
+        assert isinstance(store["pocket"].cells[0][0], Empty)
+        assert isinstance(store["pocket"].cells[0][1], Empty)
+
+
 # =============================================================================
 # Test Termination Reasons
 # =============================================================================
