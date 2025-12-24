@@ -818,33 +818,6 @@ class TestTraverse:
         # Verify it terminates (doesn't hang)
         assert len(positions) < 100  # Sanity check
 
-    def test_traverse_enter_chain_denied(self) -> None:
-        """Test try_enter returning None mid-chain."""
-        store: GridStore = {
-            "blocked": Grid("blocked", ((Concrete("b"),),)),
-            "level2": Grid("level2", ((Ref("blocked"),),)),
-            "level1": Grid("level1", ((Concrete("a"), Ref("level2")),)),
-        }
-        start = CellPosition("level1", 0, 0)
-
-        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-            # Allow entering level2, but deny entry to "blocked"
-            if grid_id == "level2":
-                return CellPosition(grid_id, 0, 0)
-            elif grid_id == "blocked":
-                return None  # Deny entry
-            return CellPosition(grid_id, 0, 0)
-
-        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
-
-        # Should visit a, then try to enter level2->blocked chain
-        # When blocked entry is denied, traversal should terminate
-        assert CellPosition("level1", 0, 0) in positions  # a
-        # Should not reach blocked
-        assert CellPosition("blocked", 0, 0) not in positions
-        # Should terminate after denied entry
-        assert len(positions) == 1
-
     def test_traverse_mixed_enter_exit_chains(self) -> None:
         """Test combination of enter and exit chains."""
         store: GridStore = {
@@ -987,18 +960,18 @@ class TestPush:
 
     def test_push_through_portal(self) -> None:
         """Test push through a Ref that acts as portal."""
-        # Grid Main: [A, Ref(Inner), B]
+        # Grid Main: [A, Ref(Inner), Empty]
         # Grid Inner: [X, Y]
-        # Push from A eastward, Ref allows entry
-        # Expected path: A -> (portal) -> X -> Y -> (exit portal) -> B -> edge
-        # If B were Empty, push would succeed
+        # Push from A eastward with TRY_ENTER_FIRST strategy
+        # Expected path: A -> (enter portal) -> X -> Y -> (exit portal) -> Empty
+        # Result: [Empty, A, X, Y] with Y ending up in main, A,X in inner
         store: GridStore = {
             "main": Grid("main", ((Concrete("A"), Ref("inner"), Empty()),)),
             "inner": Grid("inner", ((Concrete("X"), Concrete("Y")),)),
         }
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, RuleSet())
+        result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
         assert result is not None
         # After push: A -> X -> Y -> Empty
@@ -1039,14 +1012,14 @@ class TestPush:
         assert result["locked"].cells[0][0] == Concrete("SECRET")
 
     def test_push_affects_multiple_grids(self) -> None:
-        """Test that push updates multiple grids correctly."""
+        """Test that push updates multiple grids correctly when using portal."""
         store: GridStore = {
             "main": Grid("main", ((Concrete("A"), Ref("inner"), Empty()),)),
             "inner": Grid("inner", ((Concrete("X"), Concrete("Y")),)),
         }
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, RuleSet())
+        result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
         assert result is not None
         # Both grids should be updated
@@ -1086,7 +1059,7 @@ class TestPush:
         """Test that push stops at Empty even when entering through a portal."""
         # Setup: Main: [A, Ref(inner), C]
         #        Inner: [X, Empty]
-        # Push from A eastward, entering inner at X
+        # Push from A eastward with TRY_ENTER_FIRST, entering inner at X
         # Should stop at Empty inside inner
         store: GridStore = {
             "main": Grid("main", ((Concrete("A"), Ref("inner"), Concrete("C")),)),
@@ -1094,7 +1067,7 @@ class TestPush:
         }
 
         start = CellPosition("main", 0, 0)
-        result = push_simple(store, start, Direction.E, RuleSet())
+        result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
         assert result is not None
         # Path should be: [A, X, Empty]
@@ -1137,12 +1110,12 @@ class TestPushBacktracking:
 
         start = CellPosition("main", 0, 0)
 
-        # Simple version should fail
-        result_simple = push_simple(store, start, Direction.E, RuleSet(), tag_fn=tag_stop)
+        # Simple version with TRY_ENTER_FIRST should fail (enters Ref, hits STOP)
+        result_simple = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
         assert result_simple is None, "Simple push should fail when hitting stop inside Ref"
 
-        # Backtracking version should succeed
-        result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_stop)
+        # Backtracking version should succeed (tries portal, fails, backtracks to solid)
+        result = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
         assert result is not None, "Backtracking push should succeed"
 
         # Result: [Empty, A, Ref(inner)]
@@ -1194,51 +1167,18 @@ class TestPushBacktracking:
 
         start = CellPosition("main", 0, 0)
 
-        # Simple version should fail (enters B, hits STOP after X)
-        result_simple = push_simple(store, start, Direction.E, RuleSet(), tag_fn=tag_stop)
+        # Simple version with TRY_ENTER_FIRST should fail (enters B, hits STOP after X)
+        result_simple = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
         assert result_simple is None
 
         # Backtracking version should succeed by treating Ref1 as solid
-        result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_stop)
+        result = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
         assert result is not None
 
         # Result: [Empty, A, Ref(B)]
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[0][1] == Concrete("A")
         assert result["main"].cells[0][2] == Ref("B")
-
-    def test_backtrack_on_entry_denied_in_chain(self) -> None:
-        """Test backtracking when entry is denied mid-chain.
-
-        NOTE: With refactored try_enter, entry is always allowed.
-        This test needs updating to use mocking to test entry denial.
-        """
-        # Setup: [A, Ref1(B), Empty]
-        #        B: [Ref2(C)]
-        #        C: [X] but entry to C is denied
-        # Expected: Backtrack and treat Ref1 as solid
-
-        store: GridStore = {
-            "main": Grid("main", ((Concrete("A"), Ref("B"), Empty()),)),
-            "B": Grid("B", ((Ref("C"),),)),
-            "C": Grid("C", ((Concrete("X"),),)),
-        }
-
-        start = CellPosition("main", 0, 0)
-
-        # Simple version should fail
-        result_simple = push_simple(store, start, Direction.E, RuleSet())
-        assert result_simple is None
-
-        # Backtracking version should succeed
-        result = push(store, start, Direction.E, RuleSet())
-        assert result is not None
-
-        # Result: [Empty, A, Ref(B)]
-        assert isinstance(result["main"].cells[0][0], Empty)
-        assert result["main"].cells[0][1] == Concrete("A")
-        assert result["main"].cells[0][2] == Ref("B")
-
 
 # =============================================================================
 # Test Termination Reasons

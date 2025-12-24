@@ -516,8 +516,8 @@ def _follow_exit_chain(
             return (current, False)
 
         # It's a Ref, we need to exit through it
-        # Find the primary reference for the grid this Ref points to
-        primary = find_primary_ref(store, cell.grid_id)
+        # Find the primary reference for the grid we're currently in (to exit from)
+        primary = find_primary_ref(store, current.grid_id)
         if primary is None:
             # This Ref points to the root grid, can't exit further
             return (None, False)
@@ -1001,6 +1001,7 @@ def push_traverse_simple(
     visited: set[tuple[str, int, int]] = set()
     current = start
     depth = 0
+    skip_movement = False  # Flag to skip movement after entering a Ref
 
     # Add starting position to path
     start_cell = get_cell(store, start)
@@ -1017,10 +1018,19 @@ def push_traverse_simple(
     while depth < max_depth:
         depth += 1
 
-        # Get current grid and compute next position
-        grid = store[current.grid_id]
-        dr, dc = deltas[direction]
-        next_row, next_col = current.row + dr, current.col + dc
+        if not skip_movement:
+            # Get current grid and compute next position
+            grid = store[current.grid_id]
+            dr, dc = deltas[direction]
+            next_row, next_col = current.row + dr, current.col + dc
+        else:
+            # Skip movement - we just entered a Ref and need to process the entry cell first
+            skip_movement = False
+            # Proceed to process the cell at current position
+            grid = store[current.grid_id]
+            dr, dc = deltas[direction]
+            # Set next to current so the movement logic is bypassed
+            next_row, next_col = current.row, current.col
 
         # Check if we hit an edge
         if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
@@ -1060,21 +1070,11 @@ def push_traverse_simple(
                     return (path, TerminationReason.EXIT_CYCLE_DETECTED)
 
                 # Continue from final exit position
+                # Set flag to skip next movement so we process cell at final_pos first
                 current = final_pos
-                next_grid = store[current.grid_id]
-                next_row = current.row + dr
-                next_col = current.col + dc
-
-                # Check edge again after exit chain
-                if (
-                    next_row < 0
-                    or next_row >= next_grid.rows
-                    or next_col < 0
-                    or next_col >= next_grid.cols
-                ):
-                    return (path, TerminationReason.EDGE_REACHED)
-
-                current = CellPosition(current.grid_id, next_row, next_col)
+                skip_movement = True
+                depth -= 1  # Will be incremented at start of next iteration
+                continue
             else:
                 # Normal exit to parent
                 current = CellPosition(parent_grid_id, next_row, next_col)
@@ -1118,37 +1118,13 @@ def push_traverse_simple(
                     visited.add(key)
                 else:
                     # Entry allowed - Ref acts as PORTAL
-                    # Follow the enter chain to find final non-Ref destination
-                    final_pos, hit_cycle = _follow_enter_chain(
-                        store, entry_pos, direction, rules, max_depth - depth
-                    )
-
-                    if final_pos is None:
-                        # try_enter denied mid-chain
-                        return (path, TerminationReason.ENTRY_DENIED)
-
-                    if hit_cycle:
-                        return (path, TerminationReason.ENTRY_CYCLE_DETECTED)
-
-                    # Continue from the final position after entering
-                    current = final_pos
-                    # Don't add the Ref to the path - it's a portal
-                    # Get the final destination cell
-                    final_cell = get_cell(store, current)
-
-                    # Check for stop tag on the final cell after following the chain
-                    if tag_fn is not None:
-                        tags = tag_fn(final_cell)
-                        if "stop" in tags:
-                            return (path, TerminationReason.STOP_TAG)
-
-                    # Add the final destination to path and visited
-                    path.append((current, final_cell))
-                    visited.add((current.grid_id, current.row, current.col))
-
-                    # Check if we just added an Empty cell - if so, push succeeds
-                    if isinstance(final_cell, Empty):
-                        return (path, TerminationReason.EDGE_REACHED)
+                    # The Ref is not added to path (it's a portal)
+                    # Move to entry position and set flag to skip next movement
+                    # so we process the cell AT entry_pos before moving
+                    current = entry_pos
+                    skip_movement = True
+                    depth -= 1  # Will be incremented at start of next iteration
+                    continue
         else:
             # Non-Ref cell - add to path and continue
             path.append((current, cell))
@@ -1287,21 +1263,9 @@ def push_traverse_backtracking(
                             return (path, TerminationReason.EXIT_CYCLE_DETECTED)
 
                     # Continue from final exit position
+                    # Skip movement so the main loop processes the cell at final_pos first
                     current = final_pos
-                    next_grid = store[current.grid_id]
-                    next_row = current.row + dr
-                    next_col = current.col + dc
-
-                    # Check edge again after exit chain
-                    if (
-                        next_row < 0
-                        or next_row >= next_grid.rows
-                        or next_col < 0
-                        or next_col >= next_grid.cols
-                    ):
-                        return (path, TerminationReason.EDGE_REACHED)
-
-                    current = CellPosition(current.grid_id, next_row, next_col)
+                    skip_movement = True
                 else:
                     # Normal exit to parent
                     current = CellPosition(parent_grid_id, next_row, next_col)
@@ -1377,63 +1341,11 @@ def push_traverse_backtracking(
                     )
                     decision_stack.append(decision)
 
-                    # Follow the enter chain to find final non-Ref destination
-                    final_pos, hit_cycle = _follow_enter_chain(
-                        store, entry_pos, direction, rules, max_depth - depth
-                    )
-
-                    if final_pos is None:
-                        # try_enter denied mid-chain - backtrack
-                        if backtrack_count < max_backtrack_depth:
-                            backtrack_count += 1
-                            decision = decision_stack.pop()
-                            current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                            skip_movement = True
-                            # Continue - will retry with alternative strategy
-                            continue
-                        else:
-                            return (path, TerminationReason.ENTRY_DENIED)
-
-                    if hit_cycle:
-                        # Cycle in enter chain - backtrack
-                        if backtrack_count < max_backtrack_depth:
-                            backtrack_count += 1
-                            decision = decision_stack.pop()
-                            current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                            skip_movement = True
-                            # Continue - will retry with alternative strategy
-                            continue
-                        else:
-                            return (path, TerminationReason.ENTRY_CYCLE_DETECTED)
-
-                    # Successfully entered - continue from the final position
-                    current = final_pos
-                    # Don't add the Ref to the path - it's a portal
-                    # Get the final destination cell
-                    final_cell = get_cell(store, current)
-
-                    # Check for stop tag on the final cell after following the chain
-                    if tag_fn is not None:
-                        tags = tag_fn(final_cell)
-                        if "stop" in tags:
-                            # Hit stop tag after entering - try to backtrack
-                            if backtrack_count < max_backtrack_depth:
-                                backtrack_count += 1
-                                decision = decision_stack.pop()
-                                current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                                skip_movement = True
-                                # Continue - will retry with alternative strategy
-                                continue
-                            else:
-                                return (path, TerminationReason.STOP_TAG)
-
-                    # Add the final destination to path and visited
-                    path.append((current, final_cell))
-                    visited.add((current.grid_id, current.row, current.col))
-
-                    # Check if we just added an Empty cell - if so, push succeeds
-                    if isinstance(final_cell, Empty):
-                        return (path, TerminationReason.EDGE_REACHED)
+                    # Move to entry position (Ref not in path - it's a portal)
+                    # The main loop will process whatever cell is at entry_pos
+                    current = entry_pos
+                    skip_movement = True  # Skip next position computation, process current cell first
+                    # Continue - the main loop will handle the cell at entry_pos
                 else:
                     # Entry denied - Ref acts as SOLID object (no decision point)
                     path.append((current, cell))
@@ -1523,6 +1435,33 @@ def apply_push(
         new_store[grid_id] = new_grid
 
     return new_store
+
+
+def find_tagged_cell(
+    store: GridStore,
+    tag: str,
+    tag_fn: TagFn,
+) -> CellPosition | None:
+    """
+    Find the first cell with a specific tag across all grids in the store.
+
+    Iterates through all grids and cells, applying tag_fn to find the first
+    cell that contains the specified tag.
+
+    Args:
+        store: The grid store to search
+        tag: The tag to search for (e.g., "player")
+        tag_fn: Function that returns set of tags for a cell
+
+    Returns:
+        CellPosition of first tagged cell, or None if not found
+    """
+    for grid in store.values():
+        for row_idx, row in enumerate(grid.cells):
+            for col_idx, cell in enumerate(row):
+                if tag in tag_fn(cell):
+                    return CellPosition(grid.id, row_idx, col_idx)
+    return None
 
 
 # =============================================================================
