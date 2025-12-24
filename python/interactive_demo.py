@@ -14,6 +14,7 @@ from rich.text import Text
 
 from paragrid import (
     RuleSet,
+    Cell,
     CellPosition,
     Concrete,
     Direction,
@@ -23,6 +24,7 @@ from paragrid import (
     Ref,
     TagFn,
     analyze,
+    find_tagged_cell,
     parse_grids,
     push,
     push_simple,
@@ -33,52 +35,61 @@ from paragrid import (
 class InteractiveDemo:
     """Interactive demo for push operations."""
 
-    def __init__(self, store: GridStore, start_grid: str, tag_fn: TagFn | None = None) -> None:
+    def __init__(self, store: GridStore, tag_fn: TagFn | None = None) -> None:
         self.store = store
         self.original_store = store  # Keep a copy of the original state
-        self.current_grid = start_grid
         self.tag_fn = tag_fn
-        # Start at top-left of the starting grid
-        self.push_row = 0
-        self.push_col = 0
-        self.direction = Direction.E
+        self.player_tag = "player"
         self.console = Console()
         self.status_message = "Ready"
 
+    @property
+    def player_position(self) -> CellPosition | None:
+        """Dynamically find current player position."""
+        if self.tag_fn is None:
+            return None
+        return find_tagged_cell(self.store, self.player_tag, self.tag_fn)
+
     def generate_display(self) -> Panel:
         """Generate the current display with grid and status."""
-        # Analyze and render current grid
-        tree = analyze(self.store, self.current_grid, Fraction(1), Fraction(1))
-        highlight_pos = CellPosition(self.current_grid, self.push_row, self.push_col)
-        grid_text = render(tree, max_scale=3000, highlight_pos=highlight_pos)
+        player_pos = self.player_position
+
+        if player_pos is None:
+            # Show error state
+            status = Text()
+            status.append("ERROR: No player cell found!\n", style="bold red")
+            status.append("Please ensure a cell is tagged 'player' in your grid.\n")
+            return Panel(status, title="Paragrid - Error", border_style="red")
+
+        # Analyze and render with player's grid
+        tree = analyze(self.store, player_pos.grid_id, Fraction(1), Fraction(1))
+        grid_text = render(tree, max_scale=100, highlight_pos=player_pos)
 
         # Add status information
         status = Text()
-        status.append(f"Push Position: ", style="bold")
-        status.append(f"{self.current_grid}[{self.push_row}, {self.push_col}]\n")
-        status.append(f"Direction: ", style="bold")
-        status.append(f"{self.direction.value}\n\n")
+        status.append(f"Player Position: ", style="bold")
+        status.append(f"{player_pos.grid_id}[{player_pos.row}, {player_pos.col}]\n\n")
 
         # Get current cell info
-        grid = self.store[self.current_grid]
-        if 0 <= self.push_row < grid.rows and 0 <= self.push_col < grid.cols:
-            cell = grid.cells[self.push_row][self.push_col]
-            cell_str = (
-                f"Empty" if isinstance(cell, Empty)
-                else f"Ref({cell.grid_id})" if isinstance(cell, Ref)
-                else f"Concrete({cell.id})"
-            )
-            status.append(f"Current Cell: ", style="bold")
-            status.append(f"{cell_str}\n\n")
+        grid = self.store[player_pos.grid_id]
+        cell = grid.cells[player_pos.row][player_pos.col]
+        cell_str = (
+            f"Empty" if isinstance(cell, Empty)
+            else f"Ref({cell.grid_id})" if isinstance(cell, Ref)
+            else f"Concrete({cell.id})"
+        )
+        status.append(f"Current Cell: ", style="bold")
+        status.append(f"{cell_str}\n\n")
 
         # Convert ANSI-colored grid text to Rich Text properly
         grid_rich_text = Text.from_ansi(grid_text)
         status.append(grid_rich_text)
         status.append("\n\n")
         status.append("Keys:\n", style="bold cyan")
-        status.append("  SPACE - Push in current direction\n")
-        status.append("  WASD - Move push position\n")
-        status.append("  ↑↓←→ - Change direction\n")
+        status.append("  W - Push North\n")
+        status.append("  A - Push West\n")
+        status.append("  S - Push South\n")
+        status.append("  D - Push East\n")
         status.append("  R - Reset to original grid\n")
         status.append("  Q - Quit\n\n")
 
@@ -87,40 +98,33 @@ class InteractiveDemo:
         status.append("Status: ", style="bold")
         status.append(self.status_message)
 
-        return Panel(status, title="Paragrid Interactive Push Demo", border_style="green", width=50)
+        return Panel(status, title="Paragrid Interactive Push Demo", border_style="green", width=80)
 
-    def move_position(self, dr: int, dc: int) -> None:
-        """Move push position by delta, wrapping within grid bounds."""
-        grid = self.store[self.current_grid]
-        old_row, old_col = self.push_row, self.push_col
-        self.push_row = (self.push_row + dr) % grid.rows
-        self.push_col = (self.push_col + dc) % grid.cols
-        self.status_message = f"Moved to [{self.push_row}, {self.push_col}]"
+    def attempt_push(self, direction: Direction) -> None:
+        """Attempt to push from player position in given direction."""
+        player_pos = self.player_position
 
-    def attempt_push(self) -> None:
-        """Attempt to push from current position in current direction."""
-        start = CellPosition(self.current_grid, self.push_row, self.push_col)
-        result = push(self.store, start, self.direction, RuleSet(), self.tag_fn)
+        if player_pos is None:
+            self.status_message = "ERROR: No player cell found!"
+            return
+
+        result = push(self.store, player_pos, direction, RuleSet(), self.tag_fn)
 
         if result:
-            # Push succeeded - update store and follow the pushed content
+            # Success - update store (player has moved with the push)
             self.store = result
 
-            # Move the push position in the direction of the push
-            # This makes the push position "follow" what was pushed
-            match self.direction:
-                case Direction.N:
-                    self.push_row = (self.push_row - 1) % self.store[self.current_grid].rows
-                case Direction.S:
-                    self.push_row = (self.push_row + 1) % self.store[self.current_grid].rows
-                case Direction.E:
-                    self.push_col = (self.push_col + 1) % self.store[self.current_grid].cols
-                case Direction.W:
-                    self.push_col = (self.push_col - 1) % self.store[self.current_grid].cols
-
-            self.status_message = f"✓ Push {self.direction.value} successful!"
+            # Re-find player at new position
+            new_pos = self.player_position
+            if new_pos:
+                self.status_message = (
+                    f"✓ Pushed {direction.value}! Player now at "
+                    f"{new_pos.grid_id}[{new_pos.row}, {new_pos.col}]"
+                )
+            else:
+                self.status_message = "✓ Push succeeded but player lost!"
         else:
-            self.status_message = f"✗ Push {self.direction.value} failed - no valid path or empty space"
+            self.status_message = f"✗ Push {direction.value} failed"
 
     def reset_grid(self) -> None:
         """Reset the grid to its original state."""
@@ -128,7 +132,13 @@ class InteractiveDemo:
         self.status_message = "Grid reset to original state"
 
     def run(self) -> None:
-        """Run the interactive demo with immediate key press handling."""
+        """Run the interactive demo with player-based controls."""
+        # Startup check
+        if self.player_position is None:
+            print("ERROR: No player cell found in grid!")
+            print("Please ensure a cell is tagged 'player'.")
+            return
+
         with Live(self.generate_display(), console=self.console, refresh_per_second=4) as live:
             try:
                 while True:
@@ -143,32 +153,17 @@ class InteractiveDemo:
                         self.status_message = "Quitting..."
                         live.update(self.generate_display())
                         break
-                    elif key == ' ':  # Space bar for push
-                        self.attempt_push()
                     elif key.lower() == 'r':  # Reset grid
                         self.reset_grid()
-                    # WASD for movement
+                    # WASD for directional pushes
                     elif key.lower() == 'w':
-                        self.move_position(-1, 0)
+                        self.attempt_push(Direction.N)
                     elif key.lower() == 's':
-                        self.move_position(1, 0)
+                        self.attempt_push(Direction.S)
                     elif key.lower() == 'a':
-                        self.move_position(0, -1)
+                        self.attempt_push(Direction.W)
                     elif key.lower() == 'd':
-                        self.move_position(0, 1)
-                    # Arrow keys for direction
-                    elif key == readchar.key.UP:
-                        self.direction = Direction.N
-                        self.status_message = "Direction set to North"
-                    elif key == readchar.key.DOWN:
-                        self.direction = Direction.S
-                        self.status_message = "Direction set to South"
-                    elif key == readchar.key.LEFT:
-                        self.direction = Direction.W
-                        self.status_message = "Direction set to West"
-                    elif key == readchar.key.RIGHT:
-                        self.direction = Direction.E
-                        self.status_message = "Direction set to East"
+                        self.attempt_push(Direction.E)
                     else:
                         self.status_message = f"Unknown key: {repr(key)}"
 
@@ -178,17 +173,26 @@ class InteractiveDemo:
 
 LAYOUTS = dict(
     swap = dict(
-        main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+        main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
         inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
     ),
-    bug = dict(main = 'inner 9|main _', inner = '9')
+    bug = dict(
+        main = '1 main 9|inner _ 9|9 9 9',
+        inner = '_'
+    )
 )
 
 def main(store: GridStore) -> None:
     """Run interactive demo with a sample grid setup."""
-    demo = InteractiveDemo(store, "main",
-        lambda cell: ({"stop"} if isinstance(cell, Concrete) and cell.id == 's' else set())
-    )
+    def tag_fn(cell: Cell) -> set[str]:
+        if isinstance(cell, Concrete):
+            if cell.id == '1':
+                return {"player"}
+            elif cell.id == '9':
+                return {"stop"}
+        return set()
+
+    demo = InteractiveDemo(store, tag_fn=tag_fn)
     demo.run()
 
 
@@ -201,7 +205,7 @@ if __name__ == "__main__":
         print('Running from IDE - rendering initial state')
         print()
 
-        store = parse_grids(LAYOUTS['swap']) 
+        store = parse_grids(LAYOUTS['bug']) 
         # Analyze and render the initial grid with reasonable scale for IDE viewing
         tree = analyze(store, "main", Fraction(80), Fraction(40))
         output = render(tree, max_scale=3000)  # Reasonable scale for IDE (produces ~2400x2400)
