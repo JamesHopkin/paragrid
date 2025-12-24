@@ -440,6 +440,63 @@ Grid Main (1×3):
 
 **Key insight**: When entry is denied, the Ref cell itself gets pushed like a `Concrete` cell.
 
+### Ref Swallowing During Push
+
+When the cell being pushed (A) is itself a Ref, there's a third handling strategy beyond portal entry and solid push: **swallowing** the target cell.
+
+**Three Ref handling strategies**:
+1. **Portal**: Try to enter the Ref as a portal (traverse through it)
+2. **Solid**: Try to push the Ref as a solid object (include in path)
+3. **Swallow**: If A is a Ref, try to push the target B into A's referenced grid, then move A to B's position
+
+**Swallowing mechanism**:
+- Applies when the cell being pushed (A) is a `Ref(grid_id)`
+- Target cell B is the next cell in the push direction
+- Attempt: Push B into the referenced grid from the **opposite direction**
+  - Pushing A east: Push B into A's grid from the west
+  - Pushing A west: Push B into A's grid from the east
+  - Pushing A south: Push B into A's grid from the north
+  - Pushing A north: Push B into A's grid from the south
+- Push into referenced grid uses **standard entry point** (middle-of-edge convention), then follows normal push/enter rules within that grid
+- If successful:
+  - B moves into the referenced grid
+  - A (the Ref) moves to B's former position
+  - Original start position becomes empty
+
+**Rule set control**: The `ref_strategy` in the rule set defines the order these three strategies are tried. This allows for six possible orderings (3! permutations), though typically you'd use a subset that makes semantic sense.
+
+**Worked Example**:
+
+**Setup**:
+```
+Grid "main": [Ref("pocket"), Concrete("ball"), Empty]
+Grid "pocket": [Empty, Empty]
+     col 0     1     2           col 0    1
+```
+
+**Operation**: `push(store, CellPosition("main", 0, 0), Direction.E, rules)`
+
+Assume rule set tries swallow strategy first.
+
+**Swallow attempt**:
+1. A = Ref("pocket") at main[0,0]
+2. B = Concrete("ball") at main[0,1]
+3. Pushing A eastward → try pushing B into "pocket" from the **west**
+4. Push "ball" into "pocket" from west:
+   - Enter at pocket[0,0] (middle of left edge for west entry)
+   - pocket[0,0] is Empty → success!
+   - "ball" placed at pocket[0,0]
+5. Move A to B's position: Ref("pocket") moves to main[0,1]
+6. Original position becomes Empty: main[0,0] = Empty
+
+**Result**:
+```
+Grid "main": [Empty, Ref("pocket"), Empty]
+Grid "pocket": [Concrete("ball"), Empty]
+```
+
+**Key insight**: The Ref "swallowed" the ball by absorbing it into its referenced grid, then slid into the ball's former position. This creates fluid movement where references can capture and contain adjacent cells.
+
 ### Push with Backtracking
 
 The default push algorithm (`push()`) includes backtracking to maximize success rate when handling Refs.
