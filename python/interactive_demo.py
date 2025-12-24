@@ -173,12 +173,12 @@ class InteractiveDemo:
 
 LAYOUTS = dict(
     swap = dict(
-        main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+        main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
         inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
     ),
     bug = dict(
-        main = '1 main 9|inner _ 9|9 9 9',
-        inner = '_'
+        main = '1 inner 2 9',
+        inner = '9 9|9 _|9 9'
     )
 )
 

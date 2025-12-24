@@ -38,18 +38,53 @@ class TerminationReason(Enum):
     STOP_TAG = "stop_tag"  # Cell has 'stop' tag
 
 
-class RefStrategy(Enum):
-    """Strategy for handling Ref cells in operations."""
+class RefStrategyType(Enum):
+    """Individual strategy types for handling Ref cells."""
 
-    TRY_ENTER_FIRST = "try_enter_first"  # Try portal first, fall back to solid
-    PUSH_FIRST = "push_first"  # Try solid first, backtrack can try portal
+    PORTAL = "portal"  # Try to enter the Ref (traverse through it)
+    SOLID = "solid"  # Treat the Ref as a solid object (push it)
+    SWALLOW = "swallow"  # Swallow the target cell (only when start is Ref)
+
+
+# Type alias for ref strategy ordering
+RefStrategyOrder = tuple[RefStrategyType, ...]
+
+# Predefined common strategy orderings
+class RefStrategy:
+    """Common Ref handling strategy orderings."""
+
+    # Default: try portal (enter), then solid (push), then swallow
+    DEFAULT: RefStrategyOrder = (
+        RefStrategyType.PORTAL,
+        RefStrategyType.SOLID,
+        RefStrategyType.SWALLOW,
+    )
+
+    # Legacy compatibility
+    TRY_ENTER_FIRST: RefStrategyOrder = (
+        RefStrategyType.PORTAL,
+        RefStrategyType.SOLID,
+        RefStrategyType.SWALLOW,
+    )
+
+    PUSH_FIRST: RefStrategyOrder = (
+        RefStrategyType.SOLID,
+        RefStrategyType.PORTAL,
+        RefStrategyType.SWALLOW,
+    )
+
+    SWALLOW_FIRST: RefStrategyOrder = (
+        RefStrategyType.SWALLOW,
+        RefStrategyType.PORTAL,
+        RefStrategyType.SOLID,
+    )
 
 
 @dataclass(frozen=True)
 class RuleSet:
     """Rules governing operation behavior."""
 
-    ref_strategy: RefStrategy = RefStrategy.PUSH_FIRST
+    ref_strategy: RefStrategyOrder = RefStrategy.DEFAULT
 
 
 # =============================================================================
@@ -835,6 +870,125 @@ def try_enter(
         return None
 
 
+def try_swallow(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    rules: RuleSet,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+) -> GridStore | None:
+    """
+    Attempt to swallow the target cell into the Ref's referenced grid.
+
+    When pushing a Ref cell, this tries to push the target cell (next in direction)
+    into the Ref's referenced grid from the opposite direction. If successful:
+    - Target cell moves into the referenced grid
+    - Ref moves to target's former position
+    - Start position becomes Empty
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position (must be a Ref)
+        direction: Direction of push
+        rules: RuleSet governing behavior
+        tag_fn: Optional function to tag cells
+        max_depth: Maximum depth for recursive push
+
+    Returns:
+        New GridStore if swallowing succeeds, None if it fails
+    """
+    # Direction deltas and opposites
+    deltas = {
+        Direction.N: (-1, 0),
+        Direction.S: (1, 0),
+        Direction.E: (0, 1),
+        Direction.W: (0, -1),
+    }
+    opposites = {
+        Direction.N: Direction.S,
+        Direction.S: Direction.N,
+        Direction.E: Direction.W,
+        Direction.W: Direction.E,
+    }
+
+    # Get the cell at start position
+    start_cell = get_cell(store, start)
+
+    # Swallowing only applies when start is a Ref
+    if not isinstance(start_cell, Ref):
+        return None
+
+    # Get target position (next cell in direction)
+    grid = store[start.grid_id]
+    dr, dc = deltas[direction]
+    target_row = start.row + dr
+    target_col = start.col + dc
+
+    # Check if target is within bounds
+    if target_row < 0 or target_row >= grid.rows or target_col < 0 or target_col >= grid.cols:
+        # Target is out of bounds, can't swallow
+        return None
+
+    target_pos = CellPosition(start.grid_id, target_row, target_col)
+    target_cell = get_cell(store, target_pos)
+
+    # Don't swallow Empty cells (doesn't make semantic sense)
+    if isinstance(target_cell, Empty):
+        return None
+
+    # Try to push target into the Ref's referenced grid from the OPPOSITE direction
+    # (e.g., pushing Ref east means pushing target into grid from the west)
+    opposite_dir = opposites[direction]
+    entry_pos = try_enter(store, start_cell.grid_id, opposite_dir, rules)
+
+    if entry_pos is None:
+        # Can't enter the referenced grid
+        return None
+
+    # Place target cell at entry position in the referenced grid
+    ref_grid = store[start_cell.grid_id]
+    ref_cells = [list(row) for row in ref_grid.cells]
+
+    # Check if entry position is Empty
+    if not isinstance(ref_cells[entry_pos.row][entry_pos.col], Empty):
+        # Entry position is not empty, need to push from there
+        # Try to push the existing cell away from entry_pos in the opposite direction
+        inner_result = push_simple(store, entry_pos, opposite_dir, rules, tag_fn, max_depth)
+
+        if inner_result is None:
+            # Can't push existing cell away, swallow fails
+            return None
+
+        # Use inner_result as base and place target at entry_pos
+        ref_grid = inner_result[start_cell.grid_id]
+        ref_cells = [list(row) for row in ref_grid.cells]
+        ref_cells[entry_pos.row][entry_pos.col] = target_cell
+
+        new_ref_grid = Grid(ref_grid.id, tuple(tuple(row) for row in ref_cells))
+        store = {**inner_result, start_cell.grid_id: new_ref_grid}
+    else:
+        # Entry position is empty, just place target there
+        ref_cells[entry_pos.row][entry_pos.col] = target_cell
+        new_ref_grid = Grid(ref_grid.id, tuple(tuple(row) for row in ref_cells))
+        store = {**store, start_cell.grid_id: new_ref_grid}
+
+    # Now update the main grid: start -> Empty, target -> Ref
+    main_grid = store[start.grid_id]
+    main_cells = [list(row) for row in main_grid.cells]
+    main_cells[start.row][start.col] = Empty()
+    main_cells[target_row][target_col] = start_cell
+
+    # Create new Grid with updated cells
+    new_main_grid = Grid(
+        main_grid.id,
+        tuple(tuple(row) for row in main_cells)
+    )
+
+    # Return new store with updated main grid
+    return {**store, start.grid_id: new_main_grid}
+
+
 def push(
     store: GridStore,
     start: CellPosition,
@@ -868,34 +1022,54 @@ def push(
     Returns:
         New GridStore with pushed contents if successful, None if push fails
     """
-    # Perform backtracking traversal to build the path
-    path, reason = push_traverse_backtracking(
-        store, start, direction, rules, tag_fn, max_depth, max_backtrack_depth
-    )
+    # Try strategies in order specified by ref_strategy
+    start_cell = get_cell(store, start)
+    is_ref_start = isinstance(start_cell, Ref)
 
-    # Check success conditions
-    if reason == TerminationReason.EDGE_REACHED:
-        # Success if path ends at Empty
-        if path and isinstance(path[-1][1], Empty):
-            return apply_push(store, path)
-        else:
-            # Hit edge without Empty - push fails
-            return None
+    for strategy_type in rules.ref_strategy:
+        if strategy_type == RefStrategyType.SWALLOW:
+            # Swallowing only applies when start is a Ref
+            if is_ref_start:
+                swallow_result = try_swallow(store, start, direction, rules, tag_fn, max_depth)
+                if swallow_result is not None:
+                    return swallow_result
+                # Swallowing failed, try next strategy
+        elif strategy_type in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
+            # Try normal push with this strategy and backtracking
+            temp_rules = RuleSet(ref_strategy=(strategy_type,))
+            path, reason = push_traverse_backtracking(
+                store, start, direction, temp_rules, tag_fn, max_depth, max_backtrack_depth
+            )
 
-    elif reason == TerminationReason.PATH_CYCLE_DETECTED:
-        # Success if cycle returns to start position
-        if path and len(path) >= 2 and path[0][0] == start:
-            # Check if the last attempted position would cycle to start
-            # The path includes the start, so this is a valid cycle
-            return apply_push(store, path)
-        else:
-            # Invalid cycle (to non-start position) - push fails
-            return None
+            # Check if swallowing is enabled and there's a Ref in the path that could swallow
+            if RefStrategyType.SWALLOW in rules.ref_strategy and path:
+                for i, (pos, cell) in enumerate(path):
+                    if isinstance(cell, Ref):
+                        # Try swallowing from this Ref position
+                        swallow_result = try_swallow(store, pos, direction, rules, tag_fn, max_depth)
+                        if swallow_result is not None:
+                            # Swallowing succeeded! Need to also push any cells before the Ref
+                            if i > 0:
+                                # There are cells before the Ref that also need to be pushed
+                                # Apply the swallow first, then push the remaining cells
+                                remaining_path = path[:i]
+                                result_after_swallow = apply_push(swallow_result, remaining_path + [(pos, Empty())])
+                                return result_after_swallow
+                            else:
+                                # Ref is at the start, just return swallow result
+                                return swallow_result
 
-    else:
-        # All other termination reasons are failures
-        # (STOP_TAG, ENTRY_DENIED, ENTRY_CYCLE_DETECTED, EXIT_CYCLE_DETECTED, MAX_DEPTH_REACHED)
-        return None
+            # Check success conditions
+            if reason == TerminationReason.EDGE_REACHED:
+                if path and isinstance(path[-1][1], Empty):
+                    return apply_push(store, path)
+            elif reason == TerminationReason.PATH_CYCLE_DETECTED:
+                if path and len(path) >= 2 and path[0][0] == start:
+                    return apply_push(store, path)
+            # This strategy failed, try next strategy
+
+    # All strategies failed
+    return None
 
 
 def push_simple(
@@ -928,8 +1102,41 @@ def push_simple(
     Returns:
         New GridStore with pushed contents if successful, None if push fails
     """
+    # In push_simple, only try the FIRST strategy (no fallback)
+    # For multi-strategy support with backtracking, use push() instead
+    start_cell = get_cell(store, start)
+    is_ref_start = isinstance(start_cell, Ref)
+
+    # Get first strategy
+    first_strategy = rules.ref_strategy[0] if rules.ref_strategy else RefStrategyType.PORTAL
+
+    # Try swallow if it's the first strategy and start is a Ref
+    if first_strategy == RefStrategyType.SWALLOW and is_ref_start:
+        swallow_result = try_swallow(store, start, direction, rules, tag_fn, max_depth)
+        if swallow_result is not None:
+            return swallow_result
+        # Swallowing failed, fall through to normal push
+
     # Perform custom traversal to build the path
     path, reason = push_traverse_simple(store, start, direction, rules, tag_fn, max_depth)
+
+    # Check if swallowing is enabled and there's a Ref in the path that could swallow
+    if RefStrategyType.SWALLOW in rules.ref_strategy and path:
+        for i, (pos, cell) in enumerate(path):
+            if isinstance(cell, Ref):
+                # Try swallowing from this Ref position
+                swallow_result = try_swallow(store, pos, direction, rules, tag_fn, max_depth)
+                if swallow_result is not None:
+                    # Swallowing succeeded! Need to also push any cells before the Ref
+                    if i > 0:
+                        # There are cells before the Ref that also need to be pushed
+                        # Apply the swallow first, then push the remaining cells
+                        remaining_path = path[:i]
+                        result_after_swallow = apply_push(swallow_result, remaining_path + [(pos, Empty())])
+                        return result_after_swallow
+                    else:
+                        # Ref is at the start, just return swallow result
+                        return swallow_result
 
     # Check success conditions
     if reason == TerminationReason.EDGE_REACHED:
@@ -1104,12 +1311,19 @@ def push_traverse_simple(
 
         # Handle Ref cells with portal/solid logic based on rule set
         if isinstance(cell, Ref):
-            if rules.ref_strategy == RefStrategy.PUSH_FIRST:
-                # PUSH_FIRST: Ref acts as SOLID object immediately
+            # Get the first non-SWALLOW strategy from ref_strategy (PORTAL or SOLID)
+            strategy = None
+            for s in rules.ref_strategy:
+                if s in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
+                    strategy = s
+                    break
+
+            if strategy == RefStrategyType.SOLID:
+                # SOLID: Ref acts as solid object immediately
                 path.append((current, cell))
                 visited.add(key)
             else:
-                # TRY_ENTER_FIRST: Try to enter the referenced grid first
+                # PORTAL (or default): Try to enter the referenced grid first
                 entry_pos = try_enter(store, cell.grid_id, direction, rules)
 
                 if entry_pos is None:
@@ -1322,8 +1536,13 @@ def push_traverse_backtracking(
                 # Use alternative strategy from previous backtrack
                 strategy = alternative_strategy_refs[ref_key]
             else:
-                # Use default strategy from rule set
-                strategy = "portal" if rules.ref_strategy == RefStrategy.TRY_ENTER_FIRST else "solid"
+                # Use default strategy from rule set (first non-SWALLOW strategy)
+                strategy_type = None
+                for s in rules.ref_strategy:
+                    if s in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
+                        strategy_type = s
+                        break
+                strategy = "solid" if strategy_type == RefStrategyType.SOLID else "portal"
 
             if strategy == "portal":
                 # Try to enter the referenced grid (portal behavior)
