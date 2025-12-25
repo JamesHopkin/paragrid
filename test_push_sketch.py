@@ -72,7 +72,6 @@ class Navigator:
         self.store = store
         self.current = cell
         self.direction = direction
-        self.visited: set[tuple[str, int, int]] = {(cell.grid_id, cell.row, cell.col)}
 
         # Direction deltas
         self.deltas = {
@@ -85,11 +84,10 @@ class Navigator:
     def clone(self) -> 'Navigator':
         """Create a copy for backtracking"""
         nav = Navigator(self.current, self.direction, self.store)
-        nav.visited = self.visited.copy()
         return nav
 
     def advance(self) -> bool:
-        """Move to next position in direction. Returns False if can't advance."""
+        """Move to next position in direction. Returns False if can't advance (hit edge)."""
         dr, dc = self.deltas[self.direction]
         grid = self.store.grids[self.current.grid_id]
         next_row = self.current.row + dr
@@ -100,14 +98,10 @@ class Navigator:
             return False  # Hit edge
 
         self.current = self.store.get_cell(self.current.grid_id, next_row, next_col)
-        key = (self.current.grid_id, self.current.row, self.current.col)
-        if key in self.visited:
-            return False  # Cycle detected
-        self.visited.add(key)
         return True
 
     def enter(self) -> bool:
-        """Enter the Ref at current position. Returns False if can't enter."""
+        """Enter the Ref at current position from the current direction. Returns False if can't enter."""
         if not self.current.is_ref():
             return False
 
@@ -115,13 +109,21 @@ class Navigator:
         if target_grid not in self.store.grids:
             return False
 
-        # Simple entry: always enter at (0, 0) for this test
-        entry_cell = self.store.get_cell(target_grid, 0, 0)
+        # Entry point based on direction (middle of edge convention)
+        grid = self.store.grids[target_grid]
+        rows, cols = len(grid), len(grid[0])
+
+        if self.direction == 'E':  # Entering from left
+            entry_row, entry_col = rows // 2, 0
+        elif self.direction == 'W':  # Entering from right
+            entry_row, entry_col = rows // 2, cols - 1
+        elif self.direction == 'S':  # Entering from top
+            entry_row, entry_col = 0, cols // 2
+        else:  # 'N' - Entering from bottom
+            entry_row, entry_col = rows - 1, cols // 2
+
+        entry_cell = self.store.get_cell(target_grid, entry_row, entry_col)
         self.current = entry_cell
-        key = (self.current.grid_id, self.current.row, self.current.col)
-        if key in self.visited:
-            return False  # Cycle in entry
-        self.visited.add(key)
         return True
 
     def flip(self) -> None:
@@ -136,6 +138,7 @@ class State:
     path: list[Cell]
     nav: Navigator
     strategies: list[str]
+    visited: set[tuple[str, int, int]]  # Track visited positions for cycle detection
 
 
 # The push algorithm from the sketch
@@ -145,17 +148,27 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
      - trying strategies
      - detecting cycles (also empty? maybe they're roughly equivalent)
      '''
-    def make_new_state(path: list[Cell], nav: Navigator):
+    def make_new_state(path: list[Cell], nav: Navigator, visited: set[tuple[str, int, int]]):
+        # Check for empty (success)
         if nav.current.is_empty():
             return 'succeed'
 
-        # Check for cycle to start
-        if len(path) > 1 and nav.current.grid_id == path[0].grid_id and \
-           nav.current.row == path[0].row and nav.current.col == path[0].col:
-            return 'succeed'
-
+        # Check for stop tag (failure)
         if nav.current.has_tag('stop'):
             return 'fail'
+
+        # Check for cycle
+        current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
+        if current_key in visited:
+            # Cycle detected - check if cycling back to start (success) or elsewhere (failure)
+            if len(path) > 0 and nav.current.grid_id == path[0].grid_id and \
+               nav.current.row == path[0].row and nav.current.col == path[0].col:
+                return 'succeed'  # Cycled to start
+            else:
+                return 'fail'  # Cycled to non-start
+
+        # Add current position to visited set for this state
+        new_visited = visited | {current_key}
 
         # Compute applicable strategies
         strategies = []
@@ -176,13 +189,17 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
         if not strategies:
             return 'fail'
 
-        return State(path, nav, strategies)
+        return State(path, nav, strategies, new_visited)
 
     nav = Navigator(cell, direction, store)
+
+    # Initialize with start cell in visited set
+    initial_visited = {(cell.grid_id, cell.row, cell.col)}
+
     if not nav.advance():
         return [], 'fail'
 
-    state = make_new_state([cell], nav)
+    state = make_new_state([cell], nav, initial_visited)
     if isinstance(state, str):
         return [], state
 
@@ -213,18 +230,23 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
                     continue  # Can't enter, try next strategy
 
             case 'swallow':
+                print(f"swallow: S={state.path[-1]}, T={nav.current}")
                 state.path.append(nav.current)
                 # Swallow: S (last in path) swallows T (current)
                 # Move T into S's referenced grid from opposite direction
+                print(f"swallow: flipping from {nav.direction}")
                 nav.flip()
+                print(f"swallow: flipped to {nav.direction}, advancing from {nav.current}")
                 if not nav.advance():
-                    print("swallow: couldn't advance")
+                    print(f"swallow: couldn't advance (at edge)")
                     continue
+                print(f"swallow: advanced to {nav.current}, entering...")
                 if not nav.enter():
-                    print("swallow: couldn't enter")
+                    print(f"swallow: couldn't enter (current is {nav.current.content})")
                     continue
+                print(f"swallow: entered to {nav.current}")
 
-        new_state = make_new_state(state.path, nav)
+        new_state = make_new_state(state.path, nav, state.visited)
 
         if new_state == 'succeed':
             return state.path + [nav.current], 'succeed'
