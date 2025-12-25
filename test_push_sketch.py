@@ -86,8 +86,8 @@ class Navigator:
         nav = Navigator(self.current, self.direction, self.store)
         return nav
 
-    def advance(self) -> bool:
-        """Move to next position in direction. Returns False if can't advance (hit edge)."""
+    def try_advance(self) -> bool:
+        """Try to move to next position in direction. Returns False if can't advance (hit edge)."""
         dr, dc = self.deltas[self.direction]
         grid = self.store.grids[self.current.grid_id]
         next_row = self.current.row + dr
@@ -100,8 +100,13 @@ class Navigator:
         self.current = self.store.get_cell(self.current.grid_id, next_row, next_col)
         return True
 
-    def enter(self) -> bool:
-        """Enter the Ref at current position from the current direction. Returns False if can't enter."""
+    def advance(self) -> None:
+        """Move to next position in direction. Asserts if can't advance."""
+        success = self.try_advance()
+        assert success, f"Navigator.advance() failed at {self.current}"
+
+    def try_enter(self) -> bool:
+        """Try to enter the Ref at current position from the current direction. Returns False if can't enter."""
         if not self.current.is_ref():
             return False
 
@@ -125,6 +130,11 @@ class Navigator:
         entry_cell = self.store.get_cell(target_grid, entry_row, entry_col)
         self.current = entry_cell
         return True
+
+    def enter(self) -> None:
+        """Enter the Ref at current position. Asserts if can't enter."""
+        success = self.try_enter()
+        assert success, f"Navigator.enter() failed at {self.current}"
 
     def flip(self) -> None:
         """Reverse direction for swallow operations"""
@@ -196,7 +206,7 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
     # Initialize with start cell in visited set
     initial_visited = {(cell.grid_id, cell.row, cell.col)}
 
-    if not nav.advance():
+    if not nav.try_advance():
         return [], 'fail'
 
     state = make_new_state([cell], nav, initial_visited)
@@ -220,28 +230,28 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
         match strategy:
             case 'solid':
                 state.path.append(nav.current)
-                if not nav.advance():
+                if not nav.try_advance():
                     print("solid: couldn't advance")
                     continue  # Can't advance, try next strategy
 
             case 'enter':
-                if not nav.enter():
+                if not nav.try_enter():
                     print("enter: couldn't")
                     continue  # Can't enter, try next strategy
 
             case 'swallow':
-                print(f"swallow: S={state.path[-1]}, T={nav.current}")
+                # print(f"swallow: S={state.path[-1]}, T={nav.current}")
                 state.path.append(nav.current)
                 # Swallow: S (last in path) swallows T (current)
                 # Move T into S's referenced grid from opposite direction
-                print(f"swallow: flipping from {nav.direction}")
+                # print(f"swallow: flipping from {nav.direction}")
                 nav.flip()
-                print(f"swallow: flipped to {nav.direction}, advancing from {nav.current}")
-                if not nav.advance():
+                # print(f"swallow: flipped to {nav.direction}, advancing from {nav.current}")
+                if not nav.try_advance():
                     print(f"swallow: couldn't advance (at edge)")
                     continue
                 print(f"swallow: advanced to {nav.current}, entering...")
-                if not nav.enter():
+                if not nav.try_enter():
                     print(f"swallow: couldn't enter (current is {nav.current.content})")
                     continue
                 print(f"swallow: entered to {nav.current}")
@@ -455,5 +465,9 @@ if __name__ == '__main__':
         'inner': '9 9|9 _|9 9'
     }
     parse_and_push(grids, {'ref_strategy': ['swallow', 'enter', 'solid']}, stop_cells={'9'})
+    parse_and_push(grids, {}, stop_cells={'9'})
+
+
+
 
     print("\nAll tests complete!")
