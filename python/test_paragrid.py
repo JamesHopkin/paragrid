@@ -1320,27 +1320,53 @@ class TestPushSwallowing:
         assert result is not None
 
     def test_swallow_vs_portal_priority(self) -> None:
-        """Test that rule set controls whether swallow or portal is tried first."""
-        # Setup: [Ref(inner), ball, Empty]
+        """Test that rule set controls whether swallow or portal is tried first.
+
+        Bug: Currently swallow is tried opportunistically during portal/solid processing,
+        breaking the strategy ordering.
+        """
+        # Setup: [Ref(inner), 1, Empty]
         #        inner: [Empty, Empty]
-        # With swallow-first: ball goes into inner, Ref moves right
-        # With portal-first: traverse through Ref, different behavior
-        # This test demonstrates rule set control over strategy order
-        store: GridStore = {
-            "main": Grid("main", ((Ref("inner"), Concrete("ball"), Empty()),)),
-            "inner": Grid("inner", ((Empty(), Empty()),)),
-        }
+        #
+        # Push from Ref(inner) with DEFAULT strategy (PORTAL, SOLID, SWALLOW - swallow is LAST):
+        # - Should try PORTAL first: Ref acts as portal (enter), likely fails
+        # - Should try SOLID next: Ref acts as solid object, pushes 1, succeeds
+        # - Should NOT try swallow until portal and solid both fail
+        #
+        # Expected with DEFAULT (portal, solid, swallow): [Empty, Ref(inner), 1]
+        # Bug behavior: swallow happens early, 1 gets swallowed into inner
+        store = parse_grids({
+            "main": "inner 1 _",
+            "inner": "_ _"
+        })
 
         start = CellPosition("main", 0, 0)
 
-        # Test with different rule sets once swallow is implemented
-        # rules_swallow_first = RuleSet(ref_strategy=RefStrategy.SWALLOW_FIRST)
-        # rules_portal_first = RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
+        # Test with DEFAULT strategy (PORTAL, SOLID, SWALLOW)
+        # Use push() not push_simple() since we need multi-strategy support
+        result_default = push(store, start, Direction.E, RuleSet())
 
-        # result_swallow = push_simple(store, start, Direction.E, rules_swallow_first)
-        # result_portal = push_simple(store, start, Direction.E, rules_portal_first)
+        # Should NOT swallow 1 into inner (swallow is last strategy, portal/solid should succeed first)
+        # Instead should push Ref as solid: [Empty, Ref(inner), 1]
+        assert result_default is not None
+        assert isinstance(result_default["main"].cells[0][0], Empty)
+        assert result_default["main"].cells[0][1] == Ref("inner")
+        assert result_default["main"].cells[0][2] == Concrete("1")
+        # Inner should still be empty (no swallowing should have occurred)
+        assert isinstance(result_default["inner"].cells[0][0], Empty)
+        assert isinstance(result_default["inner"].cells[0][1], Empty)
 
-        # Results should differ based on strategy priority
+        # Test with SWALLOW_FIRST strategy - now swallow SHOULD be tried first and succeed
+        result_swallow_first = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.SWALLOW_FIRST))
+
+        # Should swallow 1 into inner
+        assert result_swallow_first is not None
+        assert isinstance(result_swallow_first["main"].cells[0][0], Empty)
+        assert result_swallow_first["main"].cells[0][1] == Ref("inner")
+        assert isinstance(result_swallow_first["main"].cells[0][2], Empty)
+        # 1 should be in inner now
+        assert isinstance(result_swallow_first["inner"].cells[0][0], Empty)
+        assert result_swallow_first["inner"].cells[0][1] == Concrete("1")
 
     def test_swallow_ref_cell(self) -> None:
         """Test swallowing when target is also a Ref."""
@@ -1386,6 +1412,38 @@ class TestPushSwallowing:
 
         # Expected behavior depends on swallow implementation
         # This test ensures complex push scenarios work with swallowing
+
+    def test_swallow_stop_tag_prevents_swallow(self) -> None:
+        """Test that cells with stop tag cannot be swallowed."""
+        # Setup: [Ref(pocket), wall, Empty]
+        #        pocket: [Empty, Empty]
+        # The 'wall' cell has a stop tag - it should not be swallowable
+        # Push Ref eastward -> swallow should fail because wall is stop-tagged
+        store: GridStore = {
+            "main": Grid("main", ((Ref("pocket"), Concrete("wall"), Empty()),)),
+            "pocket": Grid("pocket", ((Empty(), Empty()),)),
+        }
+
+        def tag_stop(cell: Cell) -> set[str]:
+            """Tag 'wall' cells with stop tag."""
+            if isinstance(cell, Concrete) and cell.id == "wall":
+                return {"stop"}
+            return set()
+
+        start = CellPosition("main", 0, 0)
+        # Try swallow with stop-tagged target
+        result = push_simple(
+            store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.SWALLOW_FIRST), tag_fn=tag_stop
+        )
+
+        # Swallow should fail, but the push might succeed via alternative strategy (portal/solid)
+        # If using SWALLOW_FIRST with only swallow, it should fail completely
+        # Let's verify the wall hasn't been swallowed
+        if result is not None:
+            # If push succeeded, the wall should still be in main grid, not in pocket
+            # Check that pocket is still empty (no swallowing occurred)
+            assert isinstance(result["pocket"].cells[0][0], Empty)
+            assert isinstance(result["pocket"].cells[0][1], Empty)
 
     def test_swallow_immutability(self) -> None:
         """Test that swallowing preserves immutability of original store."""

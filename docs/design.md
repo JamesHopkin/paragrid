@@ -269,6 +269,8 @@ The rule set determines the initial behavior when encountering Refs, affecting b
 
 ### Implementation
 
+**Reference Implementation**: The file `test_push_sketch.py` contains the core push algorithm with minimal type implementations and comprehensive test cases. This serves as the canonical reference for push behavior. Any changes to the push algorithm should be validated against this reference implementation first.
+
 **Three-function architecture**:
 
 ```python
@@ -566,6 +568,156 @@ With `push_simple()` and `ref_strategy="push_first"`:
 4. **Push succeeds**: rotate [A, Ref(inner), Empty] → [Empty, A, Ref(inner)]
 
 **Key insight**: The rule set controls the initial Ref handling strategy. Backtracking enables pushes that would otherwise fail by automatically trying the alternative strategy when the initial choice doesn't work out.
+
+### Navigator Abstraction (Proposed)
+
+**Motivation**: The current push implementation mixes navigation logic (moving through grids, handling exits) with strategy decisions (portal vs solid vs swallow). A Navigator abstraction could separate these concerns.
+
+**Concept**: A Navigator is a stateful iterator-like object that handles grid traversal:
+
+```python
+class Navigator:
+    """
+    Stateful navigator through grid positions in a direction.
+
+    Responsibilities:
+    - Track current position and direction
+    - Automatically handle multi-level exits through parent grids
+    - Detect termination conditions (edge, stop tag, max depth)
+    - Support entering Refs (when current position is a Ref)
+    - Support direction reversal (for swallow operations)
+    - Support cloning (for backtracking checkpoints)
+    """
+
+    def __init__(self, store: GridStore, start: CellPosition, direction: Direction,
+                 rules: RuleSet, tag_fn: TagFn | None)
+
+    def current_position(self) -> CellPosition
+    def current_cell(self) -> Cell
+    def direction(self) -> Direction
+
+    def advance(self) -> bool:
+        """
+        Move to next position in direction.
+        Handles grid exits, cascading through parent levels.
+        Returns False if can't advance (hit edge, stop tag, etc.)
+        """
+
+    def enter(self) -> bool:
+        """
+        Enter the Ref at current position.
+        Only valid if current_cell() is a Ref.
+        Uses try_enter() to find entry point.
+        Returns False if entry denied.
+        """
+
+    def flip_direction(self) -> None:
+        """
+        Reverse the direction (for swallow operations).
+        N<->S, E<->W
+        """
+
+    def clone(self) -> Navigator:
+        """
+        Create a copy of this navigator with same state.
+        Used for backtracking decision points.
+        """
+
+    def is_done(self) -> tuple[bool, TerminationReason | None]:
+        """
+        Check if navigation has terminated.
+        Returns (done, reason) where reason is None if not done.
+        """
+```
+
+**Usage in Push**:
+
+```python
+def push_with_navigator(store, start, direction, rules, tag_fn):
+    nav = Navigator(store, start, direction, rules, tag_fn)
+    path = [(nav.current_position(), nav.current_cell())]
+    decision_stack = []
+
+    while True:
+        # Advance to next position
+        if not nav.advance():
+            done, reason = nav.is_done()
+            if reason == EDGE_REACHED and isinstance(path[-1][1], Empty):
+                return apply_push(store, path)  # Success!
+            # Try backtracking or fail
+            if decision_stack:
+                nav, path = backtrack(decision_stack)
+                continue
+            return None  # Failed
+
+        # Check what we hit
+        current_pos = nav.current_position()
+        current_cell = nav.current_cell()
+
+        # Determine available strategies based on S and T
+        S_cell = path[-1][1]  # Source (last in path)
+        T_cell = current_cell  # Target (current position)
+
+        available_strategies = []
+        if isinstance(T_cell, Ref):
+            available_strategies.append(PORTAL)
+        if isinstance(S_cell, Ref):
+            available_strategies.append(SWALLOW)
+        available_strategies.append(SOLID)  # Always available
+
+        # Pick strategy (filtered by rules.ref_strategy order)
+        selected = pick_strategy(available_strategies, rules, overrides)
+
+        # Create decision point if multiple strategies
+        if len(available_strategies) > 1:
+            decision_stack.append((nav.clone(), path.copy(), selected_index))
+
+        # Execute strategy
+        if selected == PORTAL:
+            if nav.enter():
+                # Entered successfully - continue from inside
+                continue
+            else:
+                # Entry failed - treat as SOLID
+                path.append((current_pos, current_cell))
+
+        elif selected == SWALLOW:
+            # S (a Ref) tries to swallow T
+            # Swallow = push T into S's grid from opposite direction
+            swallow_nav = Navigator(store, S_position, opposite(nav.direction()), rules, tag_fn)
+            swallow_nav.enter()  # Enter S's referenced grid
+            # Try to push T from swallow_nav's position
+            swallow_result = try_swallow_with_nav(swallow_nav, T_cell, ...)
+            if swallow_result:
+                return swallow_result  # Complete!
+            # Swallow failed - backtrack or fail
+
+        else:  # SOLID
+            path.append((current_pos, current_cell))
+```
+
+**Key advantages**:
+
+1. **Separation of concerns**: Navigation logic (advance, exit, enter) is separate from strategy decisions
+2. **Cloneable state**: Easy to snapshot for backtracking without manually tracking position/visited/depth
+3. **Direction reversal**: Swallow operations naturally expressed as flipped navigation
+4. **Ref chains**: `enter()` can handle multi-level Ref chains internally
+5. **Testability**: Navigator can be tested independently from push logic
+6. **Ref context**: Navigator tracks "where we came from" for swallow decisions, solving the intermediate Ref problem
+
+**Implementation notes**:
+
+- Navigator internally tracks: current position, direction, visited set (for cycle detection), depth counter, store reference, rules, tag_fn
+- `advance()` handles all the complex exit logic (secondary->primary teleportation, cascading exits)
+- `enter()` uses `_follow_enter_chain()` to resolve Ref chains
+- `is_done()` checks for termination conditions without modifying state
+- Cloning creates a deep copy of visited set and position, but shares immutable store/rules references
+
+**Open questions**:
+
+- Should Navigator track the path itself, or just navigate positions?
+- How does Navigator handle the distinction between "can't advance" (hit obstacle) vs "shouldn't advance" (reached goal)?
+- For swallow, do we create a new Navigator or reuse/modify the existing one?
 
 ---
 

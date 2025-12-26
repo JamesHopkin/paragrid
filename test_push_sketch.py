@@ -189,8 +189,8 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
 
         # Determine available strategies based on rules order
         for strat in rules.get('ref_strategy', ['solid', 'enter', 'swallow']):
-            if strat == 'solid':
-                strategies.append('solid')  # Always available
+            if strat == 'solid' and nav.clone().try_advance(): # peek ahead
+                strategies.append('solid')  # Only if nav can advance
             elif strat == 'enter' and T_cell.is_ref():
                 strategies.append('enter')  # Only if T is Ref
             elif strat == 'swallow' and S_cell and S_cell.is_ref():
@@ -227,39 +227,32 @@ def push(cell: Cell, direction: str, rules: dict, store: GridStore) -> tuple[lis
         # Handle remaining cases by strategy
         strategy = state.strategies.pop(0)
 
+        new_path = state.path[:]
         match strategy:
             case 'solid':
-                state.path.append(nav.current)
-                if not nav.try_advance():
-                    print("solid: couldn't advance")
-                    continue  # Can't advance, try next strategy
+                new_path.append(nav.current)
+                nav.advance()
 
             case 'enter':
-                if not nav.try_enter():
-                    print("enter: couldn't")
-                    continue  # Can't enter, try next strategy
+                nav.enter()
 
             case 'swallow':
                 # print(f"swallow: S={state.path[-1]}, T={nav.current}")
-                state.path.append(nav.current)
+                new_path.append(nav.current)
                 # Swallow: S (last in path) swallows T (current)
                 # Move T into S's referenced grid from opposite direction
                 # print(f"swallow: flipping from {nav.direction}")
                 nav.flip()
                 # print(f"swallow: flipped to {nav.direction}, advancing from {nav.current}")
-                if not nav.try_advance():
-                    print(f"swallow: couldn't advance (at edge)")
-                    continue
-                print(f"swallow: advanced to {nav.current}, entering...")
-                if not nav.try_enter():
-                    print(f"swallow: couldn't enter (current is {nav.current.content})")
-                    continue
-                print(f"swallow: entered to {nav.current}")
+                nav.advance()
+                # print(f"swallow: advanced to {nav.current}, entering...")
+                nav.enter()
+                # print(f"swallow: entered to {nav.current}")
 
-        new_state = make_new_state(state.path, nav, state.visited)
+        new_state = make_new_state(new_path, nav, state.visited)
 
         if new_state == 'succeed':
-            return state.path + [nav.current], 'succeed'
+            return new_path + [nav.current], 'succeed'
         elif new_state == 'fail':
             continue  # Try next strategy
         else:
@@ -357,10 +350,10 @@ def test_push_ref_as_solid():
     start = store.get_cell('main', 0, 0)
     rules = {'ref_strategy': ['enter', 'solid']}  # Try portal first, then solid
 
-    path, result = push(start, 'E', rules, store)
-
-    # Should fail to enter (hits stop), then try solid, succeed
     try:
+        path, result = push(start, 'E', rules, store)
+
+        # Should fail to enter (hits stop), then try solid, succeed
         assert result == 'succeed'
         print(f"{test_pass_mark(True)} Test push_ref_as_solid: Result: {highlight_result(result)}")
         print(f"  Path: {[str(c) for c in path]}")
@@ -369,7 +362,7 @@ def test_push_ref_as_solid():
         raise
 
 
-def parse_and_push(grids_dict: dict[str, str], rules: dict, stop_cells: set[str] = None) -> tuple[list[Cell], str]:
+def parse_and_push(grids_dict: dict[str, str], rules: dict, stop_cells: set[str] = None, verbose = False) -> tuple[list[Cell], str]:
     """
     Parse grids from compact string format and push from (0,0) east.
 
@@ -431,20 +424,44 @@ def parse_and_push(grids_dict: dict[str, str], rules: dict, stop_cells: set[str]
     first_grid = list(grids_dict.keys())[0]
     start = store.get_cell(first_grid, 0, 0)
 
-    print(f"Pushing from {first_grid}[0,0]={start.content} east")
-    print(f"Rules: {rules}")
-    print(f"Grids:")
-    for grid_id in grids_dict:
-        print(f"  {grid_id}: {grids_dict[grid_id]}")
+    if verbose:
+        print(f"Pushing from {first_grid}[0,0]={start.content} east")
+        print(f"Rules: {rules}")
+        print(f"Grids:")
+        for grid_id in grids_dict:
+            print(f"  {grid_id}: {grids_dict[grid_id]}")
 
     path, result = push(start, 'E', rules, store)
 
-    print(f"Result: {highlight_result(result)}")
-    print(f"Path: {[f'{c.grid_id}[{c.row},{c.col}]={c.content}' for c in path]}")
-    print()
+    if verbose:
+        print(f"Result: {highlight_result(result)}")
+        print(f"Path: {[f'{c.grid_id}[{c.row},{c.col}]={c.content}' for c in path]}")
+        print()
 
     return path, result
 
+def check_parse_and_push(
+    grids_dict: dict[str, str],
+    rules: dict,
+    stop_cells: set[str],
+    name: str,
+    expected_path_len: int | str,
+    expected_result: str = 'succeed') -> tuple[list[Cell], str]:
+
+    path, result = [], None
+    try:
+        path, result = parse_and_push(grids_dict, rules, stop_cells)
+
+        assert result == expected_result
+        if isinstance(expected_path_len, int):
+            assert len(path) == expected_path_len
+        else:
+            print(f"Path: {[f'{c.grid_id}[{c.row},{c.col}]={c.content}' for c in path]}")
+        print(f"{test_pass_mark(True)} check_parse_and_push ({name}) ok")
+    except AssertionError as e:
+        print(f"Result: {highlight_result(result)}")
+        print(f"Path: {[f'{c.grid_id}[{c.row},{c.col}]={c.content}' for c in path]}")
+        print(f"{test_pass_mark(False)} check_parse_and_push ({name}) FAILED")
 
 if __name__ == '__main__':
     print("Running push algorithm tests...\n")
@@ -464,10 +481,14 @@ if __name__ == '__main__':
         'main': '1 inner 2 9',
         'inner': '9 9|9 _|9 9'
     }
-    parse_and_push(grids, {'ref_strategy': ['swallow', 'enter', 'solid']}, stop_cells={'9'})
-    parse_and_push(grids, {}, stop_cells={'9'})
+    parse_and_push(grids, {'ref_strategy': ['swallow', 'enter', 'solid']}, stop_cells={'9'}, verbose=True)
+    
+    check_parse_and_push(grids, {}, {'9'}, "swallow", 4)
 
-
+    check_parse_and_push(dict(a='1 b 9', b='c 9', c='d 9', d = '_'), {}, {'9'}, 'nested enter', 2)
+    check_parse_and_push(dict(a='1 b', b='c', c='d', d = '_'), {'ref_strategy': ['enter']}, {'9'}, 'nested enter [stops]', 2)
+    check_parse_and_push(dict(a='1 b', b='c', c='d', d = '_'), {}, {'9'}, 'nested enter [grid edge]', 2)
+    check_parse_and_push(dict(a='b 1', b='c', c='d', d = '_'), {}, {'9'}, 'nested swallow', 3)
 
 
     print("\nAll tests complete!")

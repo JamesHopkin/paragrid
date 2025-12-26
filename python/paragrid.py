@@ -379,21 +379,124 @@ TryEnter = Callable[[str, Direction], CellPosition | None]
 TagFn = Callable[[Cell], set[str]]
 
 
+class Navigator:
+    """
+    Stateful navigator through grid positions in a direction.
+
+    Handles grid traversal with automatic edge detection and entry/exit logic.
+    Based on the reference implementation in test_push_sketch.py.
+    """
+
+    def __init__(
+        self,
+        store: GridStore,
+        position: CellPosition,
+        direction: Direction,
+    ):
+        self.store = store
+        self.current = position
+        self.direction = direction
+
+        # Direction deltas
+        self.deltas = {
+            Direction.N: (-1, 0),
+            Direction.S: (1, 0),
+            Direction.E: (0, 1),
+            Direction.W: (0, -1),
+        }
+
+    def clone(self) -> "Navigator":
+        """Create a copy for backtracking."""
+        return Navigator(self.store, self.current, self.direction)
+
+    def try_advance(self) -> bool:
+        """
+        Try to move to next position in direction.
+        Handles exiting from nested grids back to parent grids.
+        Returns False if can't advance (hit root edge).
+        """
+        dr, dc = self.deltas[self.direction]
+        grid = self.store[self.current.grid_id]
+        next_row = self.current.row + dr
+        next_col = self.current.col + dc
+
+        # Check bounds
+        if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
+            # Hit edge - try to exit to parent grid
+            primary_ref = find_primary_ref(self.store, self.current.grid_id)
+            if primary_ref is None:
+                return False  # Hit root edge
+
+            # Exit through primary ref
+            parent_grid_id, parent_row, parent_col = primary_ref
+            parent_grid = self.store[parent_grid_id]
+
+            # Continue in same direction from primary ref
+            exit_row = parent_row + dr
+            exit_col = parent_col + dc
+
+            # Check if exit position is valid in parent
+            if (
+                exit_row < 0
+                or exit_row >= parent_grid.rows
+                or exit_col < 0
+                or exit_col >= parent_grid.cols
+            ):
+                # Cascading exit - recursively try to exit from parent
+                self.current = CellPosition(parent_grid_id, parent_row, parent_col)
+                return self.try_advance()
+
+            self.current = CellPosition(parent_grid_id, exit_row, exit_col)
+            return True
+
+        self.current = CellPosition(self.current.grid_id, next_row, next_col)
+        return True
+
+    def advance(self) -> None:
+        """Move to next position in direction. Asserts if can't advance."""
+        success = self.try_advance()
+        assert success, f"Navigator.advance() failed at {self.current}"
+
+    def try_enter(self, rules: RuleSet) -> bool:
+        """
+        Try to enter the Ref at current position from the current direction.
+        Returns False if can't enter.
+        """
+        cell = get_cell(self.store, self.current)
+        if not isinstance(cell, Ref):
+            return False
+
+        entry_pos = try_enter(self.store, cell.grid_id, self.direction, rules)
+        if entry_pos is None:
+            return False
+
+        self.current = entry_pos
+        return True
+
+    def enter(self, rules: RuleSet) -> None:
+        """Enter the Ref at current position. Asserts if can't enter."""
+        success = self.try_enter(rules)
+        assert success, f"Navigator.enter() failed at {self.current}"
+
+    def flip(self) -> None:
+        """Reverse direction for swallow operations."""
+        flips = {
+            Direction.N: Direction.S,
+            Direction.S: Direction.N,
+            Direction.E: Direction.W,
+            Direction.W: Direction.E,
+        }
+        self.direction = flips[self.direction]
+
+
 @dataclass
-class DecisionPoint:
-    """
-    Decision point for backtracking in push operations.
+class State:
+    """State for backtracking in push operations."""
 
-    Tracks a point where we made a Ref handling decision. If the push fails,
-    we can backtrack to this point and retry with the alternative strategy.
-    """
-
-    ref_position: CellPosition  # Location of the Ref we handled
-    ref_cell: Ref  # The Ref cell itself
-    path_snapshot: list[tuple[CellPosition, Cell]]  # Path before decision
-    visited_snapshot: set[tuple[str, int, int]]  # Visited set before decision
-    depth_at_decision: int  # Traversal depth at this point
-    strategy_used: str  # "portal" or "solid" - which strategy was tried
+    path: list[CellPosition]
+    nav: Navigator
+    strategies: list[str]
+    visited: set[tuple[str, int, int]]  # Track visited positions for cycle detection
 
 
 class TraversalResult:
@@ -581,38 +684,6 @@ def _follow_exit_chain(
 
     # Hit max_depth, treat as cycle
     return (current, True)
-
-
-def _restore_from_decision(
-    decision: DecisionPoint,
-    alternative_strategy_refs: dict[tuple[str, int, int], str],
-) -> tuple[CellPosition, list[tuple[CellPosition, Cell]], set[tuple[str, int, int]], int]:
-    """
-    Restore state from a decision point for backtracking.
-
-    Marks the Ref from the decision point to use alternative strategy on retry.
-    If "portal" was tried, marks it for "solid". If "solid" was tried, marks it for "portal".
-
-    Args:
-        decision: The decision point to backtrack to
-        alternative_strategy_refs: Dict mapping Ref positions to alternative strategies (mutated)
-
-    Returns:
-        Tuple of (current_position, path, visited, depth) restored from decision point
-    """
-    # Mark this Ref to use alternative strategy
-    ref_key = (decision.ref_position.grid_id, decision.ref_position.row, decision.ref_position.col)
-    # Flip the strategy: portal <-> solid
-    alternative_strategy = "solid" if decision.strategy_used == "portal" else "portal"
-    alternative_strategy_refs[ref_key] = alternative_strategy
-
-    # Restore state to just before the decision
-    return (
-        decision.ref_position,
-        decision.path_snapshot.copy(),
-        decision.visited_snapshot.copy(),
-        decision.depth_at_decision,
-    )
 
 
 def traverse(
@@ -933,6 +1004,10 @@ def try_swallow(
     target_pos = CellPosition(start.grid_id, target_row, target_col)
     target_cell = get_cell(store, target_pos)
 
+    # Check if target has stop tag - stop-tagged cells cannot be swallowed
+    if tag_fn is not None and "stop" in tag_fn(target_cell):
+        return None
+
     # Don't swallow Empty cells (doesn't make semantic sense)
     if isinstance(target_cell, Empty):
         return None
@@ -1006,9 +1081,8 @@ def push(
     1. The path ends at an Empty cell, OR
     2. The path cycles back to the starting position
 
-    When a push fails with the initial Ref handling strategy, this algorithm
-    automatically backtracks and retries with the alternative strategy. Supports
-    multiple levels of backtracking for nested Refs.
+    This implementation is based on the reference algorithm in test_push_sketch.py,
+    using a Navigator abstraction and decision stack for backtracking.
 
     Args:
         store: The grid store containing all grids
@@ -1022,53 +1096,133 @@ def push(
     Returns:
         New GridStore with pushed contents if successful, None if push fails
     """
-    # Try strategies in order specified by ref_strategy
-    start_cell = get_cell(store, start)
-    is_ref_start = isinstance(start_cell, Ref)
 
-    for strategy_type in rules.ref_strategy:
-        if strategy_type == RefStrategyType.SWALLOW:
-            # Swallowing only applies when start is a Ref
-            if is_ref_start:
-                swallow_result = try_swallow(store, start, direction, rules, tag_fn, max_depth)
-                if swallow_result is not None:
-                    return swallow_result
-                # Swallowing failed, try next strategy
-        elif strategy_type in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
-            # Try normal push with this strategy and backtracking
-            temp_rules = RuleSet(ref_strategy=(strategy_type,))
-            path, reason = push_traverse_backtracking(
-                store, start, direction, temp_rules, tag_fn, max_depth, max_backtrack_depth
-            )
+    def strategy_to_str(strat: RefStrategyType) -> str:
+        """Convert RefStrategyType to string for internal use."""
+        if strat == RefStrategyType.PORTAL:
+            return "enter"
+        elif strat == RefStrategyType.SOLID:
+            return "solid"
+        elif strat == RefStrategyType.SWALLOW:
+            return "swallow"
+        return "solid"
 
-            # Check if swallowing is enabled and there's a Ref in the path that could swallow
-            if RefStrategyType.SWALLOW in rules.ref_strategy and path:
-                for i, (pos, cell) in enumerate(path):
-                    if isinstance(cell, Ref):
-                        # Try swallowing from this Ref position
-                        swallow_result = try_swallow(store, pos, direction, rules, tag_fn, max_depth)
-                        if swallow_result is not None:
-                            # Swallowing succeeded! Need to also push any cells before the Ref
-                            if i > 0:
-                                # There are cells before the Ref that also need to be pushed
-                                # Apply the swallow first, then push the remaining cells
-                                remaining_path = path[:i]
-                                result_after_swallow = apply_push(swallow_result, remaining_path + [(pos, Empty())])
-                                return result_after_swallow
-                            else:
-                                # Ref is at the start, just return swallow result
-                                return swallow_result
+    def make_new_state(
+        path: list[CellPosition], nav: Navigator, visited: set[tuple[str, int, int]]
+    ) -> State | str:
+        """
+        Create new state or return termination status.
 
-            # Check success conditions
-            if reason == TerminationReason.EDGE_REACHED:
-                if path and isinstance(path[-1][1], Empty):
-                    return apply_push(store, path)
-            elif reason == TerminationReason.PATH_CYCLE_DETECTED:
-                if path and len(path) >= 2 and path[0][0] == start:
-                    return apply_push(store, path)
-            # This strategy failed, try next strategy
+        Returns 'succeed' if push succeeds, 'fail' if it fails, or a new State
+        to continue processing.
+        """
+        # Check for empty (success)
+        current_cell = get_cell(store, nav.current)
+        if isinstance(current_cell, Empty):
+            return "succeed"
 
-    # All strategies failed
+        # Check for stop tag (failure)
+        if tag_fn is not None and "stop" in tag_fn(current_cell):
+            return "fail"
+
+        # Check for cycle
+        current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
+        if current_key in visited:
+            # Cycle detected - check if cycling back to start (success) or elsewhere (failure)
+            if len(path) > 0 and nav.current == start:
+                return "succeed"  # Cycled to start
+            else:
+                return "fail"  # Cycled to non-start
+
+        # Add current position to visited set for this state
+        new_visited = visited | {current_key}
+
+        # Compute applicable strategies
+        strategies = []
+
+        # Get S (source) and T (target)
+        S_pos = path[-1] if path else None
+        S_cell = get_cell(store, S_pos) if S_pos else None
+        T_cell = current_cell
+
+        # Determine available strategies based on rules order
+        for strat_type in rules.ref_strategy:
+            strat = strategy_to_str(strat_type)
+            if strat == "solid":
+                # Check if we can advance (peek ahead)
+                test_nav = nav.clone()
+                if test_nav.try_advance():
+                    strategies.append(strat)  # Only if nav can advance
+            elif strat == "enter" and isinstance(T_cell, Ref):
+                strategies.append(strat)  # Only if T is Ref
+            elif strat == "swallow" and S_cell and isinstance(S_cell, Ref):
+                strategies.append(strat)  # Only if S is Ref
+
+        if not strategies:
+            return "fail"
+
+        return State(path, nav, strategies, new_visited)
+
+    # Initialize navigator
+    nav = Navigator(store, start, direction)
+
+    # Initialize with start cell in visited set
+    initial_visited = {(start.grid_id, start.row, start.col)}
+
+    # Try to advance to first position
+    if not nav.try_advance():
+        return None
+
+    # Create initial state
+    state = make_new_state([start], nav, initial_visited)
+    if isinstance(state, str):
+        return None  # Failed immediately
+
+    decision_stack = [state]
+
+    while decision_stack and max_backtrack_depth > 0:
+        state = decision_stack[-1]
+        if not state.strategies:
+            decision_stack.pop()
+            max_backtrack_depth -= 1
+            continue
+
+        # Clone navigator for this attempt
+        nav = state.nav.clone()
+
+        # Handle remaining cases by strategy
+        strategy = state.strategies.pop(0)
+
+        new_path = state.path[:]
+        if strategy == "solid":
+            new_path.append(nav.current)
+            nav.advance()
+
+        elif strategy == "enter":
+            nav.enter(rules)
+
+        elif strategy == "swallow":
+            new_path.append(nav.current)
+            # Swallow: S (last in path) swallows T (current)
+            # Move T into S's referenced grid from opposite direction
+            nav.flip()
+            nav.advance()
+            nav.enter(rules)
+
+        new_state = make_new_state(new_path, nav, state.visited)
+
+        if new_state == "succeed":
+            # Build final path with cells for apply_push
+            final_path: list[tuple[CellPosition, Cell]] = []
+            for pos in new_path:
+                final_path.append((pos, get_cell(store, pos)))
+            final_path.append((nav.current, get_cell(store, nav.current)))
+            return apply_push(store, final_path)
+        elif new_state == "fail":
+            continue  # Try next strategy
+        elif isinstance(new_state, State):
+            decision_stack.append(new_state)
+
     return None
 
 
@@ -1089,7 +1243,8 @@ def push_simple(
     2. The path cycles back to the starting position
 
     When a push fails with the initial Ref handling strategy, the entire push fails.
-    This is the simpler algorithm without backtracking, kept for testing.
+    This is the simpler algorithm without backtracking, using only the first applicable
+    strategy at each decision point.
 
     Args:
         store: The grid store containing all grids
@@ -1102,508 +1257,102 @@ def push_simple(
     Returns:
         New GridStore with pushed contents if successful, None if push fails
     """
-    # In push_simple, only try the FIRST strategy (no fallback)
-    # For multi-strategy support with backtracking, use push() instead
-    start_cell = get_cell(store, start)
-    is_ref_start = isinstance(start_cell, Ref)
 
-    # Get first strategy
-    first_strategy = rules.ref_strategy[0] if rules.ref_strategy else RefStrategyType.PORTAL
+    def strategy_to_str(strat: RefStrategyType) -> str:
+        """Convert RefStrategyType to string for internal use."""
+        if strat == RefStrategyType.PORTAL:
+            return "enter"
+        elif strat == RefStrategyType.SOLID:
+            return "solid"
+        elif strat == RefStrategyType.SWALLOW:
+            return "swallow"
+        return "solid"
 
-    # Try swallow if it's the first strategy and start is a Ref
-    if first_strategy == RefStrategyType.SWALLOW and is_ref_start:
-        swallow_result = try_swallow(store, start, direction, rules, tag_fn, max_depth)
-        if swallow_result is not None:
-            return swallow_result
-        # Swallowing failed, fall through to normal push
+    # Initialize navigator
+    nav = Navigator(store, start, direction)
+    path: list[CellPosition] = [start]
+    visited: set[tuple[str, int, int]] = {(start.grid_id, start.row, start.col)}
+    depth = 0
 
-    # Perform custom traversal to build the path
-    path, reason = push_traverse_simple(store, start, direction, rules, tag_fn, max_depth)
-
-    # Check if swallowing is enabled and there's a Ref in the path that could swallow
-    if RefStrategyType.SWALLOW in rules.ref_strategy and path:
-        for i, (pos, cell) in enumerate(path):
-            if isinstance(cell, Ref):
-                # Try swallowing from this Ref position
-                swallow_result = try_swallow(store, pos, direction, rules, tag_fn, max_depth)
-                if swallow_result is not None:
-                    # Swallowing succeeded! Need to also push any cells before the Ref
-                    if i > 0:
-                        # There are cells before the Ref that also need to be pushed
-                        # Apply the swallow first, then push the remaining cells
-                        remaining_path = path[:i]
-                        result_after_swallow = apply_push(swallow_result, remaining_path + [(pos, Empty())])
-                        return result_after_swallow
-                    else:
-                        # Ref is at the start, just return swallow result
-                        return swallow_result
-
-    # Check success conditions
-    if reason == TerminationReason.EDGE_REACHED:
-        # Success if path ends at Empty
-        if path and isinstance(path[-1][1], Empty):
-            return apply_push(store, path)
-        else:
-            # Hit edge without Empty - push fails
-            return None
-
-    elif reason == TerminationReason.PATH_CYCLE_DETECTED:
-        # Success if cycle returns to start position
-        if path and len(path) >= 2 and path[0][0] == start:
-            # Check if the last attempted position would cycle to start
-            # The path includes the start, so this is a valid cycle
-            return apply_push(store, path)
-        else:
-            # Invalid cycle (to non-start position) - push fails
-            return None
-
-    else:
-        # All other termination reasons are failures
-        # (STOP_TAG, ENTRY_DENIED, ENTRY_CYCLE_DETECTED, EXIT_CYCLE_DETECTED, MAX_DEPTH_REACHED)
+    # Try to advance to first position
+    if not nav.try_advance():
         return None
 
-
-def push_traverse_simple(
-    store: GridStore,
-    start: CellPosition,
-    direction: Direction,
-    rules: RuleSet,
-    tag_fn: TagFn | None = None,
-    max_depth: int = 1000,
-) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]:
-    """
-    Simple traversal for push operation without backtracking.
-
-    This traversal has special Ref handling governed by the rule set:
-    - If ref_strategy=TRY_ENTER_FIRST:
-      * Try entry first; if succeeds, Ref acts as PORTAL (not in path)
-      * If entry fails, Ref acts as SOLID object (included in path)
-    - If ref_strategy=PUSH_FIRST:
-      * Ref acts as SOLID object immediately (included in path)
-
-    When push fails with initial strategy, the entire push fails with no retry.
-
-    Args:
-        store: The grid store containing all grids
-        start: Starting position
-        direction: Direction to traverse
-        rules: RuleSet governing Ref handling behavior
-        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
-        max_depth: Maximum number of steps to prevent infinite loops
-
-    Returns:
-        Tuple of (path, termination_reason) where:
-        - path is list of (position, original_cell) tuples
-        - termination_reason indicates why traversal stopped
-    """
-    # Direction deltas: N=up, S=down, E=right, W=left
-    deltas = {
-        Direction.N: (-1, 0),
-        Direction.S: (1, 0),
-        Direction.E: (0, 1),
-        Direction.W: (0, -1),
-    }
-
-    path: list[tuple[CellPosition, Cell]] = []
-    visited: set[tuple[str, int, int]] = set()
-    current = start
-    depth = 0
-    skip_movement = False  # Flag to skip movement after entering a Ref
-
-    # Add starting position to path
-    start_cell = get_cell(store, start)
-
-    # Check if starting cell has stop tag
-    if tag_fn is not None:
-        tags = tag_fn(start_cell)
-        if "stop" in tags:
-            return ([], TerminationReason.STOP_TAG)
-
-    path.append((start, start_cell))
-    visited.add((start.grid_id, start.row, start.col))
-
     while depth < max_depth:
         depth += 1
 
-        if not skip_movement:
-            # Get current grid and compute next position
-            grid = store[current.grid_id]
-            dr, dc = deltas[direction]
-            next_row, next_col = current.row + dr, current.col + dc
-        else:
-            # Skip movement - we just entered a Ref and need to process the entry cell first
-            skip_movement = False
-            # Proceed to process the cell at current position
-            grid = store[current.grid_id]
-            dr, dc = deltas[direction]
-            # Set next to current so the movement logic is bypassed
-            next_row, next_col = current.row, current.col
+        # Get current cell
+        current_cell = get_cell(store, nav.current)
 
-        # Check if we hit an edge
-        if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
-            # At edge - need to exit to parent grid
-            primary_ref = find_primary_ref(store, current.grid_id)
+        # Check for empty (success)
+        if isinstance(current_cell, Empty):
+            path.append(nav.current)
+            # Build final path with cells for apply_push
+            final_path: list[tuple[CellPosition, Cell]] = [
+                (pos, get_cell(store, pos)) for pos in path
+            ]
+            return apply_push(store, final_path)
 
-            if primary_ref is None:
-                # No parent - we're at the root grid edge
-                return (path, TerminationReason.EDGE_REACHED)
-
-            # Exit through the primary ref
-            parent_grid_id, parent_row, parent_col = primary_ref
-            parent_grid = store[parent_grid_id]
-
-            # Continue from the primary ref's position in parent grid
-            next_row = parent_row + dr
-            next_col = parent_col + dc
-
-            # Check if we're still at edge after exiting
-            if (
-                next_row < 0
-                or next_row >= parent_grid.rows
-                or next_col < 0
-                or next_col >= parent_grid.cols
-            ):
-                # Cascading exit - use exit chain logic
-                exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
-                final_pos, hit_cycle = _follow_exit_chain(
-                    store, exit_pos, direction, rules, max_depth - depth
-                )
-
-                if final_pos is None:
-                    # Exited root grid
-                    return (path, TerminationReason.EDGE_REACHED)
-
-                if hit_cycle:
-                    return (path, TerminationReason.EXIT_CYCLE_DETECTED)
-
-                # Continue from final exit position
-                # Set flag to skip next movement so we process cell at final_pos first
-                current = final_pos
-                skip_movement = True
-                depth -= 1  # Will be incremented at start of next iteration
-                continue
-            else:
-                # Normal exit to parent
-                current = CellPosition(parent_grid_id, next_row, next_col)
-        else:
-            # Normal move within same grid
-            current = CellPosition(current.grid_id, next_row, next_col)
+        # Check for stop tag (failure)
+        if tag_fn is not None and "stop" in tag_fn(current_cell):
+            return None
 
         # Check for cycle
-        key = (current.grid_id, current.row, current.col)
-        if key in visited:
-            # Check if we cycled back to start (success) or elsewhere (failure)
-            if current == start:
-                # Cycle to start - success condition for push
-                return (path, TerminationReason.PATH_CYCLE_DETECTED)
+        current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
+        if current_key in visited:
+            # Cycle detected - check if cycling back to start (success) or elsewhere (failure)
+            if nav.current == start:
+                path.append(nav.current)
+                # Build final path with cells for apply_push
+                final_path = [(pos, get_cell(store, pos)) for pos in path]
+                return apply_push(store, final_path)
             else:
-                # Invalid cycle to non-start position
-                return (path, TerminationReason.PATH_CYCLE_DETECTED)
+                return None  # Cycled to non-start
 
-        # Get the cell at current position
-        cell = get_cell(store, current)
+        visited.add(current_key)
 
-        # Check for stop tag
-        if tag_fn is not None:
-            tags = tag_fn(cell)
-            if "stop" in tags:
-                return (path, TerminationReason.STOP_TAG)
+        # Get S (source) and T (target)
+        S_pos = path[-1] if path else None
+        S_cell = get_cell(store, S_pos) if S_pos else None
+        T_cell = current_cell
 
-        # Handle Ref cells with portal/solid logic based on rule set
-        if isinstance(cell, Ref):
-            # Get the first non-SWALLOW strategy from ref_strategy (PORTAL or SOLID)
-            strategy = None
-            for s in rules.ref_strategy:
-                if s in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
-                    strategy = s
+        # Determine first applicable strategy based on rules order
+        selected_strategy = None
+        for strat_type in rules.ref_strategy:
+            strat = strategy_to_str(strat_type)
+            if strat == "solid":
+                # Check if we can advance (peek ahead)
+                test_nav = nav.clone()
+                if test_nav.try_advance():
+                    selected_strategy = strat
                     break
+            elif strat == "enter" and isinstance(T_cell, Ref):
+                selected_strategy = strat
+                break
+            elif strat == "swallow" and S_cell and isinstance(S_cell, Ref):
+                selected_strategy = strat
+                break
 
-            if strategy == RefStrategyType.SOLID:
-                # SOLID: Ref acts as solid object immediately
-                path.append((current, cell))
-                visited.add(key)
-            else:
-                # PORTAL (or default): Try to enter the referenced grid first
-                entry_pos = try_enter(store, cell.grid_id, direction, rules)
+        if not selected_strategy:
+            return None  # No strategy available
 
-                if entry_pos is None:
-                    # Entry denied - Ref acts as SOLID object
-                    path.append((current, cell))
-                    visited.add(key)
-                else:
-                    # Entry allowed - Ref acts as PORTAL
-                    # The Ref is not added to path (it's a portal)
-                    # Move to entry position and set flag to skip next movement
-                    # so we process the cell AT entry_pos before moving
-                    current = entry_pos
-                    skip_movement = True
-                    depth -= 1  # Will be incremented at start of next iteration
-                    continue
-        else:
-            # Non-Ref cell - add to path and continue
-            path.append((current, cell))
-            visited.add(key)
+        # Execute the selected strategy
+        if selected_strategy == "solid":
+            path.append(nav.current)
+            nav.advance()
 
-            # Check if we just added an Empty cell - if so, push succeeds
-            if isinstance(cell, Empty):
-                return (path, TerminationReason.EDGE_REACHED)
+        elif selected_strategy == "enter":
+            nav.enter(rules)
 
-    # Exceeded max_depth
-    return (path, TerminationReason.MAX_DEPTH_REACHED)
+        elif selected_strategy == "swallow":
+            path.append(nav.current)
+            # Swallow: S (last in path) swallows T (current)
+            # Move T into S's referenced grid from opposite direction
+            nav.flip()
+            nav.advance()
+            nav.enter(rules)
 
-
-def push_traverse_backtracking(
-    store: GridStore,
-    start: CellPosition,
-    direction: Direction,
-    rules: RuleSet,
-    tag_fn: TagFn | None = None,
-    max_depth: int = 1000,
-    max_backtrack_depth: int = 10,
-) -> tuple[list[tuple[CellPosition, Cell]], TerminationReason]:
-    """
-    Traversal with backtracking for push operation.
-
-    When push fails with the initial Ref handling strategy, backtracks to that
-    decision point and retries with the alternative strategy.
-
-    Ref handling governed by rule set:
-    - If ref_strategy=TRY_ENTER_FIRST: Try portal first, backtrack tries solid
-    - If ref_strategy=PUSH_FIRST: Try solid first, backtrack tries portal
-    - On failure: backtrack and retry with alternative strategy
-
-    Args:
-        store: The grid store containing all grids
-        start: Starting position
-        direction: Direction to traverse
-        rules: RuleSet governing Ref handling behavior
-        tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
-        max_depth: Maximum number of steps to prevent infinite loops
-        max_backtrack_depth: Maximum number of backtracking attempts
-
-    Returns:
-        Tuple of (path, termination_reason) where:
-        - path is list of (position, original_cell) tuples
-        - termination_reason indicates why traversal stopped
-    """
-    # Direction deltas: N=up, S=down, E=right, W=left
-    deltas = {
-        Direction.N: (-1, 0),
-        Direction.S: (1, 0),
-        Direction.E: (0, 1),
-        Direction.W: (0, -1),
-    }
-
-    # Initialize state
-    path: list[tuple[CellPosition, Cell]] = []
-    visited: set[tuple[str, int, int]] = set()
-    decision_stack: list[DecisionPoint] = []
-    # Track Refs that should use alternative strategy after backtracking
-    # Maps (grid_id, row, col) -> "portal" or "solid"
-    alternative_strategy_refs: dict[tuple[str, int, int], str] = {}
-    current = start
-    depth = 0
-    backtrack_count = 0
-    skip_movement = False  # Flag to skip movement after backtracking
-
-    # Add starting position to path
-    start_cell = get_cell(store, start)
-
-    # Check if starting cell has stop tag
-    if tag_fn is not None:
-        tags = tag_fn(start_cell)
-        if "stop" in tags:
-            return ([], TerminationReason.STOP_TAG)
-
-    path.append((start, start_cell))
-    visited.add((start.grid_id, start.row, start.col))
-
-    while depth < max_depth:
-        depth += 1
-
-        # After backtracking, we're positioned at the Ref to retry
-        # Skip movement to reprocess the current cell with alternative strategy
-        if not skip_movement:
-            # Normal flow: compute next position and handle edge cases
-            # Get current grid and compute next position
-            grid = store[current.grid_id]
-            dr, dc = deltas[direction]
-            next_row, next_col = current.row + dr, current.col + dc
-
-            # Check if we hit an edge
-            if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
-                # At edge - need to exit to parent grid
-                primary_ref = find_primary_ref(store, current.grid_id)
-
-                if primary_ref is None:
-                    # No parent - we're at the root grid edge
-                    return (path, TerminationReason.EDGE_REACHED)
-
-                # Exit through the primary ref
-                parent_grid_id, parent_row, parent_col = primary_ref
-                parent_grid = store[parent_grid_id]
-
-                # Continue from the primary ref's position in parent grid
-                next_row = parent_row + dr
-                next_col = parent_col + dc
-
-                # Check if we're still at edge after exiting
-                if (
-                    next_row < 0
-                    or next_row >= parent_grid.rows
-                    or next_col < 0
-                    or next_col >= parent_grid.cols
-                ):
-                    # Cascading exit - use exit chain logic
-                    exit_pos = CellPosition(parent_grid_id, parent_row, parent_col)
-                    final_pos, hit_cycle = _follow_exit_chain(
-                        store, exit_pos, direction, rules, max_depth - depth
-                    )
-
-                    if final_pos is None:
-                        # Exited root grid
-                        return (path, TerminationReason.EDGE_REACHED)
-
-                    if hit_cycle:
-                        # Try to backtrack
-                        if decision_stack and backtrack_count < max_backtrack_depth:
-                            backtrack_count += 1
-                            decision = decision_stack.pop()
-                            current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                            skip_movement = True
-                            # Continue - will retry with alternative strategy
-                            continue
-                        else:
-                            return (path, TerminationReason.EXIT_CYCLE_DETECTED)
-
-                    # Continue from final exit position
-                    # Skip movement so the main loop processes the cell at final_pos first
-                    current = final_pos
-                    skip_movement = True
-                else:
-                    # Normal exit to parent
-                    current = CellPosition(parent_grid_id, next_row, next_col)
-            else:
-                # Normal move within same grid
-                current = CellPosition(current.grid_id, next_row, next_col)
-        else:
-            # After backtracking: reprocess current position (the Ref) with alternative strategy
-            skip_movement = False
-
-        # Check for cycle
-        key = (current.grid_id, current.row, current.col)
-        if key in visited:
-            # Check if we cycled back to start (success) or elsewhere (failure)
-            if current == start:
-                # Cycle to start - success condition for push
-                return (path, TerminationReason.PATH_CYCLE_DETECTED)
-            else:
-                # Invalid cycle to non-start position - try to backtrack
-                if decision_stack and backtrack_count < max_backtrack_depth:
-                    backtrack_count += 1
-                    decision = decision_stack.pop()
-                    current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                    skip_movement = True
-                    # Continue - will retry with alternative strategy
-                    continue
-                else:
-                    return (path, TerminationReason.PATH_CYCLE_DETECTED)
-
-        # Get the cell at current position
-        cell = get_cell(store, current)
-
-        # Check for stop tag
-        if tag_fn is not None:
-            tags = tag_fn(cell)
-            if "stop" in tags:
-                # Hit stop tag - try to backtrack
-                if decision_stack and backtrack_count < max_backtrack_depth:
-                    backtrack_count += 1
-                    decision = decision_stack.pop()
-                    current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-                    skip_movement = True
-                    # Continue - will retry with alternative strategy
-                    continue
-                else:
-                    return (path, TerminationReason.STOP_TAG)
-
-        # Handle Ref cells with portal/solid logic + backtracking
-        if isinstance(cell, Ref):
-            ref_key = (current.grid_id, current.row, current.col)
-
-            # Determine which strategy to use for this Ref
-            if ref_key in alternative_strategy_refs:
-                # Use alternative strategy from previous backtrack
-                strategy = alternative_strategy_refs[ref_key]
-            else:
-                # Use default strategy from rule set (first non-SWALLOW strategy)
-                strategy_type = None
-                for s in rules.ref_strategy:
-                    if s in (RefStrategyType.PORTAL, RefStrategyType.SOLID):
-                        strategy_type = s
-                        break
-                strategy = "solid" if strategy_type == RefStrategyType.SOLID else "portal"
-
-            if strategy == "portal":
-                # Try to enter the referenced grid (portal behavior)
-                entry_pos = try_enter(store, cell.grid_id, direction, rules)
-
-                if entry_pos is not None:
-                    # Entry allowed - create decision point for potential backtracking
-                    decision = DecisionPoint(
-                        ref_position=current,
-                        ref_cell=cell,
-                        path_snapshot=path.copy(),
-                        visited_snapshot=visited.copy(),
-                        depth_at_decision=depth,
-                        strategy_used="portal",
-                    )
-                    decision_stack.append(decision)
-
-                    # Move to entry position (Ref not in path - it's a portal)
-                    # The main loop will process whatever cell is at entry_pos
-                    current = entry_pos
-                    skip_movement = True  # Skip next position computation, process current cell first
-                    # Continue - the main loop will handle the cell at entry_pos
-                else:
-                    # Entry denied - Ref acts as SOLID object (no decision point)
-                    path.append((current, cell))
-                    visited.add(ref_key)
-            else:
-                # strategy == "solid": Ref acts as SOLID object
-                # Create decision point in case we need to backtrack and try portal
-                decision = DecisionPoint(
-                    ref_position=current,
-                    ref_cell=cell,
-                    path_snapshot=path.copy(),
-                    visited_snapshot=visited.copy(),
-                    depth_at_decision=depth,
-                    strategy_used="solid",
-                )
-                decision_stack.append(decision)
-
-                # Add Ref to path as solid object
-                path.append((current, cell))
-                visited.add(ref_key)
-        else:
-            # Non-Ref cell - add to path and continue
-            path.append((current, cell))
-            visited.add(key)
-
-            # Check if we just added an Empty cell - if so, push succeeds
-            if isinstance(cell, Empty):
-                return (path, TerminationReason.EDGE_REACHED)
-
-    # Exceeded max_depth - try to backtrack
-    if decision_stack and backtrack_count < max_backtrack_depth:
-        backtrack_count += 1
-        decision = decision_stack.pop()
-        current, path, visited, depth = _restore_from_decision(decision, alternative_strategy_refs)
-        skip_movement = True
-        # Continue the loop (but this shouldn't really happen with proper depth tracking)
-        return push_traverse_backtracking(store, start, direction, rules, tag_fn, max_depth, max_backtrack_depth)
-    else:
-        return (path, TerminationReason.MAX_DEPTH_REACHED)
+    return None  # Exceeded max_depth
 
 
 def apply_push(
