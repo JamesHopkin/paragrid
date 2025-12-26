@@ -23,8 +23,6 @@ from paragrid import (
     RefNode,
     RefStrategy,
     RuleSet,
-    TerminationReason,
-    TraversalResult,
     analyze,
     collect_denominators,
     collect_grid_ids,
@@ -34,7 +32,6 @@ from paragrid import (
     push,
     push_simple,
     render,
-    traverse,
 )
 
 
