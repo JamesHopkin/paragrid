@@ -384,6 +384,7 @@ class Navigator:
         self.store = store
         self.current = position
         self.direction = direction
+        self.visited_grids: set[str] = set()  # For cycle detection in try_enter()
 
         # Direction deltas
         self.deltas = {
@@ -395,14 +396,20 @@ class Navigator:
 
     def clone(self) -> "Navigator":
         """Create a copy for backtracking."""
-        return Navigator(self.store, self.current, self.direction)
+        nav = Navigator(self.store, self.current, self.direction)
+        nav.visited_grids = self.visited_grids.copy()
+        return nav
 
     def try_advance(self) -> bool:
         """
         Try to move to next position in direction.
         Handles exiting from nested grids back to parent grids.
         Returns False if can't advance (hit root edge).
+        Clears visited_grids on any advance.
         """
+        # Clear visited grids when advancing
+        self.visited_grids.clear()
+
         dr, dc = self.deltas[self.direction]
         grid = self.store[self.current.grid_id]
         next_row = self.current.row + dr
@@ -448,16 +455,22 @@ class Navigator:
     def try_enter(self, rules: RuleSet) -> bool:
         """
         Try to enter the Ref at current position from the current direction.
-        Returns False if can't enter.
+        Uses visited_grids to detect entry cycles.
+        Returns False if can't enter or if cycle detected.
         """
         cell = get_cell(self.store, self.current)
         if not isinstance(cell, Ref):
             return False
 
+        # Check for cycle before entering
+        if cell.grid_id in self.visited_grids:
+            return False  # Cycle detected
+
         entry_pos = try_enter(self.store, cell.grid_id, self.direction, rules)
         if entry_pos is None:
             return False
 
+        self.visited_grids.add(cell.grid_id)
         self.current = entry_pos
         return True
 
@@ -465,6 +478,41 @@ class Navigator:
         """Enter the Ref at current position. Asserts if can't enter."""
         success = self.try_enter(rules)
         assert success, f"Navigator.enter() failed at {self.current}"
+
+    def try_enter_multi(self, rules: RuleSet) -> bool:
+        """
+        Try to enter the Ref at current position, following Ref chains.
+        Continues entering nested Refs until landing on a non-Ref cell.
+        Returns False if can't enter or if a cycle is detected.
+        Clears visited_grids on success (non-cyclic completion).
+        """
+        visited_grids: set[str] = set()
+
+        while True:
+            cell = get_cell(self.store, self.current)
+            if not isinstance(cell, Ref):
+                # Landed on non-Ref, success - clear Navigator's visited
+                self.visited_grids.clear()
+                return True
+
+            # Check for cycle before entering
+            if cell.grid_id in visited_grids:
+                # Cycle detected - don't clear Navigator's visited
+                return False
+
+            visited_grids.add(cell.grid_id)
+
+            # Try to enter this Ref (call standalone function directly)
+            entry_pos = try_enter(self.store, cell.grid_id, self.direction, rules)
+            if entry_pos is None:
+                return False
+
+            self.current = entry_pos
+
+    def enter_multi(self, rules: RuleSet) -> None:
+        """Enter the Ref at current position, following chains. Asserts if can't enter."""
+        success = self.try_enter_multi(rules)
+        assert success, f"Navigator.enter_multi() failed at {self.current}"
 
     def flip(self) -> None:
         """Reverse direction for swallow operations."""
