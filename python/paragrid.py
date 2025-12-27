@@ -535,6 +535,15 @@ class State:
     visited: set[tuple[str, int, int]]  # Track visited positions for cycle detection
 
 
+@dataclass(frozen=True)
+class PushFailure:
+    """Information about why a push operation failed."""
+
+    reason: str  # "ENTER_CYCLE" | "EXIT_CYCLE" | "BLOCKED" | "STOP_TAG" | "PATH_CYCLE" | "NO_STRATEGY" | "MAX_DEPTH"
+    position: CellPosition  # Where the failure occurred
+    details: str | None = None  # Optional human-readable details
+
+
 def find_primary_ref(store: GridStore, target_grid_id: str) -> tuple[str, int, int] | None:
     """
     Find the primary reference to a grid.
@@ -712,7 +721,7 @@ def try_swallow(
         # Try to push the existing cell away from entry_pos in the opposite direction
         inner_result = push_simple(store, entry_pos, opposite_dir, rules, tag_fn, max_depth)
 
-        if inner_result is None:
+        if isinstance(inner_result, PushFailure):
             # Can't push existing cell away, swallow fails
             return None
 
@@ -753,7 +762,7 @@ def push(
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
     max_backtrack_depth: int = 10,
-) -> GridStore | None:
+) -> GridStore | PushFailure:
     """
     Push cell contents along a path in the given direction (with backtracking).
 
@@ -775,7 +784,7 @@ def push(
         max_backtrack_depth: Maximum number of backtracking attempts (default 10)
 
     Returns:
-        New GridStore with pushed contents if successful, None if push fails
+        New GridStore with pushed contents if successful, PushFailure with reason if push fails
     """
 
     def strategy_to_str(strat: RefStrategyType) -> str:
@@ -790,11 +799,11 @@ def push(
 
     def make_new_state(
         path: list[CellPosition], nav: Navigator, visited: set[tuple[str, int, int]]
-    ) -> State | str:
+    ) -> State | str | PushFailure:
         """
         Create new state or return termination status.
 
-        Returns 'succeed' if push succeeds, 'fail' if it fails, or a new State
+        Returns 'succeed' if push succeeds, PushFailure if it fails, or a new State
         to continue processing.
         """
         # Check for empty (success)
@@ -804,7 +813,7 @@ def push(
 
         # Check for stop tag (failure)
         if tag_fn is not None and "stop" in tag_fn(current_cell):
-            return "fail"
+            return PushFailure("STOP_TAG", nav.current, "Encountered stop-tagged cell")
 
         # Check for cycle
         current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
@@ -813,7 +822,7 @@ def push(
             if len(path) > 0 and nav.current == start:
                 return "succeed"  # Cycled to start
             else:
-                return "fail"  # Cycled to non-start
+                return PushFailure("PATH_CYCLE", nav.current, "Path cycled to non-start position")
 
         # Add current position to visited set for this state
         new_visited = visited | {current_key}
@@ -840,9 +849,14 @@ def push(
                 strategies.append(strat)  # Only if S is Ref
 
         if not strategies:
-            return "fail"
+            return PushFailure("NO_STRATEGY", nav.current, "No applicable strategy available")
 
         return State(path, nav, strategies, new_visited)
+
+    # Check if starting cell has stop tag - stop-tagged cells cannot be pushed
+    start_cell = get_cell(store, start)
+    if tag_fn is not None and "stop" in tag_fn(start_cell):
+        return PushFailure("STOP_TAG", start, "Cannot push from stop-tagged cell")
 
     # Initialize navigator
     nav = Navigator(store, start, direction)
@@ -852,12 +866,18 @@ def push(
 
     # Try to advance to first position
     if not nav.try_advance():
-        return None
+        return PushFailure("BLOCKED", start, "Cannot advance from start position (hit edge)")
 
     # Create initial state
     state = make_new_state([start], nav, initial_visited)
+    if isinstance(state, PushFailure):
+        return state  # Failed immediately
     if isinstance(state, str):
-        return None  # Failed immediately
+        # Immediate success - pushed directly into empty
+        final_path: list[tuple[CellPosition, Cell]] = []
+        final_path.append((start, get_cell(store, start)))
+        final_path.append((nav.current, get_cell(store, nav.current)))
+        return apply_push(store, final_path)
 
     decision_stack = [state]
 
@@ -894,17 +914,23 @@ def push(
 
         if new_state == "succeed":
             # Build final path with cells for apply_push
-            final_path: list[tuple[CellPosition, Cell]] = []
+            path_with_cells: list[tuple[CellPosition, Cell]] = []
             for pos in new_path:
-                final_path.append((pos, get_cell(store, pos)))
-            final_path.append((nav.current, get_cell(store, nav.current)))
-            return apply_push(store, final_path)
-        elif new_state == "fail":
+                path_with_cells.append((pos, get_cell(store, pos)))
+            path_with_cells.append((nav.current, get_cell(store, nav.current)))
+            return apply_push(store, path_with_cells)
+        elif isinstance(new_state, PushFailure):
+            # Store failure for potential return if all strategies exhausted
+            last_failure = new_state
             continue  # Try next strategy
         elif isinstance(new_state, State):
             decision_stack.append(new_state)
+            continue
 
-    return None
+    # All strategies exhausted
+    if 'last_failure' in locals():
+        return last_failure
+    return PushFailure("NO_STRATEGY", start, "All backtracking attempts exhausted")
 
 
 def push_simple(
@@ -914,7 +940,7 @@ def push_simple(
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
-) -> GridStore | None:
+) -> GridStore | PushFailure:
     """
     Simple push operation without backtracking.
 
@@ -936,7 +962,7 @@ def push_simple(
         max_depth: Maximum traversal depth to prevent infinite loops
 
     Returns:
-        New GridStore with pushed contents if successful, None if push fails
+        New GridStore with pushed contents if successful, PushFailure with reason if push fails
     """
 
     def strategy_to_str(strat: RefStrategyType) -> str:
@@ -949,6 +975,11 @@ def push_simple(
             return "swallow"
         return "solid"
 
+    # Check if starting cell has stop tag - stop-tagged cells cannot be pushed
+    start_cell = get_cell(store, start)
+    if tag_fn is not None and "stop" in tag_fn(start_cell):
+        return PushFailure("STOP_TAG", start, "Cannot push from stop-tagged cell")
+
     # Initialize navigator
     nav = Navigator(store, start, direction)
     path: list[CellPosition] = [start]
@@ -957,7 +988,7 @@ def push_simple(
 
     # Try to advance to first position
     if not nav.try_advance():
-        return None
+        return PushFailure("BLOCKED", start, "Cannot advance from start position (hit edge)")
 
     while depth < max_depth:
         depth += 1
@@ -976,7 +1007,7 @@ def push_simple(
 
         # Check for stop tag (failure)
         if tag_fn is not None and "stop" in tag_fn(current_cell):
-            return None
+            return PushFailure("STOP_TAG", nav.current, "Encountered stop-tagged cell")
 
         # Check for cycle
         current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
@@ -988,7 +1019,7 @@ def push_simple(
                 final_path = [(pos, get_cell(store, pos)) for pos in path]
                 return apply_push(store, final_path)
             else:
-                return None  # Cycled to non-start
+                return PushFailure("PATH_CYCLE", nav.current, "Path cycled to non-start position")
 
         visited.add(current_key)
 
@@ -1015,7 +1046,7 @@ def push_simple(
                 break
 
         if not selected_strategy:
-            return None  # No strategy available
+            return PushFailure("NO_STRATEGY", nav.current, "No applicable strategy available")
 
         # Execute the selected strategy
         if selected_strategy == "solid":
@@ -1033,7 +1064,7 @@ def push_simple(
             nav.advance()
             nav.enter(rules)
 
-    return None  # Exceeded max_depth
+    return PushFailure("MAX_DEPTH", nav.current, f"Exceeded maximum depth of {max_depth}")
 
 
 def apply_push(

@@ -21,6 +21,7 @@ from paragrid import (
     Empty,
     Grid,
     GridStore,
+    PushFailure,
     Ref,
     TagFn,
     analyze,
@@ -110,7 +111,15 @@ class InteractiveDemo:
 
         result = push(self.store, player_pos, direction, RuleSet(), self.tag_fn)
 
-        if result:
+        if isinstance(result, PushFailure):
+            # Push failed - display failure reason
+            self.status_message = (
+                f"✗ Push {direction.value} failed: {result.reason}"
+                f" at {result.position.grid_id}[{result.position.row}, {result.position.col}]"
+            )
+            if result.details:
+                self.status_message += f" ({result.details})"
+        else:
             # Success - update store (player has moved with the push)
             self.store = result
 
@@ -123,8 +132,6 @@ class InteractiveDemo:
                 )
             else:
                 self.status_message = "✓ Push succeeded but player lost!"
-        else:
-            self.status_message = f"✗ Push {direction.value} failed"
 
     def reset_grid(self) -> None:
         """Reset the grid to its original state."""

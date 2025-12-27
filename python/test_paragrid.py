@@ -19,6 +19,7 @@ from paragrid import (
     Grid,
     GridStore,
     NestedNode,
+    PushFailure,
     Ref,
     RefNode,
     RefStrategy,
@@ -620,52 +621,8 @@ class TestFindPrimaryRef:
         assert result == ("outer", 0, 1)  # Explicit primary wins
 
 
-class TestTraverse:
-    """Tests for grid traversal."""
-
-    def test_traverse_enter_chain_cycle(self) -> None:
-        """Test cycle detection in enter chain."""
-        store: GridStore = {
-            "a": Grid("a", ((Ref("b"),),)),
-            "b": Grid("b", ((Ref("a"),),)),
-            "main": Grid("main", ((Concrete("x"), Ref("a")),)),
-        }
-        start = CellPosition("main", 0, 0)
-
-        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-            # Always enter at (0, 0)
-            return CellPosition(grid_id, 0, 0)
-
-        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True))
-
-        # Should visit x, then try to enter a->b->a (cycle)
-        # Traversal should terminate when cycle detected
-        assert CellPosition("main", 0, 0) in positions  # x
-        # Should not continue after detecting cycle
-        assert len(positions) == 1
-
-    def test_traverse_exit_chain_cycle(self) -> None:
-        """Test cycle detection in exit chain."""
-        store: GridStore = {
-            # Create a situation where exiting leads to a cycle
-            "inner": Grid("inner", ((Concrete("x"),),)),
-            "loop1": Grid("loop1", ((Ref("loop2"),),)),
-            "loop2": Grid("loop2", ((Ref("loop1"),),)),
-            "main": Grid("main", ((Ref("inner"), Ref("loop1")),)),
-        }
-        # Start in loop1 and try to exit east
-        start = CellPosition("loop1", 0, 0)
-
-        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-            return CellPosition(grid_id, 0, 0)
-
-        positions = list(traverse(store, start, Direction.E, try_enter, auto_enter=True, auto_exit=True))
-
-        # Should start at loop1[0,0], try to exit, detect cycle
-        # The traversal should terminate gracefully
-        assert CellPosition("loop1", 0, 0) in positions
-        # Verify it terminates (doesn't hang)
-        assert len(positions) < 100  # Sanity check
+# OBSOLETE: TestTraverse class removed - traverse() function was removed in favor of Navigator
+# See commits: 920940d "Remove traverse() and related functions"
 
 # =============================================================================
 # Test Push
@@ -685,7 +642,7 @@ class TestPush:
         rules = RuleSet()  # Default: TRY_ENTER_FIRST
         result = push_simple(store, start, Direction.E, rules)
 
-        assert result is not None
+        assert isinstance(result, dict)
         # After push: [A, B, Empty] -> [Empty, A, B]
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[0][1] == Concrete("A")
@@ -734,7 +691,8 @@ class TestPush:
         result = push_simple(store, start, Direction.E, RuleSet())
 
         # Path: [Empty, A], push ends at A (not Empty) -> should fail
-        assert result is None
+        assert isinstance(result, PushFailure)
+        assert result.reason == "NO_STRATEGY"
 
     def test_push_immutability(self) -> None:
         """Test that original store is unchanged after push."""
@@ -745,7 +703,7 @@ class TestPush:
         start = CellPosition("main", 0, 0)
         result = push_simple(store, start, Direction.E, RuleSet())
 
-        assert result is not None
+        assert isinstance(result, dict)
         # Original store should be unchanged
         assert store["main"].cells[0][0] == Concrete("A")
         assert store["main"].cells[0][1] == Concrete("B")
@@ -761,7 +719,8 @@ class TestPush:
         result = push_simple(store, start, Direction.E, RuleSet())
 
         # Path: [A, B, C], hits edge at non-Empty -> should fail
-        assert result is None
+        assert isinstance(result, PushFailure)
+        assert result.reason == "NO_STRATEGY"
 
     def test_push_through_portal(self) -> None:
         """Test push through a Ref that acts as portal."""
@@ -778,7 +737,7 @@ class TestPush:
         start = CellPosition("main", 0, 0)
         result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
-        assert result is not None
+        assert isinstance(result, dict)
         # After push: A -> X -> Y -> Empty
         # Rotation: [A, X, Y, Empty] -> [Empty, A, X, Y]
         assert isinstance(result["main"].cells[0][0], Empty)
@@ -806,7 +765,7 @@ class TestPush:
         # Use PUSH_FIRST strategy to treat Ref as solid
         result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.PUSH_FIRST))
 
-        assert result is not None
+        assert isinstance(result, dict)
         # Path: [A, Ref(locked), Empty]
         # Ref acts as solid object, gets pushed
         # Rotation: [A, Ref, Empty] -> [Empty, A, Ref]
@@ -827,7 +786,7 @@ class TestPush:
         start = CellPosition("main", 0, 0)
         result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
-        assert result is not None
+        assert isinstance(result, dict)
         # Both grids should be updated
         assert "main" in result
         assert "inner" in result
@@ -851,7 +810,7 @@ class TestPush:
         start = CellPosition("main", 0, 0)
         result = push_simple(store, start, Direction.E, RuleSet())
 
-        assert result is not None
+        assert isinstance(result, dict)
         # After push: [A, B, Empty, C, D] -> [Empty, A, B, C, D]
         # Only the first 3 cells should be affected
         assert isinstance(result["main"].cells[0][0], Empty)
@@ -875,7 +834,7 @@ class TestPush:
         start = CellPosition("main", 0, 0)
         result = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST))
 
-        assert result is not None
+        assert isinstance(result, dict)
         # Path should be: [A, X, Empty]
         # After rotation: [Empty, A, X]
         # Main[0,0] should be Empty, Main[0,2] should still be C (unchanged)
@@ -918,11 +877,12 @@ class TestPushBacktracking:
 
         # Simple version with TRY_ENTER_FIRST should fail (enters Ref, hits STOP)
         result_simple = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
-        assert result_simple is None, "Simple push should fail when hitting stop inside Ref"
+        assert isinstance(result_simple, PushFailure), "Simple push should fail when hitting stop inside Ref"
+        assert result_simple.reason == "STOP_TAG"
 
         # Backtracking version should succeed (tries portal, fails, backtracks to solid)
         result = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
-        assert result is not None, "Backtracking push should succeed"
+        assert isinstance(result, dict), "Backtracking push should succeed"
 
         # Result: [Empty, A, Ref(inner)]
         assert isinstance(result["main"].cells[0][0], Empty)
@@ -946,8 +906,8 @@ class TestPushBacktracking:
         result_simple = push_simple(store, start, Direction.E, RuleSet())
         result_backtrack = push(store, start, Direction.E, RuleSet())
 
-        assert result_simple is not None
-        assert result_backtrack is not None
+        assert isinstance(result_simple, dict)
+        assert isinstance(result_backtrack, dict)
 
         # Results should be identical
         assert result_simple["main"].cells == result_backtrack["main"].cells
@@ -975,11 +935,12 @@ class TestPushBacktracking:
 
         # Simple version with TRY_ENTER_FIRST should fail (enters B, hits STOP after X)
         result_simple = push_simple(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
-        assert result_simple is None
+        assert isinstance(result_simple, PushFailure)
+        assert result_simple.reason == "STOP_TAG"
 
         # Backtracking version should succeed by treating Ref1 as solid
         result = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST), tag_fn=tag_stop)
-        assert result is not None
+        assert isinstance(result, dict)
 
         # Result: [Empty, A, Ref(B)]
         assert isinstance(result["main"].cells[0][0], Empty)
@@ -1008,7 +969,7 @@ class TestPushSwallowing:
 
         # Verify swallowing succeeded
         # Pushing east enters from west (right side), so ball goes to position (0,1)
-        assert result is not None
+        assert isinstance(result, dict)
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[0][1] == Ref("pocket")
         assert isinstance(result["main"].cells[0][2], Empty)
@@ -1032,7 +993,7 @@ class TestPushSwallowing:
 
         # Verify swallowing succeeded
         # Pushing west enters from east (left side), so ball goes to position (0,0)
-        assert result is not None
+        assert isinstance(result, dict)
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[0][1] == Ref("pocket")
         assert isinstance(result["main"].cells[0][2], Empty)
@@ -1057,7 +1018,7 @@ class TestPushSwallowing:
 
         # Verify swallowing succeeded
         # Pushing south enters from north (bottom edge), so ball goes to position (1,0)
-        assert result is not None
+        assert isinstance(result, dict)
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[1][0] == Ref("pocket")
         assert isinstance(result["main"].cells[2][0], Empty)
@@ -1082,7 +1043,7 @@ class TestPushSwallowing:
 
         # Verify swallowing succeeded
         # Pushing north enters from south (top edge), so ball goes to position (0,0)
-        assert result is not None
+        assert isinstance(result, dict)
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[1][0] == Ref("pocket")
         assert isinstance(result["main"].cells[2][0], Empty)
@@ -1122,7 +1083,7 @@ class TestPushSwallowing:
         result = push_simple(store, start, Direction.E, RuleSet())
 
         # Expected: Skip swallow and succeed with normal push logic
-        assert result is not None
+        assert isinstance(result, dict)
 
     def test_swallow_vs_portal_priority(self) -> None:
         """Test that rule set controls whether swallow or portal is tried first.
@@ -1153,7 +1114,7 @@ class TestPushSwallowing:
 
         # Should NOT swallow 1 into inner (swallow is last strategy, portal/solid should succeed first)
         # Instead should push Ref as solid: [Empty, Ref(inner), 1]
-        assert result_default is not None
+        assert isinstance(result_default, dict)
         assert isinstance(result_default["main"].cells[0][0], Empty)
         assert result_default["main"].cells[0][1] == Ref("inner")
         assert result_default["main"].cells[0][2] == Concrete("1")
@@ -1165,7 +1126,7 @@ class TestPushSwallowing:
         result_swallow_first = push(store, start, Direction.E, RuleSet(ref_strategy=RefStrategy.SWALLOW_FIRST))
 
         # Should swallow 1 into inner
-        assert result_swallow_first is not None
+        assert isinstance(result_swallow_first, dict)
         assert isinstance(result_swallow_first["main"].cells[0][0], Empty)
         assert result_swallow_first["main"].cells[0][1] == Ref("inner")
         assert isinstance(result_swallow_first["main"].cells[0][2], Empty)
@@ -1191,7 +1152,7 @@ class TestPushSwallowing:
 
         # Expected: Ref(other) gets pushed into pocket, Ref(pocket) moves right
         # Pushing east enters from west (right side), so Ref(other) goes to position (0,1)
-        assert result is not None
+        assert isinstance(result, dict)
         assert isinstance(result["main"].cells[0][0], Empty)
         assert result["main"].cells[0][1] == Ref("pocket")
         assert isinstance(result["main"].cells[0][2], Empty)
@@ -1244,7 +1205,7 @@ class TestPushSwallowing:
         # Swallow should fail, but the push might succeed via alternative strategy (portal/solid)
         # If using SWALLOW_FIRST with only swallow, it should fail completely
         # Let's verify the wall hasn't been swallowed
-        if result is not None:
+        if isinstance(result, dict):
             # If push succeeded, the wall should still be in main grid, not in pocket
             # Check that pocket is still empty (no swallowing occurred)
             assert isinstance(result["pocket"].cells[0][0], Empty)
@@ -1278,25 +1239,8 @@ class TestPushSwallowing:
 # =============================================================================
 
 
-class TestTerminationReasons:
-    """Tests for tracking why traversal terminated."""
-
-    def test_termination_edge_reached(self) -> None:
-        """Test that EDGE_REACHED is set when hitting root grid edge."""
-        store: GridStore = {
-            "main": Grid("main", ((Concrete("a"), Concrete("b")),)),
-        }
-        start = CellPosition("main", 0, 0)
-
-        def try_enter(grid_id: str, direction: Direction) -> CellPosition | None:
-            return CellPosition(grid_id, 0, 0)
-
-        result = traverse(store, start, Direction.E, try_enter)
-        positions = list(result)
-
-        # Should traverse: a -> b -> edge
-        assert len(positions) == 2
-        assert result.termination_reason == TerminationReason.EDGE_REACHED
+# OBSOLETE: TestTerminationReasons class removed - traverse() function was removed in favor of Navigator
+# See commits: 920940d "Remove traverse() and related functions"
 
 
 # =============================================================================
@@ -1334,7 +1278,8 @@ class TestTagging:
         result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_fn)
 
         # The push should fail because the '9' cell has a stop tag
-        assert result is None, "Push should fail when encountering stop-tagged cell in reference chain"
+        assert isinstance(result, PushFailure), "Push should fail when encountering stop-tagged cell in reference chain"
+        assert result.reason == "STOP_TAG"
 
     def test_stop_tagged_cell_cannot_push_itself(self) -> None:
         """Test that a cell with stop tag cannot initiate a push.
@@ -1367,8 +1312,10 @@ class TestTagging:
         start = CellPosition("main", 0, 1)
         result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_fn)
 
-        # The push should fail because stop-tagged cells cannot move
-        assert result is None, "Push should fail when initiating from a stop-tagged cell"
+        # The push should fail because the starting cell has a stop tag
+        assert isinstance(result, PushFailure), "Push should fail when initiating from a stop-tagged cell"
+        assert result.reason == "STOP_TAG"
+        assert result.position == start
 
 
 # =============================================================================
