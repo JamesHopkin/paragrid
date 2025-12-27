@@ -933,6 +933,109 @@ def push(
     return PushFailure("NO_STRATEGY", start, "All backtracking attempts exhausted")
 
 
+def pull(
+    store: GridStore,
+    start: CellPosition,
+    direction: Direction,
+    rules: RuleSet,
+    tag_fn: TagFn | None = None,
+    max_depth: int = 1000,
+) -> GridStore:
+    """
+    Pull cell contents from direction into start position.
+
+    The pull operation moves cell contents backward along a path, with the contents
+    rotating when complete. Always succeeds (may be a no-op).
+
+    Unlike push, pull:
+    - Requires start to be Empty (returns unchanged store if not)
+    - Always succeeds (never returns failure)
+    - Treats stop tags and cycles as successful termination conditions
+    - Does not use backtracking (uses first applicable strategy only)
+    - Does not support SWALLOW strategy (skip it)
+
+    Args:
+        store: The grid store containing all grids
+        start: Starting position for the pull (should be Empty)
+        direction: Direction to pull FROM
+        rules: RuleSet governing Ref handling behavior
+        tag_fn: Optional function to tag cells (stop tags end chain successfully)
+        max_depth: Maximum traversal depth to prevent infinite loops
+
+    Returns:
+        New GridStore with pulled contents (always returns, never None)
+    """
+    # 1. Validate start is Empty - if not, return unchanged store (no-op)
+    start_cell = get_cell(store, start)
+    if not isinstance(start_cell, Empty):
+        return store
+
+    # 2. Initialize navigator
+    nav = Navigator(store, start, direction)
+    path: list[CellPosition] = [start]
+    visited: set[tuple[str, int, int]] = {(start.grid_id, start.row, start.col)}
+    depth = 0
+
+    # 3. Try first advance - if can't, return unchanged (no-op)
+    if not nav.try_advance():
+        return store
+
+    # 4. Build path until termination condition
+    while depth < max_depth:
+        depth += 1
+        current_cell = get_cell(store, nav.current)
+
+        # TERMINATION CONDITIONS (all succeed):
+
+        # 4a. Hit Empty - end chain successfully
+        if isinstance(current_cell, Empty):
+            break
+
+        # 4b. Hit stop tag - end chain successfully
+        if tag_fn is not None and "stop" in tag_fn(current_cell):
+            break
+
+        # 4c. Hit cycle - end chain successfully
+        current_key = (nav.current.grid_id, nav.current.row, nav.current.col)
+        if current_key in visited:
+            break
+
+        visited.add(current_key)
+
+        # 5. Determine first applicable strategy
+        strategy = None
+        for strat_type in rules.ref_strategy:
+            if strat_type == RefStrategyType.SOLID:
+                test_nav = nav.clone()
+                if test_nav.try_advance():
+                    strategy = "solid"
+                    break
+            elif strat_type == RefStrategyType.PORTAL and isinstance(current_cell, Ref):
+                test_nav = nav.clone()
+                if test_nav.try_enter(rules):
+                    strategy = "portal"
+                    break
+            # SWALLOW: Skip (doesn't apply to pull)
+
+        # 6. Execute strategy
+        if strategy == "solid":
+            path.append(nav.current)
+            nav.advance()
+        elif strategy == "portal":
+            # DON'T add Ref position to path (traverse through it)
+            nav.enter(rules)
+        else:
+            # No strategy available - add current cell and stop
+            path.append(nav.current)
+            break
+
+    # 7. Apply rotation
+    if len(path) <= 1:
+        return store  # No-op (only start in path)
+
+    return apply_pull(store, path)
+
+
 def push_simple(
     store: GridStore,
     start: CellPosition,
@@ -1093,6 +1196,57 @@ def apply_push(
     # Group updates by grid_id: grid_id -> list of (row, col, new_cell)
     updates: dict[str, list[tuple[int, int, Cell]]] = defaultdict(list)
     for i, (pos, _) in enumerate(path):
+        updates[pos.grid_id].append((pos.row, pos.col, rotated[i]))
+
+    # Reconstruct affected grids immutably
+    new_store = store.copy()
+    for grid_id, grid_updates in updates.items():
+        grid = store[grid_id]
+
+        # Convert to mutable structure
+        mutable_cells = [list(row) for row in grid.cells]
+
+        # Apply all updates for this grid
+        for row, col, new_cell in grid_updates:
+            mutable_cells[row][col] = new_cell
+
+        # Convert back to immutable tuples
+        new_cells = tuple(tuple(row) for row in mutable_cells)
+
+        # Create new Grid instance
+        new_grid = Grid(grid.id, new_cells)
+        new_store[grid_id] = new_grid
+
+    return new_store
+
+
+def apply_pull(store: GridStore, path: list[CellPosition]) -> GridStore:
+    """
+    Apply a pull operation by rotating cell contents along the path.
+
+    Rotates cells: the last cell's content moves to the first position,
+    and all other cells shift forward by one position.
+
+    This is the same rotation as push: [c1, c2, c3] -> [c3, c1, c2]
+    The semantic is different (pull builds path from Empty towards source,
+    push builds from source towards Empty), but rotation is identical.
+
+    Args:
+        store: The grid store containing all grids
+        path: List of positions involved in the pull, from Empty start to source
+
+    Returns:
+        New GridStore with pulled contents applied
+    """
+    from collections import defaultdict
+
+    # Extract cells and rotate: [c1, c2, c3] -> [c3, c1, c2]
+    cells = [get_cell(store, pos) for pos in path]
+    rotated = [cells[-1]] + cells[:-1]
+
+    # Group updates by grid_id for efficient batch updates
+    updates: dict[str, list[tuple[int, int, Cell]]] = defaultdict(list)
+    for i, pos in enumerate(path):
         updates[pos.grid_id].append((pos.row, pos.col, rotated[i]))
 
     # Reconstruct affected grids immutably
