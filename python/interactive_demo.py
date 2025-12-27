@@ -27,6 +27,7 @@ from paragrid import (
     analyze,
     find_tagged_cell,
     parse_grids,
+    pull,
     push,
     push_simple,
     render,
@@ -34,7 +35,7 @@ from paragrid import (
 
 
 class InteractiveDemo:
-    """Interactive demo for push operations."""
+    """Interactive demo for push and pull operations."""
 
     def __init__(self, store: GridStore, tag_fn: TagFn | None = None) -> None:
         self.store = store
@@ -43,6 +44,7 @@ class InteractiveDemo:
         self.player_tag = "player"
         self.console = Console()
         self.status_message = "Ready"
+        self.mode = "push"  # "push" or "pull"
 
     @property
     def player_position(self) -> CellPosition | None:
@@ -86,11 +88,24 @@ class InteractiveDemo:
         grid_rich_text = Text.from_ansi(grid_text)
         status.append(grid_rich_text)
         status.append("\n\n")
+
+        # Show current mode
+        mode_style = "bold yellow" if self.mode == "pull" else "bold green"
+        status.append(f"Mode: ", style="bold cyan")
+        status.append(f"{self.mode.upper()}\n\n", style=mode_style)
+
         status.append("Keys:\n", style="bold cyan")
-        status.append("  W - Push North\n")
-        status.append("  A - Push West\n")
-        status.append("  S - Push South\n")
-        status.append("  D - Push East\n")
+        if self.mode == "push":
+            status.append("  W - Push North\n")
+            status.append("  A - Push West\n")
+            status.append("  S - Push South\n")
+            status.append("  D - Push East\n")
+        else:  # pull mode
+            status.append("  W - Pull from North\n")
+            status.append("  A - Pull from West\n")
+            status.append("  S - Pull from South\n")
+            status.append("  D - Pull from East\n")
+        status.append("  P - Toggle Push/Pull mode\n")
         status.append("  R - Reset to original grid\n")
         status.append("  Q - Quit\n\n")
 
@@ -99,7 +114,9 @@ class InteractiveDemo:
         status.append("Status: ", style="bold")
         status.append(self.status_message)
 
-        return Panel(status, title="Paragrid Interactive Push Demo", border_style="green", width=80)
+        title = f"Paragrid Interactive Demo - {self.mode.upper()} Mode"
+        border_color = "yellow" if self.mode == "pull" else "green"
+        return Panel(status, title=title, border_style=border_color, width=80)
 
     def attempt_push(self, direction: Direction) -> None:
         """Attempt to push from player position in given direction."""
@@ -133,10 +150,44 @@ class InteractiveDemo:
             else:
                 self.status_message = "✓ Push succeeded but player lost!"
 
+    def attempt_pull(self, direction: Direction) -> None:
+        """Attempt to pull from direction into player position."""
+        player_pos = self.player_position
+
+        if player_pos is None:
+            self.status_message = "ERROR: No player cell found!"
+            return
+
+        # Pull always succeeds, returns GridStore
+        result = pull(self.store, player_pos, direction, RuleSet(), self.tag_fn)
+
+        # Check if anything actually changed
+        if result == self.store:
+            # No-op - nothing was pulled
+            self.status_message = f"✗ Pull from {direction.value} had no effect (no-op)"
+        else:
+            # Success - update store (player has moved with the pull)
+            self.store = result
+
+            # Re-find player at new position
+            new_pos = self.player_position
+            if new_pos:
+                self.status_message = (
+                    f"✓ Pulled from {direction.value}! Player now at "
+                    f"{new_pos.grid_id}[{new_pos.row}, {new_pos.col}]"
+                )
+            else:
+                self.status_message = "✓ Pull succeeded but player lost!"
+
     def reset_grid(self) -> None:
         """Reset the grid to its original state."""
         self.store = self.original_store
         self.status_message = "Grid reset to original state"
+
+    def toggle_mode(self) -> None:
+        """Toggle between push and pull modes."""
+        self.mode = "pull" if self.mode == "push" else "push"
+        self.status_message = f"Switched to {self.mode.upper()} mode"
 
     def run(self) -> None:
         """Run the interactive demo with player-based controls."""
@@ -162,15 +213,29 @@ class InteractiveDemo:
                         break
                     elif key.lower() == 'r':  # Reset grid
                         self.reset_grid()
-                    # WASD for directional pushes
+                    elif key.lower() == 'p':  # Toggle mode
+                        self.toggle_mode()
+                    # WASD for directional operations (push or pull based on mode)
                     elif key.lower() == 'w':
-                        self.attempt_push(Direction.N)
+                        if self.mode == "push":
+                            self.attempt_push(Direction.N)
+                        else:
+                            self.attempt_pull(Direction.N)
                     elif key.lower() == 's':
-                        self.attempt_push(Direction.S)
+                        if self.mode == "push":
+                            self.attempt_push(Direction.S)
+                        else:
+                            self.attempt_pull(Direction.S)
                     elif key.lower() == 'a':
-                        self.attempt_push(Direction.W)
+                        if self.mode == "push":
+                            self.attempt_push(Direction.W)
+                        else:
+                            self.attempt_pull(Direction.W)
                     elif key.lower() == 'd':
-                        self.attempt_push(Direction.E)
+                        if self.mode == "push":
+                            self.attempt_push(Direction.E)
+                        else:
+                            self.attempt_pull(Direction.E)
                     else:
                         self.status_message = f"Unknown key: {repr(key)}"
 
