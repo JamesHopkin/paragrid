@@ -97,8 +97,8 @@ class InteractiveDemo:
         status.append("Keys:\n", style="bold cyan")
         if self.mode == "push":
             status.append("  WASD - Push (↑←↓→)        ")
-        else:  # pull mode
-            status.append("  WASD - Pull (↑←↓→)        ")
+        else:  # pull mode (push+pull combo)
+            status.append("  WASD - Push+Pull (↑←↓→)   ")
         status.append("P - Toggle mode\n")
         status.append("  R - Reset grid            Q - Quit\n\n")
 
@@ -143,34 +143,62 @@ class InteractiveDemo:
             else:
                 self.status_message = "✓ Push succeeded but player lost!"
 
-    def attempt_pull(self, direction: Direction) -> None:
-        """Attempt to pull from direction into player position."""
+    def attempt_push_and_pull(self, direction: Direction) -> None:
+        """Push in direction, then pull into the vacated space."""
         player_pos = self.player_position
 
         if player_pos is None:
             self.status_message = "ERROR: No player cell found!"
             return
 
-        # Pull always succeeds, returns GridStore
-        result = pull(self.store, player_pos, direction, RuleSet(), self.tag_fn)
+        # Save the original position
+        old_pos = player_pos
 
-        # Check if anything actually changed
-        if result == self.store:
-            # No-op - nothing was pulled
-            self.status_message = f"✗ Pull from {direction.value} had no effect (no-op)"
-        else:
-            # Success - update store (player has moved with the pull)
-            self.store = result
+        # Step 1: Try to push
+        push_result = push(self.store, player_pos, direction, RuleSet(), self.tag_fn)
 
-            # Re-find player at new position
-            new_pos = self.player_position
-            if new_pos:
+        if isinstance(push_result, PushFailure):
+            # Push failed - show failure reason, don't attempt pull
+            self.status_message = (
+                f"✗ Push {direction.value} failed: {push_result.reason} "
+                f"(no pull attempted)"
+            )
+            return
+
+        # Step 2: Push succeeded, now pull into the vacated space
+        # Pull from the OPPOSITE direction into the old position
+        opposite_dir = {
+            Direction.N: Direction.S,
+            Direction.S: Direction.N,
+            Direction.E: Direction.W,
+            Direction.W: Direction.E,
+        }[direction]
+
+        # Update store with push result
+        self.store = push_result
+
+        # Now pull from opposite direction into old position
+        pull_result = pull(self.store, old_pos, opposite_dir, RuleSet(), self.tag_fn)
+
+        # Update store with pull result
+        pulled_something = (pull_result != self.store)
+        self.store = pull_result
+
+        # Find player at new position
+        new_pos = self.player_position
+        if new_pos:
+            if pulled_something:
                 self.status_message = (
-                    f"✓ Pulled from {direction.value}! Player now at "
-                    f"{new_pos.grid_id}[{new_pos.row}, {new_pos.col}]"
+                    f"✓ Push {direction.value} + Pull {opposite_dir.value}! "
+                    f"Player at {new_pos.grid_id}[{new_pos.row}, {new_pos.col}]"
                 )
             else:
-                self.status_message = "✓ Pull succeeded but player lost!"
+                self.status_message = (
+                    f"✓ Push {direction.value} succeeded, but pull {opposite_dir.value} was no-op. "
+                    f"Player at {new_pos.grid_id}[{new_pos.row}, {new_pos.col}]"
+                )
+        else:
+            self.status_message = "✓ Push+Pull succeeded but player lost!"
 
     def reset_grid(self) -> None:
         """Reset the grid to its original state."""
@@ -208,27 +236,27 @@ class InteractiveDemo:
                         self.reset_grid()
                     elif key.lower() == 'p':  # Toggle mode
                         self.toggle_mode()
-                    # WASD for directional operations (push or pull based on mode)
+                    # WASD for directional operations (push or push-and-pull based on mode)
                     elif key.lower() == 'w':
                         if self.mode == "push":
                             self.attempt_push(Direction.N)
                         else:
-                            self.attempt_pull(Direction.N)
+                            self.attempt_push_and_pull(Direction.N)
                     elif key.lower() == 's':
                         if self.mode == "push":
                             self.attempt_push(Direction.S)
                         else:
-                            self.attempt_pull(Direction.S)
+                            self.attempt_push_and_pull(Direction.S)
                     elif key.lower() == 'a':
                         if self.mode == "push":
                             self.attempt_push(Direction.W)
                         else:
-                            self.attempt_pull(Direction.W)
+                            self.attempt_push_and_pull(Direction.W)
                     elif key.lower() == 'd':
                         if self.mode == "push":
                             self.attempt_push(Direction.E)
                         else:
-                            self.attempt_pull(Direction.E)
+                            self.attempt_push_and_pull(Direction.E)
                     else:
                         self.status_message = f"Unknown key: {repr(key)}"
 
