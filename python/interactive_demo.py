@@ -96,18 +96,11 @@ class InteractiveDemo:
 
         status.append("Keys:\n", style="bold cyan")
         if self.mode == "push":
-            status.append("  W - Push North\n")
-            status.append("  A - Push West\n")
-            status.append("  S - Push South\n")
-            status.append("  D - Push East\n")
+            status.append("  WASD - Push (↑←↓→)        ")
         else:  # pull mode
-            status.append("  W - Pull from North\n")
-            status.append("  A - Pull from West\n")
-            status.append("  S - Pull from South\n")
-            status.append("  D - Pull from East\n")
-        status.append("  P - Toggle Push/Pull mode\n")
-        status.append("  R - Reset to original grid\n")
-        status.append("  Q - Quit\n\n")
+            status.append("  WASD - Pull (↑←↓→)        ")
+        status.append("P - Toggle mode\n")
+        status.append("  R - Reset grid            Q - Quit\n\n")
 
         # Status line at the bottom
         status.append("─" * 40 + "\n", style="dim")
