@@ -17,7 +17,7 @@
 **Primary selection**: If not explicitly specified, the primary ref is **auto-selected** as the first `Ref` to that grid found when iterating through the `GridStore` (dictionary iteration order) in row-major order within each grid. This means:
 - Grid insertion order into the store matters
 - Within a grid, top-to-bottom, left-to-right determines precedence
-- A self-reference is automatically primary (being the only ref)
+- If there's only one reference to a grid (including self-references), it becomes the primary by default
 
 **Cycles allowed**: Grids may reference themselves or form mutual recursion.
 
