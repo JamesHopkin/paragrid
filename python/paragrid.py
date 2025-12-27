@@ -1224,12 +1224,12 @@ def apply_pull(store: GridStore, path: list[CellPosition]) -> GridStore:
     """
     Apply a pull operation by rotating cell contents along the path.
 
-    Rotates cells: the last cell's content moves to the first position,
-    and all other cells shift forward by one position.
+    Rotates cells: the first cell's content moves to the last position,
+    and all other cells shift backward by one position.
 
-    This is the same rotation as push: [c1, c2, c3] -> [c3, c1, c2]
-    The semantic is different (pull builds path from Empty towards source,
-    push builds from source towards Empty), but rotation is identical.
+    This is the OPPOSITE rotation from push: [c1, c2, c3] -> [c2, c3, c1]
+    This maintains the relative order of pulled items, preventing sequences
+    from being broken up when pulled through refs or across multiple cells.
 
     Args:
         store: The grid store containing all grids
@@ -1240,9 +1240,10 @@ def apply_pull(store: GridStore, path: list[CellPosition]) -> GridStore:
     """
     from collections import defaultdict
 
-    # Extract cells and rotate: [c1, c2, c3] -> [c3, c1, c2]
+    # Extract cells and rotate: [c1, c2, c3] -> [c2, c3, c1]
+    # Pull uses opposite rotation from push to maintain order
     cells = [get_cell(store, pos) for pos in path]
-    rotated = [cells[-1]] + cells[:-1]
+    rotated = cells[1:] + [cells[0]]
 
     # Group updates by grid_id for efficient batch updates
     updates: dict[str, list[tuple[int, int, Cell]]] = defaultdict(list)

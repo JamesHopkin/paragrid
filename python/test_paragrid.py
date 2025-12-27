@@ -1582,11 +1582,11 @@ class TestPull:
         result = pull(store, start, Direction.E, RuleSet())
 
         # After pull from East: path [Empty, A, B] (B included even though can't advance from it)
-        # Rotation: [Empty, A, B] -> [B, Empty, A]
-        # Result: [B, Empty, A]
-        assert result["main"].cells[0][0] == Concrete("B")
-        assert isinstance(result["main"].cells[0][1], Empty)
-        assert result["main"].cells[0][2] == Concrete("A")
+        # Rotation: [Empty, A, B] -> [A, B, Empty] (opposite of push to maintain order)
+        # Result: [A, B, Empty]
+        assert result["main"].cells[0][0] == Concrete("A")
+        assert result["main"].cells[0][1] == Concrete("B")
+        assert isinstance(result["main"].cells[0][2], Empty)
 
     def test_pull_chain(self) -> None:
         """Test pull of multiple Concrete cells."""
@@ -1598,12 +1598,12 @@ class TestPull:
         result = pull(store, start, Direction.E, RuleSet())
 
         # Path: [Empty, A, B, C] (C included even though can't advance from it)
-        # Rotation: [Empty, A, B, C] -> [C, Empty, A, B]
-        # Result: [C, Empty, A, B]
-        assert result["main"].cells[0][0] == Concrete("C")
-        assert isinstance(result["main"].cells[0][1], Empty)
-        assert result["main"].cells[0][2] == Concrete("A")
-        assert result["main"].cells[0][3] == Concrete("B")
+        # Rotation: [Empty, A, B, C] -> [A, B, C, Empty] (maintains order A->B->C)
+        # Result: [A, B, C, Empty]
+        assert result["main"].cells[0][0] == Concrete("A")
+        assert result["main"].cells[0][1] == Concrete("B")
+        assert result["main"].cells[0][2] == Concrete("C")
+        assert isinstance(result["main"].cells[0][3], Empty)
 
     def test_pull_immutability(self) -> None:
         """Test that original store is unchanged after pull."""
@@ -1619,8 +1619,8 @@ class TestPull:
         assert store["main"].cells[0][1] == Concrete("A")
         assert store["main"].cells[0][2] == Concrete("B")
 
-        # Result should be different
-        assert result["main"].cells[0][0] == Concrete("B")  # Last cell moved to front
+        # Result should be different - first cell (Empty) moved to back
+        assert result["main"].cells[0][0] == Concrete("A")
 
     def test_pull_rotation(self) -> None:
         """Test that rotation direction is correct for pull."""
@@ -1632,11 +1632,11 @@ class TestPull:
         result = pull(store, start, Direction.E, RuleSet())
 
         # Path: [Empty, X, Y] (Y included even though can't advance from it)
-        # Rotation: [Empty, X, Y] -> [Y, Empty, X]
-        # Result: [Y, Empty, X]
-        assert result["main"].cells[0][0] == Concrete("Y")
-        assert isinstance(result["main"].cells[0][1], Empty)
-        assert result["main"].cells[0][2] == Concrete("X")
+        # Rotation: [Empty, X, Y] -> [X, Y, Empty] (maintains X->Y order)
+        # Result: [X, Y, Empty]
+        assert result["main"].cells[0][0] == Concrete("X")
+        assert result["main"].cells[0][1] == Concrete("Y")
+        assert isinstance(result["main"].cells[0][2], Empty)
 
     def test_pull_start_not_empty(self) -> None:
         """Test pull when start is not Empty returns unchanged store."""
@@ -1731,11 +1731,11 @@ class TestPull:
 
         # With SOLID strategy: Ref pulled as object
         # Path: [Empty@(0,0), Ref@(0,1), A@(0,2)] (A included)
-        # Rotation: [Empty, Ref, A] -> [A, Empty, Ref]
-        # Result: [A, Empty, Ref]
-        assert result["main"].cells[0][0] == Concrete("A")
-        assert isinstance(result["main"].cells[0][1], Empty)
-        assert result["main"].cells[0][2] == Ref("inner")
+        # Rotation: [Empty, Ref, A] -> [Ref, A, Empty] (maintains Ref->A order)
+        # Result: [Ref, A, Empty]
+        assert result["main"].cells[0][0] == Ref("inner")
+        assert result["main"].cells[0][1] == Concrete("A")
+        assert isinstance(result["main"].cells[0][2], Empty)
         # Inner grid unchanged
         assert result["inner"].cells[0][0] == Concrete("X")
         assert result["inner"].cells[0][1] == Concrete("Y")
@@ -1754,15 +1754,14 @@ class TestPull:
 
         # With PORTAL: Enter Ref, path excludes Ref position
         # Path: [Empty@main(0,0), X@inner(0,0), Y@inner(0,1), A@main(0,2)]
-        # (A included - new behavior adds last cell)
         # Cells: [Empty, X, Y, A]
-        # Rotated: [A, Empty, X, Y]
-        assert result["main"].cells[0][0] == Concrete("A")
+        # Rotated: [X, Y, A, Empty] (maintains X->Y->A order!)
+        assert result["main"].cells[0][0] == Concrete("X")
         assert result["main"].cells[0][1] == Ref("inner")  # Ref unchanged
-        assert result["main"].cells[0][2] == Concrete("Y")
-        # Inner grid modified
-        assert isinstance(result["inner"].cells[0][0], Empty)
-        assert result["inner"].cells[0][1] == Concrete("X")
+        assert isinstance(result["main"].cells[0][2], Empty)
+        # Inner grid modified - X and Y maintain their order, A joined them!
+        assert result["inner"].cells[0][0] == Concrete("Y")
+        assert result["inner"].cells[0][1] == Concrete("A")
 
     def test_pull_stops_at_cycle(self) -> None:
         """Test pull stops successfully when detecting a cycle."""
@@ -1790,14 +1789,14 @@ class TestPull:
         # Test with SOLID first - should pull Ref as object
         rules_solid = RuleSet(ref_strategy=RefStrategy.PUSH_FIRST)
         result_solid = pull(store, CellPosition("main", 0, 0), Direction.E, rules_solid)
-        assert result_solid["main"].cells[0][0] == Concrete("A")  # A moved to front
-        assert result_solid["main"].cells[0][2] == Ref("inner")  # Ref moved to end
+        assert result_solid["main"].cells[0][0] == Ref("inner")  # Ref stays first in order
+        assert result_solid["main"].cells[0][1] == Concrete("A")  # A stays second
 
         # Test with PORTAL first - should enter Ref
         rules_portal = RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
         result_portal = pull(store, CellPosition("main", 0, 0), Direction.E, rules_portal)
         assert result_portal["main"].cells[0][1] == Ref("inner")  # Ref stayed
-        assert isinstance(result_portal["inner"].cells[0][0], Empty)  # Inner modified
+        assert result_portal["inner"].cells[0][0] == Concrete("Y")  # Inner modified (Y stayed together)
 
     def test_pull_max_depth(self) -> None:
         """Test pull stops at max depth."""
@@ -1810,6 +1809,7 @@ class TestPull:
         result = pull(store, start, Direction.E, RuleSet(), max_depth=10)
 
         # Should stop after 10 iterations
-        # Path: start + 10 more = 11 positions
-        # Last element (10th, 0-indexed 9) moves to first
-        assert result["main"].cells[0][0] == Concrete("9")
+        # Path: [Empty, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9] = 11 positions
+        # Rotation: [Empty, 0, 1, ..., 9] -> [0, 1, 2, ..., 9, Empty]
+        # First element (0) moves to first, maintaining order
+        assert result["main"].cells[0][0] == Concrete("0")
