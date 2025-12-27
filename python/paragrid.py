@@ -41,10 +41,10 @@ RefStrategyOrder = tuple[RefStrategyType, ...]
 class RefStrategy:
     """Common Ref handling strategy orderings."""
 
-    # Default: try portal (enter), then solid (push), then swallow
+    # Default: try solid (push), then portal (enter), then swallow
     DEFAULT: RefStrategyOrder = (
-        RefStrategyType.PORTAL,
         RefStrategyType.SOLID,
+        RefStrategyType.PORTAL,
         RefStrategyType.SWALLOW,
     )
 
