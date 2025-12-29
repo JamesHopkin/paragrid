@@ -5,7 +5,8 @@ Demo of the string-based grid definition format.
 
 from fractions import Fraction
 
-from paragrid import analyze, parse_grids, render
+from paragrid import analyze, parse_grids
+from ascii_render import render
 
 
 def main() -> None:

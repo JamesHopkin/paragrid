@@ -1,41 +1,35 @@
 """
-Interactive demo for Paragrid with push operations.
-Display a grid and allow pushing cells with keyboard commands.
+Interactive demo for Paragrid using simple flow renderer.
+Display all grids in flow layout and allow push/pull operations with keyboard commands.
 """
 
-from fractions import Fraction
-import logging
+import sys
 
-import readchar, sys
+import readchar
 from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
 from paragrid import (
-    RuleSet,
     Cell,
     CellPosition,
     Concrete,
     Direction,
-    Empty,
-    Grid,
     GridStore,
     PushFailure,
-    Ref,
+    RuleSet,
     TagFn,
-    analyze,
     find_tagged_cell,
     parse_grids,
     pull,
     push,
-    push_simple,
 )
-from ascii_render import render
+from ascii_render import render_store_flow
 
 
-class InteractiveDemo:
-    """Interactive demo for push and pull operations."""
+class InteractiveDemoSimple:
+    """Interactive demo with simple flow rendering showing all grids at once."""
 
     def __init__(self, store: GridStore, tag_fn: TagFn | None = None) -> None:
         self.store = store
@@ -54,7 +48,7 @@ class InteractiveDemo:
         return find_tagged_cell(self.store, self.player_tag, self.tag_fn)
 
     def generate_display(self) -> Panel:
-        """Generate the current display with grid and status."""
+        """Generate the current display with all grids in flow layout."""
         player_pos = self.player_position
 
         if player_pos is None:
@@ -64,9 +58,14 @@ class InteractiveDemo:
             status.append("Please ensure a cell is tagged 'player' in your grid.\n")
             return Panel(status, title="Paragrid - Error", border_style="red")
 
-        # Analyze and render with player's grid
-        tree = analyze(self.store, player_pos.grid_id, Fraction(1), Fraction(1))
-        grid_text = render(tree, max_scale=100, highlight_pos=player_pos)
+        # Render all grids in flow layout
+        grid_text = render_store_flow(
+            self.store,
+            terminal_width=120,
+            cell_width=3,
+            highlight_pos=player_pos,
+            tag_fn=self.tag_fn
+        )
 
         # Add status information
         status = Text()
@@ -76,6 +75,7 @@ class InteractiveDemo:
         # Get current cell info
         grid = self.store[player_pos.grid_id]
         cell = grid.cells[player_pos.row][player_pos.col]
+        from paragrid import Empty, Ref
         cell_str = (
             f"Empty" if isinstance(cell, Empty)
             else f"Ref({cell.grid_id})" if isinstance(cell, Ref)
@@ -107,9 +107,9 @@ class InteractiveDemo:
         status.append("Status: ", style="bold")
         status.append(self.status_message)
 
-        title = f"Paragrid Interactive Demo - {self.mode.upper()} Mode"
+        title = f"Paragrid Interactive Demo - {self.mode.upper()} Mode (Simple Renderer)"
         border_color = "yellow" if self.mode == "pull" else "green"
-        return Panel(status, title=title, border_style=border_color, width=80)
+        return Panel(status, title=title, border_style=border_color, width=120)
 
     def attempt_push(self, direction: Direction) -> None:
         """Attempt to push from player position in given direction."""
@@ -264,6 +264,7 @@ class InteractiveDemo:
                 self.status_message = "Interrupted by user"
                 live.update(self.generate_display())
 
+
 LAYOUTS = dict(
     swap = dict(
         main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
@@ -271,6 +272,7 @@ LAYOUTS = dict(
     ),
     bug = dict(main = '_ _ 1 2 3 4 _|_ _ _ _ _ _ _')
 )
+
 
 def main(store: GridStore) -> None:
     """Run interactive demo with a sample grid setup."""
@@ -282,29 +284,10 @@ def main(store: GridStore) -> None:
                 return {"stop"}
         return set()
 
-    demo = InteractiveDemo(store, tag_fn=tag_fn)
+    demo = InteractiveDemoSimple(store, tag_fn=tag_fn)
     demo.run()
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == 'sublime':
-        # Running from IDE - just render the initial state
-        # Configure logging to see scale computation
-        logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-        print('Running from IDE - rendering initial state')
-        print()
-
-        store = parse_grids(LAYOUTS['bug']) 
-        # Analyze and render the initial grid with reasonable scale for IDE viewing
-        tree = analyze(store, "main", Fraction(80), Fraction(40))
-        output = render(tree, max_scale=3000)  # Reasonable scale for IDE (produces ~2400x2400)
-        # Limit output to first 100 lines for IDE viewing
-        lines = output.split('\n')
-        limited_output = '\n'.join(lines[:100])
-        if len(lines) > 100:
-            limited_output += f'\n... [{len(lines) - 100} more lines truncated for IDE viewing]'
-        print(limited_output)
-    else:
-        store = parse_grids(LAYOUTS[sys.argv[1] if len(sys.argv) > 1 else 'swap'])
-        main(store)
+    store = parse_grids(LAYOUTS[sys.argv[1] if len(sys.argv) > 1 else 'swap'])
+    main(store)
