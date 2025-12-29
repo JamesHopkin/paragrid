@@ -404,7 +404,7 @@ class Navigator:
         """
         Try to move to next position in direction.
         Handles exiting from nested grids back to parent grids.
-        Returns False if can't advance (hit root edge).
+        Returns False if can't advance (hit root edge or exit cycle).
         Clears visited_grids on any advance.
         """
         # Clear visited grids when advancing
@@ -417,32 +417,44 @@ class Navigator:
 
         # Check bounds
         if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
-            # Hit edge - try to exit to parent grid
-            primary_ref = find_primary_ref(self.store, self.current.grid_id)
-            if primary_ref is None:
-                return False  # Hit root edge
+            # Hit edge - try to exit through cascading parent grids
+            # Use iterative approach with cycle detection
+            visited_exit_positions: set[tuple[str, int, int]] = set()
+            current_grid_id = self.current.grid_id
 
-            # Exit through primary ref
-            parent_grid_id, parent_row, parent_col = primary_ref
-            parent_grid = self.store[parent_grid_id]
+            while True:
+                primary_ref = find_primary_ref(self.store, current_grid_id)
+                if primary_ref is None:
+                    return False  # Hit root edge
 
-            # Continue in same direction from primary ref
-            exit_row = parent_row + dr
-            exit_col = parent_col + dc
+                # Exit through primary ref
+                parent_grid_id, parent_row, parent_col = primary_ref
 
-            # Check if exit position is valid in parent
-            if (
-                exit_row < 0
-                or exit_row >= parent_grid.rows
-                or exit_col < 0
-                or exit_col >= parent_grid.cols
-            ):
-                # Cascading exit - recursively try to exit from parent
-                self.current = CellPosition(parent_grid_id, parent_row, parent_col)
-                return self.try_advance()
+                # Detect exit cycle
+                exit_key = (parent_grid_id, parent_row, parent_col)
+                if exit_key in visited_exit_positions:
+                    return False  # Exit cycle detected
+                visited_exit_positions.add(exit_key)
 
-            self.current = CellPosition(parent_grid_id, exit_row, exit_col)
-            return True
+                parent_grid = self.store[parent_grid_id]
+
+                # Continue in same direction from primary ref
+                exit_row = parent_row + dr
+                exit_col = parent_col + dc
+
+                # Check if exit position is valid in parent
+                if (
+                    exit_row >= 0
+                    and exit_row < parent_grid.rows
+                    and exit_col >= 0
+                    and exit_col < parent_grid.cols
+                ):
+                    # Successfully exited to valid position
+                    self.current = CellPosition(parent_grid_id, exit_row, exit_col)
+                    return True
+
+                # Cascading exit - continue from parent
+                current_grid_id = parent_grid_id
 
         self.current = CellPosition(self.current.grid_id, next_row, next_col)
         return True
@@ -1297,442 +1309,3 @@ def find_tagged_cell(
                 if tag in tag_fn(cell):
                     return CellPosition(grid.id, row_idx, col_idx)
     return None
-
-
-# =============================================================================
-# Phase 2: Render (ASCII)
-# =============================================================================
-
-
-def collect_denominators(node: CellNode) -> tuple[set[int], set[int]]:
-    """Collect all denominators from nested grid dimensions separately for width and height.
-
-    Tracks visited grids to prevent infinite recursion on cyclic references.
-
-    Returns:
-        Tuple of (width_denoms, height_denoms)
-    """
-    width_denoms: set[int] = set()
-    height_denoms: set[int] = set()
-    visited_grids: set[str] = set()
-
-    def walk(n: CellNode, w: Fraction, h: Fraction) -> None:
-        if isinstance(n, NestedNode):
-            # Check if we've already visited this grid
-            if n.grid_id in visited_grids:
-                return
-            visited_grids.add(n.grid_id)
-
-            rows = len(n.children)
-            cols = len(n.children[0]) if n.children else 0
-            if cols > 0 and rows > 0:
-                cw = w / cols
-                ch = h / rows
-                width_denoms.add(cw.denominator)
-                height_denoms.add(ch.denominator)
-                for row in n.children:
-                    for child in row:
-                        walk(child, cw, ch)
-        elif isinstance(n, RefNode):
-            # Just walk the content - the NestedNode inside will handle cycle detection
-            walk(n.content, w, h)
-
-    walk(node, Fraction(1), Fraction(1))
-    return (width_denoms, height_denoms)
-
-
-def compute_scale(node: CellNode, max_scale: int = 10000) -> tuple[int, int]:
-    """
-    Compute character dimensions that give exact integer cell sizes.
-
-    Uses separate LCM calculations for width and height to minimize output size.
-
-    Args:
-        node: The cell tree to compute scale for
-        max_scale: Maximum scale to prevent excessive memory usage (default 10000)
-
-    Returns:
-        Tuple of (width, height) in characters
-    """
-    width_denoms, height_denoms = collect_denominators(node)
-
-    # Compute width scale
-    width_scale = 1
-    width_capped = False
-    if width_denoms:
-        for d in width_denoms:
-            new_scale = lcm(width_scale, d)
-            if new_scale > max_scale:
-                width_capped = True
-                break
-            width_scale = new_scale
-
-    # Compute height scale
-    height_scale = 1
-    height_capped = False
-    if height_denoms:
-        for d in height_denoms:
-            new_scale = lcm(height_scale, d)
-            if new_scale > max_scale:
-                height_capped = True
-                break
-            height_scale = new_scale
-
-    logger.info(
-        "compute_scale: width=%d (capped=%s), height=%d (capped=%s), max_scale=%d",
-        width_scale,
-        width_capped,
-        height_scale,
-        height_capped,
-        max_scale,
-    )
-    return (width_scale, height_scale)
-
-
-def render_to_buffer(
-    node: CellNode,
-    buffer: list[list[str]],
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    color_fn: Callable[[str], Callable[[str], str]],
-    parent_grid_id: str | None = None,
-    highlight_pos: CellPosition | None = None,
-    current_grid_id: str | None = None,
-    current_row: int | None = None,
-    current_col: int | None = None,
-) -> None:
-    """Render a CellNode into a character buffer at the given position."""
-    if w <= 0 or h <= 0:
-        return
-
-    # Check if this cell should be highlighted
-    is_highlighted = (
-        highlight_pos is not None
-        and current_grid_id == highlight_pos.grid_id
-        and current_row == highlight_pos.row
-        and current_col == highlight_pos.col
-    )
-
-    match node:
-        case EmptyNode():
-            # Draw border with dash (explicitly empty), colored by parent grid
-            if is_highlighted:
-                colorize = chalk.white
-            else:
-                colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
-            char = colorize("-")
-            if w >= 3 and h >= 3:
-                # Draw outline
-                for col in range(x, x + w):
-                    buffer[y][col] = char  # top edge
-                    buffer[y + h - 1][col] = char  # bottom edge
-                for row in range(y, y + h):
-                    buffer[row][x] = char  # left edge
-                    buffer[row][x + w - 1] = char  # right edge
-            else:
-                # Fill (too small for outline)
-                for row in range(y, y + h):
-                    for col in range(x, x + w):
-                        buffer[row][col] = char
-
-        case CutoffNode():
-            # Fill with dash (below threshold, had more content), colored by parent grid
-            if is_highlighted:
-                colorize = chalk.white
-            else:
-                colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
-            char = colorize("-")
-            for row in range(y, y + h):
-                for col in range(x, x + w):
-                    buffer[row][col] = char
-
-        case ConcreteNode(id=cell_id, grid_id=gid):
-            base_char = cell_id[0] if cell_id else "?"
-            if is_highlighted:
-                colorize = chalk.white
-            else:
-                colorize = color_fn(gid)
-            char = colorize(base_char)
-            if w >= 3 and h >= 3:
-                # Draw outline
-                for col in range(x, x + w):
-                    buffer[y][col] = char  # top edge
-                    buffer[y + h - 1][col] = char  # bottom edge
-                for row in range(y, y + h):
-                    buffer[row][x] = char  # left edge
-                    buffer[row][x + w - 1] = char  # right edge
-            else:
-                # Fill (too small for outline)
-                for row in range(y, y + h):
-                    for col in range(x, x + w):
-                        buffer[row][col] = char
-
-        case RefNode(grid_id=gid, ref_target=ref_target, is_primary=is_primary, content=content):
-            # Render the content first
-            render_to_buffer(
-                content, buffer, x, y, w, h, color_fn, gid,
-                highlight_pos, current_grid_id, current_row, current_col
-            )
-
-            # For primary refs, fill interior with dots matching the referenced grid's color
-            if is_primary and w >= 3 and h >= 3:
-                colorize = color_fn(ref_target)
-                dot_char = colorize(".")
-                for row in range(y + 1, y + h - 1):
-                    for col in range(x + 1, x + w - 1):
-                        if buffer[row][col] == " ":
-                            buffer[row][col] = dot_char
-
-        case NestedNode(grid_id=gid, children=children):
-            rows = len(children)
-            cols = len(children[0]) if children else 0
-
-            if cols == 0 or rows == 0:
-                return
-
-            cell_w = w // cols
-            cell_h = h // rows
-
-            for r_idx, child_row in enumerate(children):
-                for c_idx, child in enumerate(child_row):
-                    render_to_buffer(
-                        child,
-                        buffer,
-                        x + c_idx * cell_w,
-                        y + r_idx * cell_h,
-                        cell_w,
-                        cell_h,
-                        color_fn,
-                        gid,  # Pass grid_id as parent context
-                        highlight_pos,
-                        gid,  # Current grid_id for this cell
-                        r_idx,  # Current row
-                        c_idx,  # Current col
-                    )
-
-
-def collect_grid_ids(node: CellNode) -> set[str]:
-    """Collect all grid IDs from the tree."""
-    ids: set[str] = set()
-
-    def walk(n: CellNode) -> None:
-        if isinstance(n, ConcreteNode):
-            ids.add(n.grid_id)
-        elif isinstance(n, RefNode):
-            ids.add(n.grid_id)  # Add the grid containing the ref
-            walk(n.content)  # Walk the content
-        elif isinstance(n, NestedNode):
-            ids.add(n.grid_id)  # Add the nested grid id
-            for row in n.children:
-                for child in row:
-                    walk(child)
-
-    walk(node)
-    return ids
-
-
-def render(node: CellNode, max_scale: int = 10000, highlight_pos: CellPosition | None = None) -> str:
-    """
-    Render a CellTree to an ASCII string with colors.
-
-    Args:
-        node: The cell tree to render
-        max_scale: Maximum scale for rendering (default 10000)
-        highlight_pos: Optional cell position to highlight in white
-
-    Returns:
-        Rendered ASCII string with ANSI color codes
-    """
-    char_w, char_h = compute_scale(node, max_scale)
-
-    # Build color palette for grids
-    colors: list[Callable[[str], str]] = [
-        chalk.red,
-        chalk.green,
-        chalk.yellow,
-        chalk.blue,
-        chalk.magenta,
-        chalk.cyan,
-        chalk.redBright,
-        chalk.greenBright,
-        chalk.yellowBright,
-        chalk.blueBright,
-    ]
-    grid_ids = sorted(collect_grid_ids(node))
-    grid_colors: dict[str, Callable[[str], str]] = {
-        gid: colors[i % len(colors)] for i, gid in enumerate(grid_ids)
-    }
-
-    def color_fn(grid_id: str) -> Callable[[str], str]:
-        return grid_colors.get(grid_id, lambda s: s)
-
-    # Create buffer
-    buffer: list[list[str]] = [[" " for _ in range(char_w)] for _ in range(char_h)]
-
-    # Render into buffer
-    render_to_buffer(node, buffer, 0, 0, char_w, char_h, color_fn, highlight_pos=highlight_pos)
-
-    # Convert to string
-    return "\n".join("".join(row) for row in buffer)
-
-
-def render_to_buffer_with_visits(
-    node: CellNode,
-    buffer: list[list[str]],
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    color_fn: Callable[[str], Callable[[str], str]],
-    visit_map: dict[tuple[str, int, int], list[int]],
-    parent_grid_id: str | None = None,
-) -> None:
-    """Render a CellNode into a character buffer with visit numbers overlaid."""
-    if w <= 0 or h <= 0:
-        return
-
-    match node:
-        case EmptyNode():
-            # Draw border with dash (explicitly empty), colored by parent grid
-            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
-            char = colorize("-")
-            if w >= 3 and h >= 3:
-                # Draw outline
-                for col in range(x, x + w):
-                    buffer[y][col] = char  # top edge
-                    buffer[y + h - 1][col] = char  # bottom edge
-                for row in range(y, y + h):
-                    buffer[row][x] = char  # left edge
-                    buffer[row][x + w - 1] = char  # right edge
-            else:
-                # Fill (too small for outline)
-                for row in range(y, y + h):
-                    for col in range(x, x + w):
-                        buffer[row][col] = char
-
-        case CutoffNode():
-            # Fill with dash (below threshold, had more content), colored by parent grid
-            colorize = color_fn(parent_grid_id) if parent_grid_id else lambda s: s
-            char = colorize("-")
-            for row in range(y, y + h):
-                for col in range(x, x + w):
-                    buffer[row][col] = char
-
-        case ConcreteNode(id=cell_id, grid_id=gid):
-            base_char = cell_id[0] if cell_id else "?"
-            colorize = color_fn(gid)
-            char = colorize(base_char)
-            if w >= 3 and h >= 3:
-                # Draw outline
-                for col in range(x, x + w):
-                    buffer[y][col] = char  # top edge
-                    buffer[y + h - 1][col] = char  # bottom edge
-                for row in range(y, y + h):
-                    buffer[row][x] = char  # left edge
-                    buffer[row][x + w - 1] = char  # right edge
-            else:
-                # Fill (too small for outline)
-                for row in range(y, y + h):
-                    for col in range(x, x + w):
-                        buffer[row][col] = char
-
-        case RefNode(grid_id=gid, ref_target=ref_target, is_primary=is_primary, content=content):
-            # Render the content first
-            render_to_buffer_with_visits(content, buffer, x, y, w, h, color_fn, visit_map, gid)
-
-            # For primary refs, fill interior with dots matching the referenced grid's color
-            if is_primary and w >= 3 and h >= 3:
-                colorize = color_fn(ref_target)
-                dot_char = colorize(".")
-                for row in range(y + 1, y + h - 1):
-                    for col in range(x + 1, x + w - 1):
-                        # Don't overwrite visit numbers (non-space characters other than dots)
-                        if buffer[row][col] == " ":
-                            buffer[row][col] = dot_char
-
-        case NestedNode(grid_id=gid, children=children):
-            rows = len(children)
-            cols = len(children[0]) if children else 0
-
-            if cols == 0 or rows == 0:
-                return
-
-            cell_w = w // cols
-            cell_h = h // rows
-
-            for r_idx, child_row in enumerate(children):
-                for c_idx, child in enumerate(child_row):
-                    child_x = x + c_idx * cell_w
-                    child_y = y + r_idx * cell_h
-
-                    # Recursively render the child
-                    render_to_buffer_with_visits(
-                        child,
-                        buffer,
-                        child_x,
-                        child_y,
-                        cell_w,
-                        cell_h,
-                        color_fn,
-                        visit_map,
-                        gid,  # Pass grid_id as parent context
-                    )
-
-                    # Overlay visit numbers for this cell position
-                    key = (gid, r_idx, c_idx)
-                    if key in visit_map:
-                        steps = visit_map[key]
-                        step_str = ",".join(str(s) for s in steps)
-                        # Center the string in the cell
-                        center_x = child_x + cell_w // 2
-                        center_y = child_y + cell_h // 2
-                        start_x = center_x - len(step_str) // 2
-                        # Write the string
-                        for i, ch in enumerate(step_str):
-                            write_x = start_x + i
-                            if 0 <= write_x < len(buffer[0]) and 0 <= center_y < len(buffer):
-                                buffer[center_y][write_x] = ch
-
-
-def render_with_visits(
-    node: CellNode,
-    visit_map: dict[tuple[str, int, int], list[int]],
-    min_scale: int = 1,
-) -> str:
-    """Render a CellTree to ASCII with visit step numbers overlaid."""
-    char_w, char_h = compute_scale(node)
-    char_w = max(char_w, min_scale)
-    char_h = max(char_h, min_scale)
-
-    # Build color palette for grids
-    colors: list[Callable[[str], str]] = [
-        chalk.red,
-        chalk.green,
-        chalk.yellow,
-        chalk.blue,
-        chalk.magenta,
-        chalk.cyan,
-        chalk.redBright,
-        chalk.greenBright,
-        chalk.yellowBright,
-        chalk.blueBright,
-    ]
-    grid_ids = sorted(collect_grid_ids(node))
-    grid_colors: dict[str, Callable[[str], str]] = {
-        gid: colors[i % len(colors)] for i, gid in enumerate(grid_ids)
-    }
-
-    def color_fn(grid_id: str) -> Callable[[str], str]:
-        return grid_colors.get(grid_id, lambda s: s)
-
-    # Create buffer
-    buffer: list[list[str]] = [[" " for _ in range(char_w)] for _ in range(char_h)]
-
-    # Render with visits
-    render_to_buffer_with_visits(node, buffer, 0, 0, char_w, char_h, color_fn, visit_map)
-
-    # Convert to string
-    return "\n".join("".join(row) for row in buffer)
-

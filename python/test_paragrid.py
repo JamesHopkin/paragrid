@@ -25,14 +25,16 @@ from paragrid import (
     RefStrategy,
     RuleSet,
     analyze,
-    collect_denominators,
-    collect_grid_ids,
-    compute_scale,
     find_primary_ref,
     parse_grids,
     pull,
     push,
     push_simple,
+)
+from ascii_render import (
+    collect_denominators,
+    collect_grid_ids,
+    compute_scale,
     render,
 )
 
@@ -844,6 +846,39 @@ class TestPush:
         # Inner should have [A, X]
         assert result["inner"].cells[0][0] == Concrete("A")
         assert result["inner"].cells[0][1] == Concrete("X")
+
+
+# =============================================================================
+# Test Navigator Exit Cycle Detection
+# =============================================================================
+
+
+class TestNavigator:
+    """Tests for Navigator exit cycle detection."""
+
+    def test_exit_cycle_detection(self) -> None:
+        """Test that Navigator detects exit cycles and doesn't recurse infinitely."""
+        # Create a grid structure where exiting forms a cycle:
+        # Grid A contains a ref to B
+        # Grid B contains a ref to A
+        # Both grids are 1x1, so any movement hits an edge and tries to exit
+        # This creates an exit cycle: A -> exit to B -> exit to A -> ...
+
+        store: GridStore = {
+            "A": Grid("A", ((Ref("B", is_primary=True),),)),
+            "B": Grid("B", ((Ref("A", is_primary=True),),)),
+        }
+
+        from paragrid import Navigator
+
+        # Start in grid A
+        nav = Navigator(store, CellPosition("A", 0, 0), Direction.E)
+
+        # Try to advance east - this should detect the exit cycle and return False
+        # rather than recursing infinitely
+        result = nav.try_advance()
+
+        assert result is False, "Should detect exit cycle and return False"
 
 
 # =============================================================================
