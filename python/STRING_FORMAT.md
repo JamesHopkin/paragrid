@@ -12,16 +12,30 @@ definitions = {
 
 ### Cell Types
 
-Within each row, cells are separated by spaces:
+Within each row, cells are separated by spaces. **Cell type is determined by the FIRST CHARACTER**, allowing multi-character content and grid references:
 
-- **Numbers (0-9)**: Create `Concrete` cells
+- **First char is digit (0-9)**: Create `Concrete` cells with entire string as content
   - `"1"` → `Concrete("1")`
-  - `"5"` → `Concrete("5")`
+  - `"123"` → `Concrete("123")`
+  - `"5abc"` → `Concrete("5abc")`
 
-- **Letters (a-zA-Z)**: Create `Ref` cells pointing to other grids
-  - `"A"` → `Ref("A")`
-  - `"main"` would be parsed as 4 separate refs: `Ref("m")`, `Ref("a")`, `Ref("i")`, `Ref("n")`
-  - Use single letters for grid IDs in this format
+- **First char is letter (a-zA-Z)**: Create `Ref` cells pointing to other grids (auto-determined primary status)
+  - `"A"` → `Ref("A", is_primary=None)`
+  - `"Main"` → `Ref("Main", is_primary=None)`
+  - `"Grid2"` → `Ref("Grid2", is_primary=None)`
+  - Multi-character grid IDs are fully supported!
+
+- **First char is \***: Create primary `Ref` cells (explicitly marked), remainder is grid_id
+  - `"*A"` → `Ref("A", is_primary=True)`
+  - `"*Main"` → `Ref("Main", is_primary=True)`
+  - `"*Grid2"` → `Ref("Grid2", is_primary=True)`
+  - The `*` prefix explicitly marks this reference as the primary one
+
+- **First char is ~**: Create secondary `Ref` cells (explicitly marked), remainder is grid_id
+  - `"~A"` → `Ref("A", is_primary=False)`
+  - `"~Main"` → `Ref("Main", is_primary=False)`
+  - `"~Grid2"` → `Ref("Grid2", is_primary=False)`
+  - The `~` prefix explicitly marks this reference as secondary
 
 - **Spaces**: Create `Empty` cells
   - `"1  3"` → `[Concrete("1"), Empty(), Concrete("3")]`
@@ -56,6 +70,21 @@ store = parse_grids({
 This creates:
 - Grid "main": 2×2 with cells `[1, Ref(A)], [2, 3]`
 - Grid "A": 2×2 with cells `[4, 5], [6, 7]`
+
+### Multi-character Content and Grid IDs
+
+```python
+store = parse_grids({
+    "MainGrid": "100 200|abc Inner",
+    "Inner": "x1 y2"
+})
+```
+
+This creates:
+- Grid "MainGrid": 2×2 with `[Concrete("100"), Concrete("200")], [Concrete("abc"), Ref("Inner")]`
+- Grid "Inner": 1×2 with `[Concrete("x1"), Concrete("y2")]`
+
+Note: Multi-character strings work seamlessly - first character determines the type!
 
 ### Grid with Empty Cells
 
@@ -92,9 +121,38 @@ Grid "main" references itself, creating a recursive structure that will be handl
 
 ## Primary vs Secondary References
 
-The first reference to any grid becomes the **primary reference**. All subsequent references to the same grid are **secondary**. This is determined automatically during the `analyze()` phase, not in the string definition.
+Each referenced grid has exactly one **primary reference**. All other references to the same grid are **secondary**.
+
+**Explicit marking** (recommended when you need specific behavior):
+- Use `*<grid_id>` to explicitly mark a reference as primary
+- Use `~<grid_id>` to explicitly mark a reference as secondary
+- Example: `"*A B ~A"` creates two refs to "A" (first is primary, last is secondary) and one ref to "B"
+- Works with multi-character grid IDs: `"*MainGrid ~OtherGrid"`
+
+**Auto-determination** (default behavior):
+- Use plain letters/names like `A` or `Main` for auto-determined primary status (`is_primary=None`)
+- During the `analyze()` phase, the first reference encountered to each grid becomes primary
+- All subsequent references to the same grid become secondary
 
 When exiting a grid via a secondary reference, traversal teleports to the primary reference location before continuing.
+
+**Example with explicit primary (single-char)**:
+```python
+store = parse_grids({
+    "main": "~A B *A",  # Second ref to A is explicitly primary
+    "A": "1|2",
+    "B": "3"
+})
+```
+
+**Example with explicit primary (multi-char)**:
+```python
+store = parse_grids({
+    "Main": "~Portal Item *Portal",  # Second ref to Portal is explicitly primary
+    "Portal": "100|200",
+    "Item": "x"
+})
+```
 
 ## Validation
 

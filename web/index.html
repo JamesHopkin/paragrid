@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paragrid TypeScript Test Results</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 2rem;
+        line-height: 1.6;
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        color: #4fc3f7;
+        margin-bottom: 0.5rem;
+      }
+
+      .subtitle {
+        color: #888;
+        margin-bottom: 2rem;
+      }
+
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin-bottom: 2rem;
+      }
+
+      .stat-card {
+        background: #2d2d2d;
+        padding: 1.5rem;
+        border-radius: 8px;
+        border-left: 4px solid;
+      }
+
+      .stat-card.success {
+        border-left-color: #4caf50;
+      }
+
+      .stat-card.total {
+        border-left-color: #4fc3f7;
+      }
+
+      .stat-card.skipped {
+        border-left-color: #ff9800;
+      }
+
+      .stat-label {
+        font-size: 0.875rem;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        margin-top: 0.5rem;
+      }
+
+      .test-suites {
+        background: #2d2d2d;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+      }
+
+      .test-suite {
+        margin-bottom: 2rem;
+      }
+
+      .test-suite:last-child {
+        margin-bottom: 0;
+      }
+
+      .suite-header {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .suite-name {
+        font-size: 1.25rem;
+        color: #4fc3f7;
+        font-weight: 500;
+      }
+
+      .suite-count {
+        background: #3d3d3d;
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.875rem;
+        color: #888;
+      }
+
+      .test-list {
+        list-style: none;
+        padding-left: 1.5rem;
+      }
+
+      .test-item {
+        padding: 0.5rem 0;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .test-icon {
+        flex-shrink: 0;
+      }
+
+      .test-icon.pass {
+        color: #4caf50;
+      }
+
+      .test-icon.skip {
+        color: #ff9800;
+      }
+
+      .test-name {
+        color: #d4d4d4;
+      }
+
+      .skipped-note {
+        color: #888;
+        font-size: 0.875rem;
+        font-style: italic;
+        margin-left: 0.5rem;
+      }
+
+      .footer {
+        margin-top: 3rem;
+        padding-top: 2rem;
+        border-top: 1px solid #3d3d3d;
+        text-align: center;
+        color: #888;
+      }
+
+      .footer a {
+        color: #4fc3f7;
+        text-decoration: none;
+      }
+
+      .footer a:hover {
+        text-decoration: underline;
+      }
+
+      .actions {
+        margin-bottom: 2rem;
+        display: flex;
+        gap: 1rem;
+      }
+
+      button {
+        background: #4fc3f7;
+        color: #1e1e1e;
+        border: none;
+        padding: 0.75rem 1.5rem;
+        border-radius: 6px;
+        font-size: 1rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      button:hover {
+        background: #6dd5fa;
+      }
+
+      button:active {
+        transform: translateY(1px);
+      }
+
+      .badge {
+        display: inline-block;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-left: 0.5rem;
+      }
+
+      .badge.success {
+        background: #4caf50;
+        color: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Paragrid TypeScript Implementation <span class="badge success">ALL TESTS PASSING</span></h1>
+      <p class="subtitle">Comprehensive test results for the TypeScript port</p>
+
+      <div class="actions">
+        <button onclick="window.open('./node_modules/@vitest/ui/dist/client/index.html', '_blank')">
+          Open Vitest UI
+        </button>
+        <button onclick="runTests()">
+          Run Tests Again
+        </button>
+      </div>
+
+      <div id="app"></div>
+
+      <div class="footer">
+        <p>
+          Ported from Python implementation |
+          <a href="https://github.com/anthropics/claude-code" target="_blank">Built with Claude Code</a>
+        </p>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "@paragrid/web",
+  "version": "1.0.0",
+  "description": "Paragrid TypeScript implementation",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui"
+  },
+  "keywords": ["paragrid", "visualization", "grid"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@vitest/ui": "^4.0.16",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0",
+    "vitest": "^4.0.16"
+  }
+}
