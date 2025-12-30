@@ -18,19 +18,20 @@
 
 ## Current Status
 
-### ✅ Completed: Phase 0-1 (Foundation)
-- [x] Project setup and dependencies
-- [x] Core type system implementation
-- [x] String parser with validation
-- [x] **19/100+ tests passing**
+### ✅ Completed: Phases 0-4
+- [x] Phase 0: Project setup and dependencies
+- [x] Phase 1: Core types, parser, direction, position (19 tests)
+- [x] Phase 2: DEFERRED - Analysis system (for future rendering)
+- [x] Phase 3: Navigator, RefStrategy, RuleSet (1 test)
+- [x] Phase 4: PushFailure, applyPush/Pull, pushSimple (implementation complete)
+- [x] **20/77 tests passing (26%)**
 
-### 🚧 In Progress: Phase 2 (Analysis)
-- [ ] CellNode types
-- [ ] Primary reference detection
-- [ ] Analyze function with rational math
+### 🚧 In Progress: Phase 4 Testing
+- [x] pushSimple implementation
+- [ ] Port TestPush (9 tests) - NEXT STEP
 
-### ⏳ Remaining: Phases 3-10
-- Navigation, operations, tagging, pull, edge cases, polish
+### ⏳ Remaining: Phases 5-10
+- Push backtracking, swallowing, tagging, pull, edge cases, polish
 
 ---
 
@@ -54,23 +55,23 @@ web/
 │   │   │   ├── primary-ref.ts    ⏳ findPrimaryRef()
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   ├── navigator/
-│   │   │   ├── navigator.ts      ⏳ Navigator class
-│   │   │   ├── try-enter.ts      ⏳ tryEnter()
+│   │   │   ├── navigator.ts      ✅ Navigator class
+│   │   │   ├── try-enter.ts      ✅ tryEnter()
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   ├── operations/
-│   │   │   ├── rules.ts          ⏳ RefStrategy, RuleSet
-│   │   │   ├── push.ts           ⏳ push(), pushSimple()
+│   │   │   ├── rules.ts          ✅ RefStrategy, RuleSet
+│   │   │   ├── push.ts           ✅ pushSimple()
 │   │   │   ├── pull.ts           ⏳ pull()
-│   │   │   ├── apply.ts          ⏳ applyPush(), applyPull()
-│   │   │   ├── failure.ts        ⏳ PushFailure type
+│   │   │   ├── apply.ts          ✅ applyPush(), applyPull()
+│   │   │   ├── failure.ts        ✅ PushFailure type
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   ├── tagging/
-│   │   │   ├── types.ts          ⏳ TagFn type
+│   │   │   ├── types.ts          ✅ TagFn type
 │   │   │   ├── find-tagged.ts    ⏳ findTaggedCell()
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   ├── utils/
-│   │   │   ├── fraction.ts       ⏳ Rational arithmetic wrapper
-│   │   │   ├── immutable.ts      ⏳ Immutability helpers
+│   │   │   ├── fraction.ts       ⏳ Rational arithmetic wrapper (for future)
+│   │   │   ├── immutable.ts      ✅ getCellAtPosition, findPrimaryRef
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   └── index.ts              ⏳ Public API exports
 │   ├── main.ts                   ✅ Application entry
@@ -778,16 +779,16 @@ export {
 |------------|-------|--------|
 | TestGridStructures | 5 | ✅ Complete |
 | TestParseGrids | 14 | ✅ Complete |
-| TestFindPrimaryRef | 5 | ⏳ Pending |
-| TestAnalyze | 6 | ⏳ Pending |
-| TestNavigator | 1 | ⏳ Pending |
-| TestPush | 9 | ⏳ Pending |
+| TestFindPrimaryRef | 5 | ⏳ Deferred (for rendering) |
+| TestAnalyze | 6 | ⏳ Deferred (for rendering) |
+| TestNavigator | 1 | ✅ Complete |
+| TestPush | 9 | ⏳ Pending (impl done) |
 | TestPushBacktracking | 3 | ⏳ Pending |
 | TestPushSwallowing | 11 | ⏳ Pending |
 | TestTagging | 2 | ⏳ Pending |
 | TestPull | 14 | ⏳ Pending |
 | TestEdgeCases | 7 | ⏳ Pending |
-| **Total** | **77** | **19/77 (25%)** |
+| **Total** | **77** | **20/77 (26%)** |
 
 ---
 
@@ -1024,16 +1025,17 @@ npx tsc --noEmit
 
 ## Next Steps
 
-**Current Focus**: Phase 2 - Analysis & Primary Ref
+**Current Focus**: Phase 4 Testing - Port TestPush tests
 
 **Immediate Tasks**:
-1. Create `src/lib/utils/fraction.ts` wrapper
-2. Implement CellNode type variants in `src/lib/analysis/types.ts`
-3. Implement `findPrimaryRef()` in `src/lib/analysis/primary-ref.ts`
-4. Implement `analyze()` in `src/lib/analysis/analyze.ts`
-5. Port 11 tests (TestFindPrimaryRef + TestAnalyze)
+1. Port TestPush test suite (9 tests) to validate pushSimple implementation
+2. Verify push mechanics work correctly with all test cases
+3. Debug any failures and ensure parity with Python implementation
 
-**After Phase 2**: Continue with Navigator implementation (Phase 3)
+**After Phase 4 Testing**:
+- Phase 5: Implement push() with backtracking and decision stack
+- Phase 6: Add SWALLOW strategy support
+- Phases 7-10: Tagging, Pull, Edge cases, Polish
 
 ---
 
@@ -1046,5 +1048,6 @@ npx tsc --noEmit
 
 ---
 
-*Last Updated: 2025-12-29*
-*Status: Phase 1 Complete - 19/77 tests passing (25%)*
+*Last Updated: 2025-12-30*
+*Status: Phase 4 Implementation Complete - 20/77 tests passing (26%)*
+*Next: Port TestPush tests to validate pushSimple*

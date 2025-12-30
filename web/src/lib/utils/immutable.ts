@@ -2,8 +2,8 @@
  * Utilities for working with immutable grid data.
  */
 
-import { Cell, Grid, GridStore, type CellPosition } from '../core/types.js';
-import { isRef } from '../core/types.js';
+import { Cell, Grid, GridStore, isRef } from '../core/types.js';
+import type { CellPosition } from '../core/position.js';
 
 /**
  * Get the cell at a given position in the grid store.
