@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paragrid Isometric Demo</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #1a1a1a;
+        color: #e0e0e0;
+        padding: 2rem;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100vh;
+      }
+
+      .container {
+        max-width: 1200px;
+        width: 100%;
+      }
+
+      h1 {
+        color: #4fc3f7;
+        margin-bottom: 1rem;
+        text-align: center;
+      }
+
+      .demo-area {
+        display: flex;
+        gap: 2rem;
+        margin-top: 1rem;
+      }
+
+      #canvas {
+        background: #2a2a2a;
+        border: 2px solid #444;
+        border-radius: 8px;
+        width: 800px;
+        height: 600px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #status {
+        background: #2a2a2a;
+        border: 2px solid #444;
+        border-radius: 8px;
+        padding: 1.5rem;
+        min-width: 300px;
+        flex-shrink: 0;
+      }
+
+      .status-line {
+        margin-bottom: 0.75rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid #444;
+      }
+
+      .status-line:last-child {
+        border-bottom: none;
+      }
+
+      .controls {
+        margin-top: 1.5rem;
+        padding-top: 1.5rem;
+        border-top: 2px solid #555;
+      }
+
+      .key {
+        display: inline-block;
+        background: #444;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        font-family: monospace;
+        font-size: 0.9rem;
+        margin-right: 0.5rem;
+        color: #4fc3f7;
+      }
+
+      strong {
+        color: #4fc3f7;
+      }
+
+      .description {
+        text-align: center;
+        margin-bottom: 2rem;
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Paragrid Isometric Demo</h1>
+      <div class="description">
+        Navigate a 4×4 grid using WASD keys. The yellow cell is your player.
+      </div>
+
+      <div class="demo-area">
+        <div id="canvas"></div>
+        <div id="status">
+          Loading...
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/demo-iso.ts"></script>
+  </body>
+</html>

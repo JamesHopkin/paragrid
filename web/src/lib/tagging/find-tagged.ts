@@ -29,7 +29,7 @@ export function findTaggedCell(
         const cell = row[colIdx];
         const tags = tagFn(cell);
         if (tags.has(tag)) {
-          return new CellPosition(store, grid.id, rowIdx, colIdx);
+          return new CellPosition(grid.id, rowIdx, colIdx);
         }
       }
     }
