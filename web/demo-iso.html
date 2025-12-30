@@ -95,6 +95,28 @@
         margin-bottom: 2rem;
         color: #aaa;
       }
+
+      .export-button {
+        margin-top: 1.5rem;
+        padding: 0.75rem 1.5rem;
+        background: #4fc3f7;
+        color: #1a1a1a;
+        border: none;
+        border-radius: 4px;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.2s;
+      }
+
+      .export-button:hover {
+        background: #81d4fa;
+      }
+
+      .export-button:active {
+        background: #29b6f6;
+      }
     </style>
   </head>
   <body>
@@ -109,6 +131,13 @@
         <div id="status">
           Loading...
         </div>
+      </div>
+
+      <div style="margin-top: 2rem; max-width: 300px; margin-left: auto; margin-right: 0;">
+        <button id="export-scene" class="export-button">Export Scene JSON</button>
+        <p style="color: #aaa; font-size: 0.85rem; margin-top: 0.5rem; text-align: center;">
+          Logs scene to browser console
+        </p>
       </div>
     </div>
 

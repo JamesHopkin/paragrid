@@ -14,6 +14,7 @@ import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { renderGridIsometric } from './lib/renderer/simple-iso.js';
+import { sceneToJSON, type Scene } from 'iso-render';
 
 /**
  * Interactive demo class.
@@ -26,6 +27,7 @@ class IsometricDemo {
   private statusMessage = 'Ready. Use WASD to move.';
   private readonly canvas: HTMLElement;
   private readonly statusEl: HTMLElement;
+  private currentScene: Scene | null = null;
 
   constructor(
     store: GridStore,
@@ -40,6 +42,7 @@ class IsometricDemo {
     this.statusEl = statusEl;
 
     this.setupKeyboardHandlers();
+    this.setupExportButton();
     this.render();
   }
 
@@ -74,6 +77,26 @@ class IsometricDemo {
           break;
       }
     });
+  }
+
+  private setupExportButton(): void {
+    const exportButton = document.getElementById('export-scene');
+    if (exportButton) {
+      exportButton.addEventListener('click', () => {
+        this.exportScene();
+      });
+    }
+  }
+
+  private exportScene(): void {
+    if (!this.currentScene) {
+      console.warn('No scene available to export');
+      return;
+    }
+
+    const json = sceneToJSON(this.currentScene);
+    console.log('Scene JSON:');
+    console.log(json);
   }
 
   private attemptPush(direction: Direction): void {
@@ -148,12 +171,13 @@ class IsometricDemo {
 
     // Render the grid
     try {
-      renderGridIsometric(grid, {
+      const result = renderGridIsometric(grid, {
         width: 800,
         height: 600,
         target: this.canvas,
         highlightPosition: playerPos
       });
+      this.currentScene = result.scene;
     } catch (error) {
       console.error('Render error:', error);
       this.canvas.innerHTML = `<div style="color: red; padding: 20px;">Render error: ${error}</div>`;
@@ -187,7 +211,9 @@ class IsometricDemo {
       <div class="controls">
         <strong>Controls:</strong><br>
         <span class="key">W/A/S/D</span> - Move (Push)<br>
-        <span class="key">R</span> - Reset
+        <span class="key">R</span> - Reset<br>
+        <strong style="margin-top: 0.5rem; display: inline-block;">Export:</strong><br>
+        See button below for scene JSON
       </div>
     `;
 

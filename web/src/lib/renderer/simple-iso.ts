@@ -1,9 +1,12 @@
 /**
  * Simple isometric renderer for paragrid grids.
  * Renders grids directly without analyzer - shows flat checkerboard floor with cubes for concrete cells.
+ *
+ * Checkerboard optimization: Renders one large base square plus half as many small squares for alternating color.
+ * Z-sorting: Floor squares have their center at the back corner, groups have center at cell center.
  */
 
-import { SceneBuilder, Camera, cube, rectangle, project, Renderer } from 'iso-render';
+import { SceneBuilder, Camera, cube, rectangle, project, Renderer, type Scene } from 'iso-render';
 import type { Grid, Cell } from '../core/types.js';
 import { isConcrete, isEmpty } from '../core/types.js';
 import type { CellPosition } from '../core/position.js';
@@ -16,6 +19,13 @@ export interface RenderOptions {
   height: number;
   target: HTMLElement;
   highlightPosition?: CellPosition;
+}
+
+/**
+ * Result of rendering including the scene for serialization.
+ */
+export interface RenderResult {
+  scene: Scene;
 }
 
 /**
@@ -38,7 +48,7 @@ function getGridColor(gridId: string): string {
 export function renderGridIsometric(
   grid: Grid,
   options: RenderOptions
-): void {
+): RenderResult {
   const { width, height, target, highlightPosition } = options;
 
   const builder = new SceneBuilder();
@@ -52,12 +62,29 @@ export function renderGridIsometric(
       ambient: 0.5
     });
 
-  // Create checkerboard floor tiles
-  builder.object('floor-light', rectangle(0.9, 0.9));
-  builder.object('floor-dark', rectangle(0.9, 0.9));
+  // Create floor tiles and content objects
+  // Single large square covering entire grid
+  builder.object('floor-base', rectangle(grid.cols - 0.1, grid.rows - 0.1));
 
-  // Create cube for concrete cells
+  // Floor square with center at back corner for z-sorting
+  // Standard rectangle is centered, so we offset vertices to move origin to back-right corner
+  // Top of screen = highest X, lowest Z
+  const squareSize = 0.9;
+  const halfSize = squareSize / 2;
+  builder.object('floor-square', {
+    type: 'shape',
+    vertices: [
+      [0, 0, 0],                    // back-right (origin)
+      [-squareSize, 0, 0],          // back-left
+      [-squareSize, 0, squareSize], // front-left
+      [0, 0, squareSize]            // front-right
+    ]
+  });
+
+  // Cube for concrete cells
   builder.object('concrete-cube', cube(0.6));
+  // Small debug cube for back edge visualization
+  builder.object('debug-marker', cube(0.15));
 
   const gridColor = getGridColor(grid.id);
   const floorLight = '#3a3a3a';
@@ -67,7 +94,14 @@ export function renderGridIsometric(
   const offsetX = -(grid.cols - 1) / 2;
   const offsetZ = -(grid.rows - 1) / 2;
 
-  // Render each cell
+  // Add base floor - covers entire grid in one color
+  // The base is centered at the grid center
+  builder.instance('floor-base', {
+    position: [0, 0, 0],
+    color: floorDark
+  });
+
+  // Render each cell in a group
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
       const cell = grid.cells[row][col];
@@ -80,24 +114,53 @@ export function renderGridIsometric(
       const x = col + offsetX;
       const z = row + offsetZ;
 
-      // Checkerboard pattern
-      const isLight = (row + col) % 2 === 0;
-      const floorObject = isLight ? 'floor-light' : 'floor-dark';
-      const floorColor = isLight ? floorLight : floorDark;
-
-      // Add floor tile
-      builder.instance(floorObject, {
-        position: [x, 0, z],
-        color: isHighlighted ? '#ffff00' : floorColor
+      // Start a group for this cell - group center is at cell center
+      builder.group(`cell-${row}-${col}`, {
+        position: [x, 0, z]
       });
 
-      // Add concrete cell as floating cube
+      // Checkerboard pattern - only render light squares on top of dark base
+      const isLight = (row + col) % 2 === 0;
+
+      if (isLight) {
+        // Floor square: object origin is at back-right corner, so we offset instance to center the square over the cell
+        // Square extends from -squareSize to 0 in X, and 0 to squareSize in Z
+        // Center is at [-squareSize/2, 0, squareSize/2], so we offset by [+squareSize/2, 0, -squareSize/2]
+        const offsetX = squareSize / 2;
+        const offsetZ = -squareSize / 2;
+        builder.instance('floor-square', {
+          position: [offsetX, 0, offsetZ],
+          color: isHighlighted ? '#ffff00' : floorLight
+        });
+
+        // Debug marker for back edge cells (row = 0)
+        // Position at the object origin (back-right corner = [0, 0, 0] in floor-square local space)
+        if (row === 0) {
+          builder.instance('debug-marker', {
+            position: [offsetX, 0.2, offsetZ],
+            color: '#ff0000'  // Red debug marker
+          });
+        }
+      } else if (isHighlighted) {
+        // For dark squares that are highlighted, we still need to draw them
+        const offsetX = squareSize / 2;
+        const offsetZ = -squareSize / 2;
+        builder.instance('floor-square', {
+          position: [offsetX, 0, offsetZ],
+          color: '#ffff00'
+        });
+      }
+
+      // Add concrete cell as floating cube - positioned at group center
       if (isConcrete(cell)) {
         builder.instance('concrete-cube', {
-          position: [x, 0.3, z],
+          position: [0, 0.3, 0],
           color: isHighlighted ? '#ffaa00' : gridColor
         });
       }
+
+      // End the cell group
+      builder.endGroup();
     }
   }
 
@@ -127,4 +190,6 @@ export function renderGridIsometric(
   });
 
   renderer.render(screenSpace);
+
+  return { scene };
 }
