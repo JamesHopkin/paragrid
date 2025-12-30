@@ -62,3 +62,55 @@ export function findPrimaryRef(
 
   return undefined;
 }
+
+/**
+ * Alias for getCellAtPosition for brevity.
+ */
+export const getCell = getCellAtPosition;
+
+/**
+ * Set a cell at the given position, returning a new GridStore.
+ * The original store is unchanged.
+ *
+ * @param store - The grid store to update
+ * @param position - The position to update
+ * @param newCell - The new cell value
+ * @returns A new GridStore with the updated cell
+ */
+export function setCell(
+  store: GridStore,
+  position: CellPosition,
+  newCell: Cell
+): GridStore {
+  const grid = store[position.gridId];
+  if (!grid) {
+    throw new Error(`Grid not found: ${position.gridId}`);
+  }
+
+  // Create new cells array with the updated cell
+  const newCells = grid.cells.map((row, rowIndex) => {
+    if (rowIndex !== position.row) {
+      return row; // Reuse unchanged rows
+    }
+    return row.map((cell, colIndex) => {
+      if (colIndex !== position.col) {
+        return cell; // Reuse unchanged cells
+      }
+      return newCell; // Replace this cell
+    });
+  });
+
+  // Create new grid
+  const newGrid: Grid = {
+    id: grid.id,
+    cells: newCells,
+    rows: grid.rows,
+    cols: grid.cols,
+  };
+
+  // Return new store with updated grid
+  return {
+    ...store,
+    [grid.id]: newGrid,
+  };
+}
