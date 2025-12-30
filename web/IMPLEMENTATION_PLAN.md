@@ -18,7 +18,7 @@
 
 ## Current Status
 
-### ✅ Completed: Phases 0-6
+### ✅ Completed: Phases 0-7
 - [x] Phase 0: Project setup and dependencies
 - [x] Phase 1: Core types, parser, direction, position (19 tests)
 - [x] Phase 2: DEFERRED - Analysis system (for future rendering)
@@ -26,11 +26,11 @@
 - [x] Phase 4: PushFailure, applyPush/Pull, pushSimple (10 tests)
 - [x] Phase 5: Push with backtracking (3 tests)
 - [x] Phase 6: Swallowing mechanics (11 tests)
-- [x] **44/78 tests passing (56%)**
+- [x] Phase 7: Tagging system (2 tests)
+- [x] **46/78 tests passing (59%)**
 
-### ⏳ Remaining: Phases 7-10
-- Phase 7: Tagging system (2 tests) - NEXT STEP
-- Phase 8: Pull operations (14 tests)
+### ⏳ Remaining: Phases 8-10
+- Phase 8: Pull operations (14 tests) - NEXT STEP
 - Phase 9: Edge cases (7 tests)
 - Phase 10: Polish & documentation
 
@@ -68,8 +68,8 @@ web/
 │   │   │   └── index.ts          ⏳ Barrel exports
 │   │   ├── tagging/
 │   │   │   ├── types.ts          ✅ TagFn type
-│   │   │   ├── find-tagged.ts    ⏳ findTaggedCell()
-│   │   │   └── index.ts          ⏳ Barrel exports
+│   │   │   ├── find-tagged.ts    ✅ findTaggedCell()
+│   │   │   └── index.ts          ✅ Barrel exports
 │   │   ├── utils/
 │   │   │   ├── fraction.ts       ⏳ Rational arithmetic wrapper (for future)
 │   │   │   ├── immutable.ts      ✅ getCellAtPosition, getCell, setCell, findPrimaryRef
@@ -91,7 +91,7 @@ web/
 │   │   ├── push-backtracking.test.ts  ✅ TestPushBacktracking (3 tests)
 │   │   ├── push-swallowing.test.ts    ✅ TestPushSwallowing (11 tests)
 │   │   ├── pull.test.ts          ⏳ TestPull (14 tests)
-│   │   └── tagging.test.ts       ⏳ TestTagging (2 tests)
+│   │   └── tagging.test.ts       ✅ TestTagging (2 tests)
 │   ├── edge-cases/
 │   │   └── edge-cases.test.ts    ⏳ TestEdgeCases (7 tests)
 │   └── test-utils.ts             ⏳ Shared test helpers
@@ -481,26 +481,26 @@ case RefStrategyType.SWALLOW:
 
 ---
 
-### Phase 7: Tagging System ⏳ PENDING
+### Phase 7: Tagging System ✅ COMPLETE
 
 **Duration**: 1-2 hours
-**Status**: ⏳ Not started
-**Tests**: 0/2 tests
+**Status**: ✅ Complete
+**Tests**: 2/2 tests passing
 
 #### Implementation Files
-- [ ] `src/lib/tagging/types.ts` - TagFn type
-  - [ ] TagFn function signature
-  - [ ] Returns Set<string> of tags for position
+- [x] `src/lib/tagging/types.ts` - TagFn type
+  - [x] TagFn function signature
+  - [x] Returns Set<string> of tags for position
 
-- [ ] `src/lib/tagging/find-tagged.ts` - findTaggedCell()
-  - [ ] Search for cell with specific tag
-  - [ ] Search within grid or entire store
-  - [ ] Return position or undefined
+- [x] `src/lib/tagging/find-tagged.ts` - findTaggedCell()
+  - [x] Search for cell with specific tag
+  - [x] Search within grid or entire store
+  - [x] Return position or undefined
 
-- [ ] Integrate tag checking in push/pull
-  - [ ] Check start position for "stop" tag
-  - [ ] Check positions in referenced grids
-  - [ ] Prevent movement of stop-tagged cells
+- [x] Integrate tag checking in push/pull
+  - [x] Check start position for "stop" tag
+  - [x] Check positions in referenced grids
+  - [x] Prevent movement of stop-tagged cells
 
 #### Key Pattern
 ```typescript
@@ -521,20 +521,15 @@ if (tagFn) {
 ```
 
 #### Tests
-- [ ] `test/operations/tagging.test.ts` - TestTagging (2 tests)
-  - [ ] Stop tag terminates traversal
-  - [ ] No tag function continues normally
-  - [ ] Empty tags continues
-  - [ ] Non-stop tags ignored
-  - [ ] Stop tag on ref cell
-  - [ ] Stop tag on empty cell
-  - [ ] Stop tag with multiple tags
+- [x] `test/operations/tagging.test.ts` - TestTagging (2 tests)
+  - [x] Stop tag in referenced grid during push
+  - [x] Stop tagged cell cannot push itself
 
 #### Validation Criteria
-- [ ] 2 new tests passing (56 total)
-- [ ] Stop tags prevent push/pull
-- [ ] Tag function integration works
-- [ ] Tags respected in nested grids
+- [x] 2 new tests passing (46 total)
+- [x] Stop tags prevent push/pull
+- [x] Tag function integration works
+- [x] Tags respected in nested grids
 
 ---
 
@@ -751,9 +746,9 @@ export {
 
 ### Tagging System (Phase 7)
 - [x] Implement TagFn type
-- [ ] Implement findTaggedCell()
-- [ ] Integrate tags in push/pull
-- [ ] Port TestTagging (2 tests)
+- [x] Implement findTaggedCell()
+- [x] Integrate tags in push/pull
+- [x] Port TestTagging (2 tests)
 
 ### Pull Operations (Phase 8)
 - [ ] Implement applyPull() with opposite rotation
@@ -769,8 +764,8 @@ export {
 - [ ] Final verification and cleanup
 
 **Total Tasks**: 67
-**Completed**: 24 (36%)
-**Remaining**: 43 (64%)
+**Completed**: 28 (42%)
+**Remaining**: 39 (58%)
 
 ---
 
@@ -786,10 +781,10 @@ export {
 | TestPush | 10 | ✅ Complete |
 | TestPushBacktracking | 3 | ✅ Complete |
 | TestPushSwallowing | 11 | ✅ Complete |
-| TestTagging | 2 | ⏳ Pending |
+| TestTagging | 2 | ✅ Complete |
 | TestPull | 14 | ⏳ Pending |
 | TestEdgeCases | 7 | ⏳ Pending |
-| **Total** | **78** | **44/78 (56%)** |
+| **Total** | **78** | **46/78 (59%)** |
 
 ---
 
@@ -1026,17 +1021,17 @@ npx tsc --noEmit
 
 ## Next Steps
 
-**Current Focus**: Phase 4 Testing - Port TestPush tests
+**Current Focus**: Phase 8 - Pull Operations
 
 **Immediate Tasks**:
-1. Port TestPush test suite (9 tests) to validate pushSimple implementation
-2. Verify push mechanics work correctly with all test cases
-3. Debug any failures and ensure parity with Python implementation
+1. Implement applyPull() function with opposite rotation
+2. Implement pull() function (simpler than push - no backtracking)
+3. Port TestPull test suite (14 tests)
+4. Verify pull mechanics work correctly with all test cases
 
-**After Phase 4 Testing**:
-- Phase 5: Implement push() with backtracking and decision stack
-- Phase 6: Add SWALLOW strategy support
-- Phases 7-10: Tagging, Pull, Edge cases, Polish
+**After Phase 8**:
+- Phase 9: Port TestEdgeCases (7 tests)
+- Phase 10: Polish, barrel exports, and documentation
 
 ---
 
@@ -1050,5 +1045,5 @@ npx tsc --noEmit
 ---
 
 *Last Updated: 2025-12-30*
-*Status: Phase 6 Complete - 44/78 tests passing (56%)*
-*Next: Phase 7 - Port TestTagging tests (2 tests)*
+*Status: Phase 7 Complete - 46/78 tests passing (59%)*
+*Next: Phase 8 - Implement Pull Operations (14 tests)*
