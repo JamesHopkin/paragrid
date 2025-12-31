@@ -585,6 +585,45 @@ while nav.try_advance():
 
 ---
 
+## Future Improvements
+
+### Per-Strategy Decision Stacks
+
+**Current behavior**: The backtracking algorithm tries all available strategies (SOLID, PORTAL, SWALLOW) at each decision point before backtracking. This creates a per-level alternation where strategies are interleaved at different depths.
+
+**Proposed behavior**: Group backtracking by strategy type. Exhaust all possible paths using a higher-priority strategy (e.g., PORTAL) before considering lower-priority strategies (e.g., SWALLOW).
+
+**Example with layout `'1 main 5|_ _ _|_ _ _'` (self-reference):**
+
+*Current approach (per-level strategy alternation):*
+```
+Level 1: Try SOLID → succeeds, advance to Level 2
+  Level 2: Try SOLID → fails (would hit edge)
+  Level 2: Try SWALLOW → succeeds! (5 swallows into main at [1,2])
+Result: Cell 5 appears at [1,2]
+```
+
+*Proposed approach (per-strategy decision stacks):*
+```
+Try all PORTAL paths first:
+  Level 1: PORTAL → Level 2: PORTAL → ... (exhaustively explore)
+  If any PORTAL path succeeds, done
+
+Only if PORTAL fails, try SWALLOW paths:
+  Level 1: SOLID → Level 2: SWALLOW → succeeds
+Result: Would try PORTAL first (1 enters at [1,0]), only falling back to SWALLOW if needed
+```
+
+**Benefits**:
+- Strategy order becomes a true preference hierarchy rather than just per-decision priority
+- More predictable and intuitive behavior
+- "Portal-first" really means "try all portal paths before any swallow paths"
+- Better separation of strategy semantics (portal = traversal, swallow = consumption)
+
+**Implementation note**: Would require maintaining separate decision stacks per strategy type, exploring each strategy completely before moving to the next.
+
+---
+
 ## Type Notes
 
 - Uses `mypy --strict`

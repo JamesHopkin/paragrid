@@ -23,6 +23,7 @@ from paragrid import (
     Ref,
     RefNode,
     RefStrategy,
+    RefStrategyType,
     RuleSet,
     analyze,
     find_primary_ref,
@@ -846,6 +847,79 @@ class TestPush:
         # Inner should have [A, X]
         assert result["inner"].cells[0][0] == Concrete("A")
         assert result["inner"].cells[0][1] == Concrete("X")
+
+    def test_push_east_with_self_ref_swallow(self) -> None:
+        """Test push east with self-reference and swallow strategy.
+
+        Layout: '1 main 5|_ _ _|_ _ _'
+        Grid: Row 0: [1, main, 5]
+              Row 1: [_, _, _]
+              Row 2: [_, _, _]
+
+        Where 'main' is a self-reference to the grid.
+        This tests the important mechanic where a cell can be swallowed
+        into the same grid it's in, entering at a different position.
+
+        Expected: Cell 5 gets swallowed into main, entering at [1, 2]
+        (middle of right edge when entering from west).
+        """
+        store = parse_grids({"main": "1 main 5|_ _ _|_ _ _"})
+
+        # Verify initial layout
+        assert store["main"].cells[0][0] == Concrete("1")
+        assert store["main"].cells[0][1] == Ref("main")
+        assert store["main"].cells[0][2] == Concrete("5")
+        assert isinstance(store["main"].cells[1][0], Empty)
+        assert isinstance(store["main"].cells[2][0], Empty)
+
+        # Push east from position [0, 0] (cell "1") with default (SOLID first) strategy
+        start = CellPosition("main", 0, 0)
+        result = push(store, start, Direction.E, RuleSet())
+
+        # Should succeed
+        assert isinstance(result, dict), f"Push should succeed, got {result}"
+
+        # Expected outcome with SWALLOW strategy:
+        # Path: [1, main, 5] where main swallows 5
+        # 5 enters main from west at middle right = [1, 2]
+        # Rotation: [_, 1, main] with 5 at [1, 2]
+        assert isinstance(result["main"].cells[0][0], Empty), "Cell [0,0] should be empty"
+        assert result["main"].cells[0][1] == Concrete("1"), "Cell [0,1] should be 1"
+        assert result["main"].cells[0][2] == Ref("main"), "Cell [0,2] should be ref(main)"
+
+        # Cell 5 should have been swallowed into position [1, 2]
+        assert result["main"].cells[1][2] == Concrete("5"), "Cell [1,2] should be 5 (swallowed)"
+
+    def test_push_east_with_self_ref_portal(self) -> None:
+        """Test push east with self-reference using portal strategy.
+
+        Same layout but with PORTAL strategy first, so '1' enters the ref.
+
+        Expected: Cell 1 enters main via the ref, appearing at [1, 0]
+        (middle of left edge when entering from east).
+        """
+        store = parse_grids({"main": "1 main 5|_ _ _|_ _ _"})
+
+        # Push east with PORTAL first strategy
+        start = CellPosition("main", 0, 0)
+        result = push(store, start, Direction.E, RuleSet(ref_strategy=(
+            RefStrategyType.PORTAL,
+            RefStrategyType.SOLID,
+            RefStrategyType.SWALLOW
+        )))
+
+        # Should succeed
+        assert isinstance(result, dict), f"Push should succeed, got {result}"
+
+        # Expected outcome with PORTAL strategy:
+        # 1 enters main from east at middle left = [1, 0]
+        # Rotation: [_, main, 5] with 1 at [1, 0]
+        assert isinstance(result["main"].cells[0][0], Empty), "Cell [0,0] should be empty"
+        assert result["main"].cells[0][1] == Ref("main"), "Cell [0,1] should be ref(main)"
+        assert result["main"].cells[0][2] == Concrete("5"), "Cell [0,2] should be 5"
+
+        # Cell 1 should have entered at position [1, 0]
+        assert result["main"].cells[1][0] == Concrete("1"), "Cell [1,0] should be 1 (entered)"
 
 
 # =============================================================================
