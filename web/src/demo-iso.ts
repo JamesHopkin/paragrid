@@ -307,7 +307,8 @@ class IsometricDemo {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    this.render();
+    // Force rebuild to clear any animation state
+    this.render(true);
   }
 
   /**
