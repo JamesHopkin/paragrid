@@ -416,15 +416,33 @@ Keep `renderGridIsometric` for simple grids, add `renderIsometric` for full Cell
 - `dbf1247` - Implement CellTree-based isometric renderer (Phase 2)
 - `80a9bac` - Add back debug markers for back edge visualization
 
-### Phase 3: Reference Support 🚧 IN PROGRESS
-1. ⬜ Collect unique grids from CellTree
-2. ⬜ Build geometry once per unique grid (Map<gridId, NodeId>)
-3. ⬜ Use ts-poly's `Reference` nodes for `RefNode` instances
-4. ⬜ Handle coordinate transforms (position + scale)
-5. ⬜ Test with simple ref example (non-cyclic)
-6. ⬜ Debug any ts-poly reference issues that arise
+### Phase 3: Reference Support ✅ COMPLETED
+1. ✅ Collect unique grids from CellTree
+2. ✅ Build geometry once per unique grid (Map<gridId, NodeId>)
+3. ✅ Use ts-poly's `Reference` nodes for `RefNode` instances
+4. ✅ Handle coordinate transforms (position + scale)
+5. ✅ Test with simple ref example (non-cyclic)
+6. ✅ Test with self-referencing cycle
 
-**Status**: Not yet started. This is the critical phase that will stress-test ts-poly's reference system.
+**Status**: Reference rendering fully implemented and tested. The three-pass approach works:
+- **Pass 1**: Collect all unique grids from the CellTree
+- **Pass 2**: Build geometry once per unique grid at origin
+- **Pass 3**: Instantiate grids using ts-poly's Reference system with translation/scale transforms
+
+**Key Implementation Details**:
+- Each grid's geometry is built exactly once in `buildGridGeometry()`
+- All instances (including cyclic self-references) use ts-poly's `Reference` nodes
+- Scaling calculated as `1 / (refCols or refRows)` to fit nested grid in parent cell
+- Centering handled via translation offset
+- Cutoff nodes (from threshold) render as nothing, avoiding infinite recursion
+
+**Testing Results**:
+- ✅ Simple non-cyclic reference (main → sub) renders correctly
+- ✅ Self-referencing cycle (main → main) renders with progressive nesting until cutoff
+- ✅ No console errors or warnings
+- ✅ Visual output shows proper scaling and nesting
+
+**Commit**: TBD (current changes)
 
 ### Phase 4: Cycle Testing (1-2 sessions)
 1. ⬜ Test with self-referencing grid (visual verification)
@@ -545,22 +563,22 @@ This design choice is intentional - ts-poly's reference system is relatively unt
 - ✅ Correctly identifies primary references
 - ✅ Passes unit tests for common cases (7/7 tests passing)
 
-🚧 **Renderer** (Phase 2):
+✅ **Renderer** (Phase 2 & 3):
 - ✅ Renders simple grids without refs
 - ✅ Tree traversal working (NestedNode → children)
 - ✅ ConcreteNode renders as cubes
 - ✅ EmptyNode renders floor only
 - ✅ CutoffNode skipped (no visual artifact)
-- ⬜ RefNode rendering (Phase 3 - not yet implemented)
-- ⬜ Uses ts-poly References exclusively (Phase 3)
+- ✅ RefNode rendering (Phase 3 - implemented)
+- ✅ Uses ts-poly References exclusively (Phase 3)
 - ✅ Maintains visual consistency with simple-iso
 
-⬜ **Integration** (Phase 3-5):
+🚧 **Integration** (Phase 3-5):
 - ✅ Demo uses analyze+render pipeline
-- ⬜ Demo works with ref-containing grids
-- ⬜ WASD navigation through refs
-- ⬜ Export scene JSON includes reference structure
-- ⬜ Performance acceptable with many refs
+- ✅ Demo works with ref-containing grids (simple and cyclic refs tested)
+- ⬜ WASD navigation through refs (Phase 4)
+- ⬜ Export scene JSON includes reference structure (Phase 4)
+- ⬜ Performance acceptable with many refs (Phase 4)
 
 ## Open Questions
 

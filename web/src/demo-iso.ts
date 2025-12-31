@@ -228,9 +228,13 @@ class IsometricDemo {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  // Create a simple 4x4 grid with one concrete cell (the player)
+  // Create a test grid with references
+  // main (2x2): [1, 2]
+  //             [sub, 3]
+  // sub (1x2): [4, 5]
   const gridDefinition = {
-    main: '_ _ _ _|_ 1 _ _|_ _ _ _|_ _ _ _'
+    main: '1 _|sub _',
+    sub: '4 _'
   };
 
   const store = parseGrids(gridDefinition);
