@@ -390,36 +390,54 @@ Keep `renderGridIsometric` for simple grids, add `renderIsometric` for full Cell
 
 ## Implementation Plan
 
-### Phase 1: Core Types and Analyze (1-2 sessions)
+### Phase 1: Core Types and Analyze ✅ COMPLETED
 1. ✅ Create `web/src/lib/analyzer/types.ts`
 2. ✅ Create `web/src/lib/analyzer/analyze.ts`
 3. ✅ Port dimensional tracking logic
 4. ✅ Port primary reference tracking
-5. ✅ Add basic tests
+5. ✅ Add basic tests (7/7 passing)
 
-### Phase 2: Renderer Refactor (2-3 sessions)
-1. ✅ Update `renderIsometric` signature to accept `CellNode`
-2. ✅ Implement tree traversal for `NestedNode`
-3. ✅ Handle `ConcreteNode` (existing cube rendering)
-4. ✅ Handle `EmptyNode` (skip or minimal marker)
-5. ✅ Handle `CutoffNode` (special marker or skip)
+**Status**: Analyzer fully implemented and tested. Handles simple grids, references, cycles (self-referencing, mutual references), primary/secondary selection, and threshold cutoff.
 
-### Phase 3: Reference Support (2-3 sessions)
-1. ✅ Implement geometry caching (Map<gridId, NodeId>)
-2. ✅ Use iso-render's `Reference` nodes for `RefNode`
-3. ✅ Handle coordinate transforms (position + scale)
-4. ✅ Test with simple ref example (non-cyclic)
+**Commit**: `d98f212` - Implement grid analyzer with CellTree generation
+
+### Phase 2: Renderer Refactor ✅ COMPLETED
+1. ✅ Create `web/src/lib/renderer/isometric.ts` with new signature accepting `CellNode`
+2. ✅ Implement tree traversal for `NestedNode` (recursive rendering)
+3. ✅ Handle `ConcreteNode` (floating cubes)
+4. ✅ Handle `EmptyNode` (floor only, no content)
+5. ✅ Handle `CutoffNode` (skip rendering for now)
+6. ✅ Update `demo-iso.ts` to use analyze → render pipeline
+7. ✅ Restore debug markers for back edge visualization
+
+**Status**: CellTree-based renderer working. Two-phase pipeline (analyze → render) integrated into demo. Build passes. Ready for visual testing and Phase 3.
+
+**Commits**:
+- `dbf1247` - Implement CellTree-based isometric renderer (Phase 2)
+- `80a9bac` - Add back debug markers for back edge visualization
+
+### Phase 3: Reference Support 🚧 IN PROGRESS
+1. ⬜ Collect unique grids from CellTree
+2. ⬜ Build geometry once per unique grid (Map<gridId, NodeId>)
+3. ⬜ Use ts-poly's `Reference` nodes for `RefNode` instances
+4. ⬜ Handle coordinate transforms (position + scale)
+5. ⬜ Test with simple ref example (non-cyclic)
+6. ⬜ Debug any ts-poly reference issues that arise
+
+**Status**: Not yet started. This is the critical phase that will stress-test ts-poly's reference system.
 
 ### Phase 4: Cycle Testing (1-2 sessions)
-1. ✅ Test with self-referencing grid
-2. ✅ Test with mutual references (A→B→A)
-3. ✅ Test with deep nesting (>5 levels)
-4. ✅ Verify cutoff behavior (visual markers)
+1. ⬜ Test with self-referencing grid (visual verification)
+2. ⬜ Test with mutual references (A→B→A)
+3. ⬜ Test with deep nesting (>5 levels)
+4. ⬜ Verify cutoff behavior (CutoffNode appears as expected)
+5. ⬜ Performance testing with many references
 
-### Phase 5: Integration (1 session)
-1. ✅ Update `demo-iso.ts` to use analyze+render pipeline
-2. ✅ Add example with references to demo
-3. ✅ Test interactive demo with ref-containing grids
+### Phase 5: Polish and Documentation (1 session)
+1. ⬜ Add example with references to demo
+2. ⬜ Test interactive demo with ref-containing grids (WASD navigation)
+3. ⬜ Document any ts-poly reference limitations discovered
+4. ⬜ Add visual markers for CutoffNode (optional debug mode)
 
 ## Testing Strategy
 
@@ -521,22 +539,28 @@ This design choice is intentional - ts-poly's reference system is relatively unt
 
 ## Success Criteria
 
-✅ **Analyzer**:
-- Produces CellTree matching Python structure
-- Handles cycles via threshold cutoff
-- Correctly identifies primary references
-- Passes unit tests for common cases
+✅ **Analyzer** (Phase 1):
+- ✅ Produces CellTree matching Python structure
+- ✅ Handles cycles via threshold cutoff
+- ✅ Correctly identifies primary references
+- ✅ Passes unit tests for common cases (7/7 tests passing)
 
-✅ **Renderer**:
-- Renders simple grid with refs (non-cyclic)
-- Renders cyclic refs with visible cutoff
-- Uses iso-render References (or duplicates geometry if needed)
-- Maintains visual consistency with simple-iso
+🚧 **Renderer** (Phase 2):
+- ✅ Renders simple grids without refs
+- ✅ Tree traversal working (NestedNode → children)
+- ✅ ConcreteNode renders as cubes
+- ✅ EmptyNode renders floor only
+- ✅ CutoffNode skipped (no visual artifact)
+- ⬜ RefNode rendering (Phase 3 - not yet implemented)
+- ⬜ Uses ts-poly References exclusively (Phase 3)
+- ✅ Maintains visual consistency with simple-iso
 
-✅ **Integration**:
-- Demo works with ref-containing grids
-- WASD navigation through refs
-- Export scene JSON includes reference structure
+⬜ **Integration** (Phase 3-5):
+- ✅ Demo uses analyze+render pipeline
+- ⬜ Demo works with ref-containing grids
+- ⬜ WASD navigation through refs
+- ⬜ Export scene JSON includes reference structure
+- ⬜ Performance acceptable with many refs
 
 ## Open Questions
 
