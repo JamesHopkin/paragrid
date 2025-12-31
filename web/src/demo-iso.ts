@@ -13,7 +13,8 @@ import { createRuleSet } from './lib/operations/rules.js';
 import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
-import { renderGridIsometric } from './lib/renderer/simple-iso.js';
+import { analyze } from './lib/analyzer/index.js';
+import { renderIsometric } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene } from 'iso-render';
 
 /**
@@ -46,7 +47,7 @@ class IsometricDemo {
     this.render();
   }
 
-  private get playerPosition(): CellPosition | null {
+  private get playerPosition(): CellPosition | null | undefined {
     return findTaggedCell(this.store, this.playerTag, this.tagFn);
   }
 
@@ -169,9 +170,13 @@ class IsometricDemo {
       return;
     }
 
-    // Render the grid
+    // Analyze and render the grid
     try {
-      const result = renderGridIsometric(grid, {
+      // Phase 1: Analyze grid to build CellTree
+      const cellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+
+      // Phase 2: Render CellTree to isometric scene
+      const result = renderIsometric(cellTree, {
         width: 800,
         height: 600,
         target: this.canvas,
