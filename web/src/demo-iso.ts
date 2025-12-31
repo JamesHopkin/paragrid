@@ -40,6 +40,7 @@ class IsometricDemo {
   private isAnimating: boolean = false;
   private readonly renderWidth = 800;
   private readonly renderHeight = 600;
+  private readonly allowRapidInput = true; // Set to true to cancel animations on new input
 
   constructor(
     store: GridStore,
@@ -116,9 +117,15 @@ class IsometricDemo {
   }
 
   private attemptPush(direction: Direction): void {
-    // Prevent input during animation
+    // Handle input during animation based on allowRapidInput setting
     if (this.isAnimating) {
-      return;
+      if (this.allowRapidInput) {
+        // Cancel current animation and proceed with new input
+        this.cancelCurrentAnimation();
+      } else {
+        // Block input during animation
+        return;
+      }
     }
 
     const playerPos = this.playerPosition;
@@ -263,13 +270,18 @@ class IsometricDemo {
           for (const match of matches) {
             if (this.isSingleSquareMovement(match.position, newPos)) {
               oldPos = match.position;
-              cellKey = `concrete:${newCell.id}`;
+              cellKey = `concrete-${newCell.id}`;
               break;
             }
           }
         } else if (newCell.type === 'ref') {
-          // For reference cells, match by gridId
-          const matches = oldSnapshot.filter(s => s.cell.type === 'ref' && s.cell.gridId === newCell.gridId);
+          // For reference cells, match by gridId AND isPrimary
+          // This ensures we distinguish between multiple refs to the same grid
+          const matches = oldSnapshot.filter(s =>
+            s.cell.type === 'ref' &&
+            s.cell.gridId === newCell.gridId &&
+            s.cell.isPrimary === newCell.isPrimary
+          );
           const exactMatch = matches.find(m => m.position.row === newPos.row && m.position.col === newPos.col);
 
           if (exactMatch) {
@@ -281,7 +293,10 @@ class IsometricDemo {
           for (const match of matches) {
             if (this.isSingleSquareMovement(match.position, newPos)) {
               oldPos = match.position;
-              cellKey = `ref:${newCell.gridId}:${newPos.row}:${newPos.col}`;
+              const primarySuffix = newCell.isPrimary === true ? 'primary' :
+                                    newCell.isPrimary === false ? 'secondary' :
+                                    'auto';
+              cellKey = `ref-${newCell.gridId}-${primarySuffix}`;
               break;
             }
           }
@@ -297,18 +312,26 @@ class IsometricDemo {
     return movements;
   }
 
-  private reset(): void {
-    this.store = this.originalStore;
-    this.statusMessage = 'Grid reset to original state';
-    this.previousPlayerPosition = this.playerPosition ?? null;
+  /**
+   * Cancel any currently running animation.
+   */
+  private cancelCurrentAnimation(): void {
     this.animationSystem.stop();
     this.isAnimating = false;
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    // Force rebuild to clear any animation state
+    // Force render to show the final state
     this.render(true);
+  }
+
+  private reset(): void {
+    this.store = this.originalStore;
+    this.statusMessage = 'Grid reset to original state';
+    this.previousPlayerPosition = this.playerPosition ?? null;
+    this.cancelCurrentAnimation();
+    this.render();
   }
 
   /**
@@ -350,7 +373,7 @@ class IsometricDemo {
     }> = [];
 
     for (const movement of movements) {
-      const { oldPos, newPos } = movement;
+      const { cellId, oldPos, newPos } = movement;
 
       // The content group is positioned at [0, 0, 0] relative to its parent cell group
       // The parent cell group is positioned at the NEW cell's world coordinates
@@ -362,8 +385,10 @@ class IsometricDemo {
       ];
       const targetPos: [number, number, number] = [0, 0, 0]; // End at natural position
 
-      // The root grid is rendered directly with content group IDs: root-cell-row-col-content
-      const contentGroupId = `root-cell-${newPos.row}-${newPos.col}-content`;
+      // Use the content-based ID so animations work across root and templates
+      const contentGroupId = cellId;
+
+      console.log(`Creating animation for ${contentGroupId}: [${relativeOffset}] -> [${targetPos}]`);
 
       animations.push({
         nodeId: contentGroupId,
@@ -594,7 +619,7 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 1 _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
       // main: "_ _ _|1 _ main|_ _ _"

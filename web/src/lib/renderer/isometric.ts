@@ -12,7 +12,7 @@ import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } fr
 import type { CellPosition } from '../core/position.js';
 import type { GridStore } from '../core/types.js';
 import type { TagFn } from '../tagging/types.js';
-import { Concrete } from '../core/types.js';
+import { Concrete, isRef, getGrid } from '../core/types.js';
 import { getGridColor } from './colors.js';
 
 /**
@@ -280,6 +280,7 @@ function renderGridDirect(
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
+  const grid = getGrid(store, node.gridId);
 
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
@@ -309,8 +310,26 @@ function renderGridDirect(
         });
       }
 
-      // Create a content group that can be animated independently of the floor
-      const contentGroupId = `root-cell-${row}-${col}-content`;
+      // Create a content group with content-based ID for animations
+      let contentGroupId: string;
+      if (isConcreteNode(child)) {
+        contentGroupId = `concrete-${child.id}`;
+      } else if (isRefNode(child)) {
+        const cell = grid?.cells[row]?.[col];
+        if (cell && isRef(cell)) {
+          const primarySuffix = cell.isPrimary === true ? 'primary' :
+                                cell.isPrimary === false ? 'secondary' :
+                                'auto';
+          // Use cell.gridId (from grid store) not child.gridId (from CellNode tree)
+          // because the tree may have the wrong gridId for teleporting references
+          contentGroupId = `ref-${cell.gridId}-${primarySuffix}`;
+        } else {
+          contentGroupId = `ref-${child.gridId}-${row}-${col}`;
+        }
+      } else {
+        contentGroupId = `empty-${row}-${col}`;
+      }
+
       builder.group(contentGroupId, {
         position: [0, 0, 0]
       });
