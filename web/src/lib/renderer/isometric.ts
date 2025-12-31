@@ -6,10 +6,13 @@
  * an isometric scene with checkerboard floors and floating cubes.
  */
 
-import { SceneBuilder, Camera, cube, project, Renderer, type Scene } from 'iso-render';
+import { SceneBuilder, Camera, cube, octahedron, project, Renderer, type Scene } from 'iso-render';
 import type { CellNode, NestedNode, ConcreteNode, RefNode } from '../analyzer/types.js';
 import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } from '../analyzer/types.js';
 import type { CellPosition } from '../core/position.js';
+import type { GridStore } from '../core/types.js';
+import type { TagFn } from '../tagging/types.js';
+import { Concrete } from '../core/types.js';
 import { getGridColor } from './colors.js';
 
 /**
@@ -20,6 +23,8 @@ export interface RenderOptions {
   height: number;
   target: HTMLElement;
   highlightPosition?: CellPosition;
+  store: GridStore;
+  tagFn: TagFn;
 }
 
 /**
@@ -44,7 +49,7 @@ export function renderIsometric(
   root: CellNode,
   options: RenderOptions
 ): RenderResult {
-  const { width, height, target, highlightPosition } = options;
+  const { width, height, target, highlightPosition, store, tagFn } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -74,10 +79,30 @@ export function renderIsometric(
     ]
   });
 
-  builder.object('concrete-cube', cube(0.6));
+  builder.object('concrete-cube', cube(0.8));
+  builder.object('player-octahedron', octahedron(0.8));
 
-  const floorLight = '#3a3a3a';
-  const floorDark = '#2a2a2a';
+  // Half-height box for 'stop' tagged cells (broader than regular cubes)
+  const halfHeight = 0.3;
+  const boxSize = 0.9;
+  const half = boxSize / 2;
+  builder.object('stop-box', {
+    type: 'solid',
+    faces: [
+      // Bottom
+      { vertices: [[-half, 0, -half], [half, 0, -half], [half, 0, half], [-half, 0, half]] },
+      // Top
+      { vertices: [[-half, halfHeight, -half], [-half, halfHeight, half], [half, halfHeight, half], [half, halfHeight, -half]] },
+      // Front
+      { vertices: [[half, 0, half], [half, halfHeight, half], [-half, halfHeight, half], [-half, 0, half]] },
+      // Back
+      { vertices: [[-half, 0, -half], [-half, halfHeight, -half], [half, halfHeight, -half], [half, 0, -half]] },
+      // Left
+      { vertices: [[-half, 0, half], [-half, halfHeight, half], [-half, halfHeight, -half], [-half, 0, -half]] },
+      // Right
+      { vertices: [[half, 0, -half], [half, halfHeight, -half], [half, halfHeight, half], [half, 0, half]] }
+    ]
+  });
 
   // PASS 1: Collect all unique NestedNode instances by object identity
   // This is critical for cycles: each depth level is a different instance
@@ -107,10 +132,12 @@ export function renderIsometric(
   // For a self-referencing grid, we encounter: depth-0, depth-1, depth-2, ...
   // But we must build: depth-2, depth-1, depth-0 (leaves first)
   const nodesToBuild = Array.from(nodeToTemplateId.keys());
+
   for (let i = nodesToBuild.length - 1; i >= 0; i--) {
     const node = nodesToBuild[i];
     const templateId = nodeToTemplateId.get(node)!;
-    buildGridTemplate(node, templateId, builder, floorLight, squareSize, nodeToTemplateId);
+    const floorColors = getFloorColors(node.gridId);
+    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn);
   }
 
   // Get root grid dimensions
@@ -134,10 +161,11 @@ export function renderIsometric(
   const offsetX = -(cols - 1) / 2;
   const offsetZ = -(rows - 1) / 2;
 
-  // Add base floor
+  // Add base floor with root grid's dark color
+  const rootFloorColors = getFloorColors(root.gridId);
   builder.instance('floor-base', {
     position: [baseWidth / 2, 0, -baseHeight / 2],
-    color: floorDark
+    color: rootFloorColors.dark
   });
 
   // PASS 3: Render the root grid using template reference
@@ -156,12 +184,12 @@ export function renderIsometric(
 
   // Setup camera
   const maxDim = Math.max(rows, cols);
-  const scale = Math.min(width, height) / (maxDim * 1.5);
+  const scale = Math.min(width, height) / (maxDim * 1.2);
 
-  const camera = Camera.trueIsometric(scale, [
-    width / 2 - 370,
-    height / 2 - 340
-  ]);
+  const camera = Camera.custom({ 
+    yaw: 50, pitch: 30, groundScale: 1.0, heightScale: 1.0, scale,
+    offset: [width / 2 - 370, height / 2 - 340]
+  });
 
   // Project to screen space
   const screenSpace = project(scene, camera, width, height);
@@ -180,19 +208,40 @@ export function renderIsometric(
 }
 
 /**
+ * Get floor colors for a grid based on its ID.
+ * Returns { light, dark } for checkerboard pattern.
+ * Main grid gets dark grey, others get distinct bright colors with strong tints.
+ */
+function getFloorColors(gridId: string): { light: string; dark: string } {
+  // Color palette per grid name
+  const gridColors: Record<string, { light: string; dark: string }> = {
+    'main': { light: '#3a3a3a', dark: '#0a0a0a' },     // Subdued grey
+    'inner': { light: '#3a5a7a', dark: '#051020' },    // Dark blue - strong blue tint
+    'a': { light: '#3a5a7a', dark: '#051020' },        // Dark blue - strong blue tint
+    'b': { light: '#6a3a6a', dark: '#100510' },        // Dark purple - strong purple tint
+    'c': { light: '#6a6a3a', dark: '#101005' },        // Dark olive - strong olive tint
+    'd': { light: '#7a3a3a', dark: '#200505' },        // Dark red - strong red tint
+    'e': { light: '#3a7a5a', dark: '#052010' },        // Dark teal - strong teal tint
+    'f': { light: '#7a5a3a', dark: '#201005' },        // Dark brown - strong brown tint
+  };
+
+  return gridColors[gridId] || { light: '#7a7a3a', dark: '#202005' };
+}
+
+/**
  * Get color for a concrete cell based on its ID.
- * Uses distinct colors to highlight the fractal structure.
+ * Uses light pastel colors for objects.
  */
 function getCellColor(cellId: string): string {
   const colors: Record<string, string> = {
-    '1': '#ff6b6b', // Red
-    '2': '#4ecdc4', // Cyan
-    '3': '#ffe66d', // Yellow
-    '4': '#a8e6cf', // Mint
-    '5': '#ff8b94', // Pink
-    '6': '#c7ceea', // Lavender
-    '7': '#ffd3b6', // Peach
-    '8': '#dcedc1', // Light green
+    '1': '#ffb3ba', // Light red/pink
+    '2': '#bae1ff', // Light blue
+    '3': '#ffffba', // Light yellow
+    '4': '#baffc9', // Light mint
+    '5': '#ffdfba', // Light peach
+    '6': '#e0bfff', // Light lavender
+    '7': '#ffd4e5', // Light rose
+    '8': '#d4f4dd', // Light green
   };
   return colors[cellId] || getGridColor(cellId);
 }
@@ -208,17 +257,21 @@ function getCellColor(cellId: string): string {
  * @param node - NestedNode instance to build template for
  * @param templateId - Unique ID for this template
  * @param builder - Scene builder
- * @param floorLight - Light floor color
+ * @param floorColors - Floor colors for this grid's checkerboard (light and dark)
  * @param squareSize - Size of floor squares
  * @param nodeToTemplateId - Map from NestedNode instances to their template IDs
+ * @param store - Grid store for looking up cells
+ * @param tagFn - Tag function to check cell tags
  */
 function buildGridTemplate(
   node: NestedNode,
   templateId: string,
   builder: SceneBuilder,
-  floorLight: string,
+  floorColors: { light: string; dark: string },
   squareSize: number,
-  nodeToTemplateId: Map<NestedNode, string>
+  nodeToTemplateId: Map<NestedNode, string>,
+  store: GridStore,
+  tagFn: TagFn
 ): void {
   builder.template(templateId);
 
@@ -239,23 +292,46 @@ function buildGridTemplate(
         position: [x, 0, z]
       });
 
-      // Render floor (checkerboard pattern)
+      // Render floor (checkerboard pattern) - skip for RefNodes
       const isLight = (row + col) % 2 === 0;
       const floorOffsetX = squareSize / 2;
       const floorOffsetZ = -squareSize / 2;
 
-      if (isLight) {
+      // Don't render floor tile if this cell contains a reference
+      if (isLight && !isRefNode(child)) {
         builder.instance('floor-square', {
           position: [floorOffsetX, 0, floorOffsetZ],
-          color: floorLight
+          color: floorColors.light
         });
       }
 
       // Render cell content
       if (isConcreteNode(child)) {
-        builder.instance('concrete-cube', {
-          position: [0, 0.3, 0],
-          color: getCellColor(child.id)
+        // Check tags for this cell
+        const cell = Concrete(child.id);
+        const tags = tagFn(cell);
+        const hasPlayer = tags.has('player');
+        const hasStop = tags.has('stop');
+
+        let objectType = 'concrete-cube';
+        let yPos = 0.3;
+        let color = getCellColor(child.id);
+
+        if (hasStop) {
+          objectType = 'stop-box';
+          yPos = 0; // Bottom touching the floor
+          color = '#4a3a5a'; // Purple-ish dark grey
+        }
+
+        if (hasPlayer) {
+          objectType = 'player-octahedron';
+          yPos = 0.3;
+          // Keep the cell's normal color
+        }
+
+        builder.instance(objectType, {
+          position: [0, yPos, 0],
+          color: color
         });
       } else if (isRefNode(child) && isNestedNode(child.content)) {
         // Reference the SPECIFIC nested instance's template

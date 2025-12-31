@@ -8,7 +8,7 @@ import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
 import type { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
-import { pushSimple } from './lib/operations/push.js';
+import { push } from './lib/operations/push.js';
 import { createRuleSet } from './lib/operations/rules.js';
 import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
@@ -109,7 +109,9 @@ class IsometricDemo {
       return;
     }
 
-    const result = pushSimple(
+    console.log(`Attempting push ${direction} from ${playerPos.gridId}[${playerPos.row}, ${playerPos.col}]`);
+
+    const result = push(
       this.store,
       playerPos,
       direction,
@@ -119,6 +121,7 @@ class IsometricDemo {
 
     if (this.isPushFailure(result)) {
       // Push failed
+      console.log('Push failed:', result);
       this.statusMessage = `❌ Push ${direction} failed: ${result.reason}`;
       if (result.details) {
         this.statusMessage += ` (${result.details})`;
@@ -130,6 +133,7 @@ class IsometricDemo {
       // Find new player position
       const newPos = this.playerPosition;
       if (newPos) {
+        console.log(`Push succeeded! New position: ${newPos.gridId}[${newPos.row}, ${newPos.col}]`);
         this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
       } else {
         this.statusMessage = '✓ Push succeeded but player lost!';
@@ -180,7 +184,9 @@ class IsometricDemo {
         width: 800,
         height: 600,
         target: this.canvas,
-        highlightPosition: playerPos
+        highlightPosition: playerPos,
+        store: this.store,
+        tagFn: this.tagFn
       });
       this.currentScene = result.scene;
     } catch (error) {
@@ -228,21 +234,32 @@ class IsometricDemo {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  // Create a complex test grid with self-reference (recursive fractal!)
-  // main (3x3): [1, 2, 3]
-  //             [4, main, 5]  <- main references itself!
-  //             [6, 7, 8]
-  // This creates a recursive fractal pattern that terminates via dimension threshold
+  // Test 4x4 with self-reference and inner reference
+  // main:  [9, 9, 9, 9]
+  //        [9, 1, main, 9]    <- player and self-reference
+  //        [9, *inner, 2, 9]  <- inner reference
+  //        [9, 9, 9, 9]
+  //
+  // inner: [9, _, 9]          <- gap at top middle
+  //        [9, _, 9]
+  //        [9, 9, 9]
   const gridDefinition = {
-    main: '1 2 3|4 main 5|6 7 8'
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   };
+  
 
   const store = parseGrids(gridDefinition);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
-    if (isConcrete(cell) && cell.id === '1') {
-      return new Set(['player']);
+    if (isConcrete(cell)) {
+      if (cell.id === '1') {
+        return new Set(['player']);
+      }
+      if (cell.id === '9') {
+        return new Set(['stop']);
+      }
     }
     return new Set();
   };
