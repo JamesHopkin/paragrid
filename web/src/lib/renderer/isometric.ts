@@ -10,6 +10,7 @@ import { SceneBuilder, Camera, cube, project, Renderer, type Scene } from 'iso-r
 import type { CellNode, NestedNode, ConcreteNode, RefNode } from '../analyzer/types.js';
 import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } from '../analyzer/types.js';
 import type { CellPosition } from '../core/position.js';
+import { getGridColor } from './colors.js';
 
 /**
  * Render options for the isometric renderer.
@@ -26,20 +27,6 @@ export interface RenderOptions {
  */
 export interface RenderResult {
   scene: Scene;
-}
-
-/**
- * Get a color for a grid based on its ID.
- */
-function getGridColor(gridId: string): string {
-  // Simple hash-based color generation
-  let hash = 0;
-  for (let i = 0; i < gridId.length; i++) {
-    hash = gridId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-
-  const hue = Math.abs(hash % 360);
-  return `hsl(${hue}, 70%, 60%)`;
 }
 
 /**
@@ -68,7 +55,7 @@ export function renderIsometric(
 
   // Setup background and lighting
   builder
-    .background({ type: 'solid', color: '#2a2a2a' })
+    .background({ type: 'solid', color: '#20a0e0' })
     .light({
       direction: [1, 2, 1],
       color: '#ffffff',
@@ -92,29 +79,39 @@ export function renderIsometric(
   const floorLight = '#3a3a3a';
   const floorDark = '#2a2a2a';
 
-  // PASS 1: Collect all unique grids
-  const uniqueGrids = new Set<string>();
-  collectUniqueGrids(root, uniqueGrids);
+  // PASS 1: Collect all unique NestedNode instances by object identity
+  // This is critical for cycles: each depth level is a different instance
+  const nodeToTemplateId = new Map<NestedNode, string>();
+  let templateCounter = 0;
 
-  // PASS 2: Build geometry once per unique grid
-  const geometryGroups = new Map<string, string>();
-
-  // We need to walk the tree to find NestedNodes and build their geometry
-  function buildAllGeometry(node: CellNode): void {
+  function collectNodes(node: CellNode): void {
     if (isNestedNode(node)) {
-      buildGridGeometry(node, builder, floorLight, squareSize, geometryGroups);
-      // Recursively build geometry for children
+      if (!nodeToTemplateId.has(node)) {
+        nodeToTemplateId.set(node, `grid-template-${templateCounter++}`);
+      }
+      // Recurse into children to collect nested instances
       for (const row of node.children) {
         for (const child of row) {
-          buildAllGeometry(child);
+          collectNodes(child);
         }
       }
     } else if (isRefNode(node)) {
-      buildAllGeometry(node.content);
+      collectNodes(node.content);
     }
   }
 
-  buildAllGeometry(root);
+  collectNodes(root);
+
+  // PASS 2: Build templates for all unique NestedNode instances
+  // CRITICAL: Build in REVERSE order so child templates exist before parents reference them
+  // For a self-referencing grid, we encounter: depth-0, depth-1, depth-2, ...
+  // But we must build: depth-2, depth-1, depth-0 (leaves first)
+  const nodesToBuild = Array.from(nodeToTemplateId.keys());
+  for (let i = nodesToBuild.length - 1; i >= 0; i--) {
+    const node = nodesToBuild[i];
+    const templateId = nodeToTemplateId.get(node)!;
+    buildGridTemplate(node, templateId, builder, floorLight, squareSize, nodeToTemplateId);
+  }
 
   // Get root grid dimensions
   const rows = root.children.length;
@@ -143,10 +140,16 @@ export function renderIsometric(
     color: floorDark
   });
 
-  // PASS 3: Render grid contents recursively using old approach for now
-  // TODO: Eventually this should use references everywhere, but for now we
-  // keep the old rendering and add ref support incrementally
-  renderNestedNode(root, builder, offsetX, offsetZ, floorLight, squareSize, highlightPosition, geometryGroups);
+  // PASS 3: Render the root grid using template reference
+  const rootTemplateId = nodeToTemplateId.get(root);
+  if (!rootTemplateId) {
+    throw new Error('Root template not found');
+  }
+
+  builder.reference(rootTemplateId, {
+    translation: [offsetX, 0, offsetZ],
+    scale: [1, 1, 1]
+  });
 
   // Build scene
   const scene = builder.build();
@@ -177,109 +180,47 @@ export function renderIsometric(
 }
 
 /**
- * Render a NestedNode's children.
+ * Get color for a concrete cell based on its ID.
+ * Uses distinct colors to highlight the fractal structure.
  */
-function renderNestedNode(
-  node: NestedNode,
-  builder: SceneBuilder,
-  offsetX: number,
-  offsetZ: number,
-  floorLight: string,
-  squareSize: number,
-  highlightPosition: CellPosition | undefined,
-  geometryGroups: Map<string, string>
-): void {
-  const gridColor = getGridColor(node.gridId);
-
-  for (let row = 0; row < node.children.length; row++) {
-    for (let col = 0; col < node.children[row].length; col++) {
-      const child = node.children[row][col];
-      const isHighlighted = highlightPosition &&
-                           highlightPosition.gridId === node.gridId &&
-                           highlightPosition.row === row &&
-                           highlightPosition.col === col;
-
-      // Position in 3D space
-      const x = col + offsetX;
-      const z = row + offsetZ;
-
-      // Start a group for this cell
-      builder.group(`cell-${node.gridId}-${row}-${col}`, {
-        position: [x, 0, z]
-      });
-
-      // Render floor (checkerboard pattern)
-      const isLight = (row + col) % 2 === 0;
-      const floorOffsetX = squareSize / 2;
-      const floorOffsetZ = -squareSize / 2;
-
-      if (isLight) {
-        builder.instance('floor-square', {
-          position: [floorOffsetX, 0, floorOffsetZ],
-          color: isHighlighted ? '#ffff00' : floorLight
-        });
-      } else if (isHighlighted) {
-        builder.instance('floor-square', {
-          position: [floorOffsetX, 0, floorOffsetZ],
-          color: '#ffff00'
-        });
-      }
-
-      // Render cell content
-      renderCellNode(child, builder, gridColor, isHighlighted, geometryGroups);
-
-      builder.endGroup();
-    }
-  }
+function getCellColor(cellId: string): string {
+  const colors: Record<string, string> = {
+    '1': '#ff6b6b', // Red
+    '2': '#4ecdc4', // Cyan
+    '3': '#ffe66d', // Yellow
+    '4': '#a8e6cf', // Mint
+    '5': '#ff8b94', // Pink
+    '6': '#c7ceea', // Lavender
+    '7': '#ffd3b6', // Peach
+    '8': '#dcedc1', // Light green
+  };
+  return colors[cellId] || getGridColor(cellId);
 }
 
 /**
- * Collect all unique grid IDs from the cell tree.
- * This is the first pass of the three-pass reference rendering approach.
+ * Build a template for a unique NestedNode instance.
+ * Uses ts-poly's template system to create reusable geometry that's not in the visible scene graph.
  *
- * @param node - Root node to collect from
- * @param grids - Set to accumulate unique grid IDs
- */
-function collectUniqueGrids(node: CellNode, grids: Set<string>): void {
-  if (isNestedNode(node)) {
-    grids.add(node.gridId);
-    for (const row of node.children) {
-      for (const child of row) {
-        collectUniqueGrids(child, grids);
-      }
-    }
-  } else if (isRefNode(node)) {
-    collectUniqueGrids(node.content, grids);
-  }
-}
-
-/**
- * Build geometry for a single grid at the origin.
- * This geometry will be reused via references for all instances of this grid.
+ * CRITICAL: Each NestedNode instance (by object identity) gets its own template.
+ * For cycles, this means depth 0, depth 1, depth 2, etc. each get separate templates
+ * that reference each other, with no actual cycles in the template system.
  *
- * @param node - NestedNode representing the grid
+ * @param node - NestedNode instance to build template for
+ * @param templateId - Unique ID for this template
  * @param builder - Scene builder
  * @param floorLight - Light floor color
  * @param squareSize - Size of floor squares
- * @param geometryGroups - Map tracking built geometry
- * @returns The group ID for this grid's geometry
+ * @param nodeToTemplateId - Map from NestedNode instances to their template IDs
  */
-function buildGridGeometry(
+function buildGridTemplate(
   node: NestedNode,
+  templateId: string,
   builder: SceneBuilder,
   floorLight: string,
   squareSize: number,
-  geometryGroups: Map<string, string>
-): string {
-  // Check if already built
-  if (geometryGroups.has(node.gridId)) {
-    return geometryGroups.get(node.gridId)!;
-  }
-
-  const groupId = `grid-geom-${node.gridId}`;
-  const gridColor = getGridColor(node.gridId);
-
-  builder.group(groupId, { position: [0, 0, 0] });
+  nodeToTemplateId: Map<NestedNode, string>
+): void {
+  builder.template(templateId);
 
   // Render grid contents at origin (no offset)
   const rows = node.children.length;
@@ -294,7 +235,7 @@ function buildGridGeometry(
       const z = row;
 
       // Start a group for this cell
-      builder.group(`${groupId}-cell-${row}-${col}`, {
+      builder.group(`${templateId}-cell-${row}-${col}`, {
         position: [x, 0, z]
       });
 
@@ -310,80 +251,43 @@ function buildGridGeometry(
         });
       }
 
-      // Render cell content (concrete cells only for now - refs handled in instantiation)
+      // Render cell content
       if (isConcreteNode(child)) {
         builder.instance('concrete-cube', {
           position: [0, 0.3, 0],
-          color: gridColor
+          color: getCellColor(child.id)
         });
+      } else if (isRefNode(child) && isNestedNode(child.content)) {
+        // Reference the SPECIFIC nested instance's template
+        const nestedTemplateId = nodeToTemplateId.get(child.content);
+        if (!nestedTemplateId) {
+          console.error(`Template not found for nested grid: ${child.content.gridId}`);
+        } else {
+          const refRows = child.content.children.length;
+          const refCols = child.content.children[0]?.length || 0;
+
+          // The referenced grid should fill the current cell (which is 1x1 in local space)
+          const scaleX = 1 / refCols;
+          const scaleZ = 1 / refRows;
+          // Y-scale is the reciprocal of max dimension to keep cubes cubic
+          const scaleY = 1 / Math.max(refCols, refRows);
+
+          // Center the grid within the cell
+          const offsetX = -(refCols - 1) / 2 * scaleX;
+          const offsetZ = -(refRows - 1) / 2 * scaleZ;
+
+          builder.reference(nestedTemplateId, {
+            translation: [offsetX, 0, offsetZ],
+            scale: [scaleX, scaleY, scaleZ]
+          });
+        }
       }
-      // Empty, Cutoff, and Ref nodes don't add geometry here
-      // Refs will be instantiated in the third pass
+      // Empty and Cutoff nodes don't add geometry
 
       builder.endGroup();
     }
   }
 
-  builder.endGroup();
-  geometryGroups.set(node.gridId, groupId);
-  return groupId;
+  builder.endTemplate();
 }
 
-/**
- * Render an individual cell node using ts-poly references for RefNodes.
- *
- * CRITICAL: RefNodes MUST use ts-poly's Reference system - NEVER duplicate geometry.
- */
-function renderCellNode(
-  node: CellNode,
-  builder: SceneBuilder,
-  gridColor: string,
-  isHighlighted: boolean | undefined,
-  geometryGroups: Map<string, string>
-): void {
-  if (isConcreteNode(node)) {
-    // Render concrete cell as cube
-    builder.instance('concrete-cube', {
-      position: [0, 0.3, 0],
-      color: isHighlighted === true ? '#ffaa00' : gridColor
-    });
-  } else if (isEmptyNode(node)) {
-    // Empty - no content to render
-  } else if (isCutoffNode(node)) {
-    // Cutoff - render nothing for now
-    // TODO: Could add a small marker or different floor color
-  } else if (isRefNode(node)) {
-    // CRITICAL: Use ts-poly's Reference system to instantiate the referenced grid
-    const targetGeomId = geometryGroups.get(node.refTarget);
-    if (!targetGeomId) {
-      console.error(`Geometry not built for referenced grid: ${node.refTarget}`);
-      return;
-    }
-
-    // Get dimensions of the referenced grid from its content
-    if (isNestedNode(node.content)) {
-      const refRows = node.content.children.length;
-      const refCols = node.content.children[0]?.length || 0;
-
-      // The referenced grid should fill the current cell (which is 1x1 in local space)
-      // We need to center it within the cell and scale it to fit
-      const scaleX = 1 / refCols;
-      const scaleZ = 1 / refRows;
-
-      // Center the grid within the cell
-      const offsetX = -(refCols - 1) / 2 * scaleX;
-      const offsetZ = -(refRows - 1) / 2 * scaleZ;
-
-      // Create a reference to the pre-built geometry
-      builder.reference(targetGeomId, {
-        translation: [offsetX, 0, offsetZ],
-        scale: [scaleX, 1, scaleZ]
-      });
-    } else if (isCutoffNode(node.content)) {
-      // Reference was cut off - don't render anything
-    }
-  } else if (isNestedNode(node)) {
-    // This shouldn't happen in normal traversal
-    console.warn('Unexpected NestedNode in cell position');
-  }
-}

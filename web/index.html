@@ -30,10 +30,17 @@
   </head>
   <body>
     <div class="container">
-      <h1>Paragrid Web</h1>
-      <div id="app"></div>
+      <h1>Paragrid Web - Isometric Demo</h1>
+
+      <div id="canvas" style="margin: 2rem 0; background: #2a2a2a; min-height: 600px; border-radius: 8px;"></div>
+
+      <div id="status" style="background: #2d2d2d; padding: 1rem; border-radius: 8px; font-family: monospace;"></div>
+
+      <button id="export-scene" style="margin-top: 1rem; padding: 0.5rem 1rem; background: #4fc3f7; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
+        Export Scene JSON
+      </button>
     </div>
 
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/demo-iso.ts"></script>
   </body>
 </html>

@@ -442,7 +442,109 @@ Keep `renderGridIsometric` for simple grids, add `renderIsometric` for full Cell
 - ✅ No console errors or warnings
 - ✅ Visual output shows proper scaling and nesting
 
-**Commit**: TBD (current changes)
+**Commit**: `e818886` - Implement ts-poly reference-based rendering for grid refs (Phase 3)
+
+### Phase 3.5: Template System (ts-poly integration) 🔄 IN PROGRESS
+1. ⬜ Replace `.group()` with `.template()` for geometry definitions
+2. ⬜ Fix cycle handling: use node identity instead of gridId
+3. ⬜ Remove `removeEmptyGroups()` filter (no longer needed)
+4. ⬜ Test with cyclic grids and verify proper nesting
+
+**Motivation**:
+- ts-poly now provides `.template()/.endTemplate()` API for defining reusable geometry that's not in the visible scene graph
+- This is cleaner than our current workaround of building groups and filtering them out
+- However, our current implementation has a **critical bug** with cycles
+
+**Critical Bug - Cycle Handling**:
+Our current code uses `gridId` as the key for geometry groups:
+```typescript
+if (geometryGroups.has(node.gridId)) {
+  return geometryGroups.get(node.gridId)!; // BUG: Returns early!
+}
+```
+
+**The Problem**: For a self-referencing grid `A = [1, *A]`, the CellTree contains multiple `NestedNode` instances with the same `gridId='A'` but different nested content at each depth level:
+- Depth 0: `NestedNode(A)` with `[Concrete(1), RefNode→NestedNode(A) at depth 1]`
+- Depth 1: `NestedNode(A)` with `[Concrete(1), RefNode→NestedNode(A) at depth 2]`
+- Depth 2: `NestedNode(A)` with `[Concrete(1), RefNode→CutoffNode]`
+
+Each is a **different object** with different structure. But we only build geometry for the first one and reuse it everywhere, losing the nested structure!
+
+**Solution - Use Node Identity**:
+Build a separate template for each unique `NestedNode` instance:
+
+```typescript
+// Pass 1: Collect all unique NestedNode INSTANCES (by object identity)
+const nodeToTemplateId = new Map<NestedNode, string>();
+let templateCounter = 0;
+
+function collectNodes(node: CellNode): void {
+  if (isNestedNode(node)) {
+    if (!nodeToTemplateId.has(node)) {  // By object identity
+      nodeToTemplateId.set(node, `grid-template-${templateCounter++}`);
+    }
+    // Recurse into children
+    for (const row of node.children) {
+      for (const child of row) {
+        collectNodes(child);
+      }
+    }
+  } else if (isRefNode(node)) {
+    collectNodes(node.content);
+  }
+}
+
+// Pass 2: Build a template for each unique node instance
+for (const [node, templateId] of nodeToTemplateId) {
+  builder.template(templateId);
+    // Build cells with proper nesting
+    for (let row = 0; row < node.children.length; row++) {
+      for (let col = 0; col < node.children[row].length; col++) {
+        const child = node.children[row][col];
+
+        builder.group(`cell-${row}-${col}`, { position: [col, 0, row] });
+          // Floor
+          builder.instance('floor-square', { ... });
+
+          // Cell content
+          if (isConcreteNode(child)) {
+            builder.instance('concrete-cube', { ... });
+          } else if (isRefNode(child) && isNestedNode(child.content)) {
+            // Reference the SPECIFIC nested instance's template
+            const nestedTemplateId = nodeToTemplateId.get(child.content)!;
+            builder.reference(nestedTemplateId, { scale: [...] });
+          }
+        builder.endGroup();
+      }
+    }
+  builder.endTemplate();
+}
+
+// Pass 3: Reference the root template
+builder.reference(nodeToTemplateId.get(root)!, { ... });
+```
+
+**Result for Self-Referencing Grid** `A = [1, *A]` with depth 3:
+- Template `grid-template-0` (depth 0): `[1, ref→grid-template-1]`
+- Template `grid-template-1` (depth 1): `[1, ref→grid-template-2]`
+- Template `grid-template-2` (depth 2): `[1, <cutoff>]`
+
+Each template references the next depth level. **No cycles in the template system** - the CellTree already unrolled them!
+
+**Benefits**:
+- ✅ Correct nesting for cyclic grids
+- ✅ Templates not in scene graph (no empty group filtering)
+- ✅ Clear intent (reusable definitions)
+- ✅ Multiple references to same grid at same depth share the same template
+
+**Commit**: TBD
+
+**Visual Results**:
+- ✅ Fractal self-referencing grid renders with proper recursive nesting
+- ✅ Each depth level shows progressively smaller grids
+- ✅ Cutoff naturally terminates recursion at threshold
+- ✅ No visual artifacts or empty groups in exported scene
+- ✅ Template system cleanly separates reusable geometry from visible scene graph
 
 ### Phase 4: Cycle Testing (1-2 sessions)
 1. ⬜ Test with self-referencing grid (visual verification)

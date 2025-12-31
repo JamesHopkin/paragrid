@@ -228,13 +228,13 @@ class IsometricDemo {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  // Create a test grid with references
-  // main (2x2): [1, 2]
-  //             [sub, 3]
-  // sub (1x2): [4, 5]
+  // Create a complex test grid with self-reference (recursive fractal!)
+  // main (3x3): [1, 2, 3]
+  //             [4, main, 5]  <- main references itself!
+  //             [6, 7, 8]
+  // This creates a recursive fractal pattern that terminates via dimension threshold
   const gridDefinition = {
-    main: '1 _|sub _',
-    sub: '4 _'
+    main: '1 2 3|4 main 5|6 7 8'
   };
 
   const store = parseGrids(gridDefinition);
