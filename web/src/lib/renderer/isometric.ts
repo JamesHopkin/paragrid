@@ -84,6 +84,7 @@ export function renderIsometric(
   });
 
   builder.object('concrete-cube', cube(0.6));
+  builder.object('debug-marker', cube(0.15));
 
   const floorLight = '#3a3a3a';
   const floorDark = '#2a2a2a';
@@ -179,18 +180,25 @@ function renderNestedNode(
 
       // Render floor (checkerboard pattern)
       const isLight = (row + col) % 2 === 0;
+      const floorOffsetX = squareSize / 2;
+      const floorOffsetZ = -squareSize / 2;
+
       if (isLight) {
-        const offsetX = squareSize / 2;
-        const offsetZ = -squareSize / 2;
         builder.instance('floor-square', {
-          position: [offsetX, 0, offsetZ],
+          position: [floorOffsetX, 0, floorOffsetZ],
           color: isHighlighted ? '#ffff00' : floorLight
         });
+
+        // Debug marker for back edge cells (row = 0)
+        if (row === 0) {
+          builder.instance('debug-marker', {
+            position: [floorOffsetX, 0.2, floorOffsetZ],
+            color: '#ff0000'  // Red debug marker
+          });
+        }
       } else if (isHighlighted) {
-        const offsetX = squareSize / 2;
-        const offsetZ = -squareSize / 2;
         builder.instance('floor-square', {
-          position: [offsetX, 0, offsetZ],
+          position: [floorOffsetX, 0, floorOffsetZ],
           color: '#ffff00'
         });
       }
