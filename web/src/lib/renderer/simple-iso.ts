@@ -63,8 +63,18 @@ export function renderGridIsometric(
     });
 
   // Create floor tiles and content objects
-  // Single large square covering entire grid
-  builder.object('floor-base', rectangle(grid.cols - 0.1, grid.rows - 0.1));
+  // Single large square covering entire grid - origin at back-right corner like floor squares
+  const baseWidth = grid.cols - 0.1;
+  const baseHeight = grid.rows - 0.1;
+  builder.object('floor-base', {
+    type: 'shape',
+    vertices: [
+      [0, 0, 0],                    // back-right (origin)
+      [-baseWidth, 0, 0],           // back-left
+      [-baseWidth, 0, baseHeight],  // front-left
+      [0, 0, baseHeight]            // front-right
+    ]
+  });
 
   // Floor square with center at back corner for z-sorting
   // Standard rectangle is centered, so we offset vertices to move origin to back-right corner
@@ -95,9 +105,10 @@ export function renderGridIsometric(
   const offsetZ = -(grid.rows - 1) / 2;
 
   // Add base floor - covers entire grid in one color
-  // The base is centered at the grid center
+  // Origin is at back-right corner, so offset to center it under the grid
+  // Same pattern as floor squares: offset by [+width/2, 0, -height/2]
   builder.instance('floor-base', {
-    position: [0, 0, 0],
+    position: [baseWidth / 2, 0, -baseHeight / 2],
     color: floorDark
   });
 
