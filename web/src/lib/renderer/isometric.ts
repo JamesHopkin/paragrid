@@ -6,7 +6,7 @@
  * an isometric scene with checkerboard floors and floating cubes.
  */
 
-import { SceneBuilder, Camera, cube, octahedron, project, Renderer, type Scene } from 'iso-render';
+import { SceneBuilder, Camera, cube, octahedron, project, Renderer, type Scene, type TransformOverrides } from 'iso-render';
 import type { CellNode, NestedNode, ConcreteNode, RefNode } from '../analyzer/types.js';
 import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } from '../analyzer/types.js';
 import type { CellPosition } from '../core/position.js';
@@ -25,6 +25,7 @@ export interface RenderOptions {
   highlightPosition?: CellPosition;
   store: GridStore;
   tagFn: TagFn;
+  transformOverrides?: TransformOverrides;
 }
 
 /**
@@ -35,21 +36,24 @@ export interface RenderResult {
 }
 
 /**
- * Render a CellTree in isometric view using the three-pass reference approach.
- *
- * Pass 1: Collect all unique grids
- * Pass 2: Build geometry once per unique grid
- * Pass 3: Instantiate grids using references
- *
- * @param root - Root CellNode from analyzer
- * @param options - Rendering options (dimensions, target element, highlight)
- * @returns RenderResult with scene for serialization
+ * Result of building scene without rendering.
  */
-export function renderIsometric(
+export interface BuildResult {
+  scene: Scene;
+  camera: any;
+  width: number;
+  height: number;
+}
+
+/**
+ * Build an isometric scene without rendering it.
+ * Use this when you want to build the scene once and render it multiple times with different overrides.
+ */
+export function buildIsometricScene(
   root: CellNode,
-  options: RenderOptions
-): RenderResult {
-  const { width, height, target, highlightPosition, store, tagFn } = options;
+  options: Omit<RenderOptions, 'target'>
+): BuildResult {
+  const { width, height, highlightPosition, store, tagFn } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -106,26 +110,28 @@ export function renderIsometric(
 
   // PASS 1: Collect all unique NestedNode instances by object identity
   // This is critical for cycles: each depth level is a different instance
+  // NOTE: We skip the root node - it will be rendered directly, not as a template
   const nodeToTemplateId = new Map<NestedNode, string>();
   let templateCounter = 0;
 
-  function collectNodes(node: CellNode): void {
+  function collectNodes(node: CellNode, isRoot: boolean = false): void {
     if (isNestedNode(node)) {
-      if (!nodeToTemplateId.has(node)) {
+      // Skip adding root to template map - we'll render it directly
+      if (!isRoot && !nodeToTemplateId.has(node)) {
         nodeToTemplateId.set(node, `grid-template-${templateCounter++}`);
       }
       // Recurse into children to collect nested instances
       for (const row of node.children) {
         for (const child of row) {
-          collectNodes(child);
+          collectNodes(child, false);
         }
       }
     } else if (isRefNode(node)) {
-      collectNodes(node.content);
+      collectNodes(node.content, false);
     }
   }
 
-  collectNodes(root);
+  collectNodes(root, true);
 
   // PASS 2: Build templates for all unique NestedNode instances
   // CRITICAL: Build in REVERSE order so child templates exist before parents reference them
@@ -168,16 +174,9 @@ export function renderIsometric(
     color: rootFloorColors.dark
   });
 
-  // PASS 3: Render the root grid using template reference
-  const rootTemplateId = nodeToTemplateId.get(root);
-  if (!rootTemplateId) {
-    throw new Error('Root template not found');
-  }
-
-  builder.reference(rootTemplateId, {
-    translation: [offsetX, 0, offsetZ],
-    scale: [1, 1, 1]
-  });
+  // PASS 3: Render the root grid directly (not as a template)
+  // This allows us to animate individual cells directly
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn);
 
   // Build scene
   const scene = builder.build();
@@ -186,13 +185,32 @@ export function renderIsometric(
   const maxDim = Math.max(rows, cols);
   const scale = Math.min(width, height) / (maxDim * 1.2);
 
-  const camera = Camera.custom({ 
+  const camera = Camera.custom({
     yaw: 50, pitch: 30, groundScale: 1.0, heightScale: 1.0, scale,
     offset: [width / 2 - 370, height / 2 - 340]
   });
 
+  return { scene, camera, width, height };
+}
+
+/**
+ * Render a CellTree in isometric view.
+ *
+ * @param root - Root CellNode from analyzer
+ * @param options - Rendering options (dimensions, target element, highlight)
+ * @returns RenderResult with scene for serialization
+ */
+export function renderIsometric(
+  root: CellNode,
+  options: RenderOptions
+): RenderResult {
+  const { target, transformOverrides } = options;
+
+  // Build the scene
+  const { scene, camera, width, height } = buildIsometricScene(root, options);
+
   // Project to screen space
-  const screenSpace = project(scene, camera, width, height);
+  const screenSpace = project(scene, camera, width, height, { transformOverrides });
 
   // Render to DOM
   const renderer = new Renderer({
@@ -244,6 +262,118 @@ function getCellColor(cellId: string): string {
     '8': '#d4f4dd', // Light green
   };
   return colors[cellId] || getGridColor(cellId);
+}
+
+/**
+ * Render a grid directly into the scene (not as a template).
+ * Used for the root grid so that cells can be animated directly.
+ */
+function renderGridDirect(
+  node: NestedNode,
+  builder: SceneBuilder,
+  translation: readonly [number, number, number],
+  floorColors: { light: string; dark: string },
+  squareSize: number,
+  nodeToTemplateId: Map<NestedNode, string>,
+  store: GridStore,
+  tagFn: TagFn
+): void {
+  const rows = node.children.length;
+  const cols = node.children[0]?.length || 0;
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const child = node.children[row][col];
+
+      // Position in scene (with root offset applied)
+      const x = translation[0] + col;
+      const y = translation[1];
+      const z = translation[2] + row;
+
+      // Create a group for this cell with a predictable ID
+      const cellGroupId = `root-cell-${row}-${col}`;
+      builder.group(cellGroupId, {
+        position: [x, y, z]
+      });
+
+      // Render floor (checkerboard pattern) - skip for RefNodes
+      const isLight = (row + col) % 2 === 0;
+      const floorOffsetX = squareSize / 2;
+      const floorOffsetZ = -squareSize / 2;
+
+      // Don't render floor tile if this cell contains a reference
+      if (isLight && !isRefNode(child)) {
+        builder.instance('floor-square', {
+          position: [floorOffsetX, 0, floorOffsetZ],
+          color: floorColors.light
+        });
+      }
+
+      // Create a content group that can be animated independently of the floor
+      const contentGroupId = `root-cell-${row}-${col}-content`;
+      builder.group(contentGroupId, {
+        position: [0, 0, 0]
+      });
+
+      // Render cell content
+      if (isConcreteNode(child)) {
+        // Check tags for this cell
+        const cell = Concrete(child.id);
+        const tags = tagFn(cell);
+        const hasPlayer = tags.has('player');
+        const hasStop = tags.has('stop');
+
+        let objectType = 'concrete-cube';
+        let yPos = 0.3;
+        let color = getCellColor(child.id);
+
+        if (hasStop) {
+          objectType = 'stop-box';
+          yPos = 0; // Bottom touching the floor
+          color = '#4a3a5a'; // Purple-ish dark grey
+        }
+
+        if (hasPlayer) {
+          objectType = 'player-octahedron';
+          yPos = 0.3;
+          // Keep the cell's normal color
+        }
+
+        builder.instance(objectType, {
+          position: [0, yPos, 0],
+          color: color
+        });
+      } else if (isRefNode(child) && isNestedNode(child.content)) {
+        // Reference the SPECIFIC nested instance's template
+        const nestedTemplateId = nodeToTemplateId.get(child.content);
+        if (!nestedTemplateId) {
+          console.error(`Template not found for nested grid: ${child.content.gridId}`);
+        } else {
+          const refRows = child.content.children.length;
+          const refCols = child.content.children[0]?.length || 0;
+
+          // The referenced grid should fill the current cell (which is 1x1 in local space)
+          const scaleX = 1 / refCols;
+          const scaleZ = 1 / refRows;
+          // Y-scale is the reciprocal of max dimension to keep cubes cubic
+          const scaleY = 1 / Math.max(refCols, refRows);
+
+          // Center the grid within the cell
+          const offsetX = -(refCols - 1) / 2 * scaleX;
+          const offsetZ = -(refRows - 1) / 2 * scaleZ;
+
+          builder.reference(nestedTemplateId, {
+            translation: [offsetX, 0, offsetZ],
+            scale: [scaleX, scaleY, scaleZ]
+          });
+        }
+      }
+      // Empty and Cutoff nodes don't add geometry
+
+      builder.endGroup(); // End content group
+      builder.endGroup(); // End cell group
+    }
+  }
 }
 
 /**

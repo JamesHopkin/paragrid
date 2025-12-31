@@ -14,8 +14,9 @@ import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { analyze } from './lib/analyzer/index.js';
-import { renderIsometric } from './lib/renderer/isometric.js';
-import { sceneToJSON, type Scene } from 'iso-render';
+import { renderIsometric, buildIsometricScene } from './lib/renderer/isometric.js';
+import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
+import type { CellNode } from './lib/analyzer/types.js';
 
 /**
  * Interactive demo class.
@@ -29,6 +30,16 @@ class IsometricDemo {
   private readonly canvas: HTMLElement;
   private readonly statusEl: HTMLElement;
   private currentScene: Scene | null = null;
+  private currentCellTree: CellNode | null = null;
+  private currentCamera: any | null = null;
+  private currentRenderer: Renderer | null = null;
+  private animationSystem: AnimationSystem;
+  private previousPlayerPosition: CellPosition | null = null;
+  private animationFrameId: number | null = null;
+  private lastFrameTime: number = 0;
+  private isAnimating: boolean = false;
+  private readonly renderWidth = 800;
+  private readonly renderHeight = 600;
 
   constructor(
     store: GridStore,
@@ -41,6 +52,10 @@ class IsometricDemo {
     this.tagFn = tagFn;
     this.canvas = canvas;
     this.statusEl = statusEl;
+    this.animationSystem = new AnimationSystem();
+
+    // Store initial player position
+    this.previousPlayerPosition = this.playerPosition ?? null;
 
     this.setupKeyboardHandlers();
     this.setupExportButton();
@@ -101,6 +116,11 @@ class IsometricDemo {
   }
 
   private attemptPush(direction: Direction): void {
+    // Prevent input during animation
+    if (this.isAnimating) {
+      return;
+    }
+
     const playerPos = this.playerPosition;
 
     if (!playerPos) {
@@ -109,7 +129,8 @@ class IsometricDemo {
       return;
     }
 
-    console.log(`Attempting push ${direction} from ${playerPos.gridId}[${playerPos.row}, ${playerPos.col}]`);
+    // Snapshot all concrete cell positions before the push
+    const oldCellPositions = this.snapshotCellPositions(playerPos.gridId);
 
     const result = push(
       this.store,
@@ -121,7 +142,6 @@ class IsometricDemo {
 
     if (this.isPushFailure(result)) {
       // Push failed
-      console.log('Push failed:', result);
       this.statusMessage = `❌ Push ${direction} failed: ${result.reason}`;
       if (result.details) {
         this.statusMessage += ` (${result.details})`;
@@ -133,30 +153,322 @@ class IsometricDemo {
       // Find new player position
       const newPos = this.playerPosition;
       if (newPos) {
-        console.log(`Push succeeded! New position: ${newPos.gridId}[${newPos.row}, ${newPos.col}]`);
         this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
+
+        // Check if we changed grids
+        const changedGrids = playerPos.gridId !== newPos.gridId;
+
+        if (changedGrids) {
+          // Grid transition - stop any animations and force full rebuild
+          this.animationSystem.stop();
+          this.isAnimating = false;
+          if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+          }
+          // Clear everything to force complete rebuild with new grid as root
+          this.currentScene = null;
+          this.currentCellTree = null;
+          this.currentRenderer = null;
+          this.render(true);
+        } else {
+          // Same grid - detect movements and animate
+          const movements = this.detectMovements(playerPos.gridId, oldCellPositions);
+
+          if (movements.length > 0) {
+            // Will animate - rebuild scene data but animation will handle rendering
+            this.rebuildSceneData();
+            this.createMultipleMovementAnimations(movements);
+          } else {
+            // No animation - render immediately
+            this.render(true);
+          }
+        }
+
+        // Update previous position for next movement
+        this.previousPlayerPosition = newPos;
       } else {
         this.statusMessage = '✓ Push succeeded but player lost!';
+        this.render(true);
       }
+      return;
     }
 
-    this.render();
+    this.render(true);
   }
 
   private isPushFailure(result: GridStore | PushFailure): result is PushFailure {
     return 'reason' in result && 'position' in result;
   }
 
+  /**
+   * Snapshot all concrete and reference cell positions in a grid.
+   * Returns array of {cell, position} for tracking.
+   */
+  private snapshotCellPositions(gridId: string): Array<{ cell: Cell; position: CellPosition }> {
+    const snapshot: Array<{ cell: Cell; position: CellPosition }> = [];
+    const grid = getGrid(this.store, gridId);
+    if (!grid) return snapshot;
+
+    for (let row = 0; row < grid.rows; row++) {
+      for (let col = 0; col < grid.cols; col++) {
+        const cell = grid.cells[row]?.[col];
+        if (cell && (isConcrete(cell) || cell.type === 'ref')) {
+          snapshot.push({
+            cell,
+            position: { gridId, row, col }
+          });
+        }
+      }
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * Detect which cells moved one square within the same grid.
+   * Returns an array of {cellId, oldPos, newPos} for cells that moved exactly one square.
+   */
+  private detectMovements(gridId: string, oldSnapshot: Array<{ cell: Cell; position: CellPosition }>): Array<{
+    cellId: string;
+    oldPos: CellPosition;
+    newPos: CellPosition;
+  }> {
+    const movements: Array<{ cellId: string; oldPos: CellPosition; newPos: CellPosition }> = [];
+    const grid = getGrid(this.store, gridId);
+    if (!grid) return movements;
+
+    // Check all cells in the new state
+    for (let row = 0; row < grid.rows; row++) {
+      for (let col = 0; col < grid.cols; col++) {
+        const newCell = grid.cells[row]?.[col];
+        if (!newCell) continue;
+
+        const newPos: CellPosition = { gridId, row, col };
+
+        // Find matching cell in old snapshot
+        let oldPos: CellPosition | null = null;
+        let cellKey: string | null = null;
+
+        if (isConcrete(newCell)) {
+          // For concrete cells, match by ID
+          // First check if there's an exact position match (cell didn't move)
+          const matches = oldSnapshot.filter(s => isConcrete(s.cell) && s.cell.id === newCell.id);
+          const exactMatch = matches.find(m => m.position.row === newPos.row && m.position.col === newPos.col);
+
+          if (exactMatch) {
+            // Cell didn't move - don't animate
+            continue;
+          }
+
+          // No exact match - find the cell that moved here (one square away)
+          for (const match of matches) {
+            if (this.isSingleSquareMovement(match.position, newPos)) {
+              oldPos = match.position;
+              cellKey = `concrete:${newCell.id}`;
+              break;
+            }
+          }
+        } else if (newCell.type === 'ref') {
+          // For reference cells, match by gridId
+          const matches = oldSnapshot.filter(s => s.cell.type === 'ref' && s.cell.gridId === newCell.gridId);
+          const exactMatch = matches.find(m => m.position.row === newPos.row && m.position.col === newPos.col);
+
+          if (exactMatch) {
+            // Cell didn't move - don't animate
+            continue;
+          }
+
+          // No exact match - find one that moved one square
+          for (const match of matches) {
+            if (this.isSingleSquareMovement(match.position, newPos)) {
+              oldPos = match.position;
+              cellKey = `ref:${newCell.gridId}:${newPos.row}:${newPos.col}`;
+              break;
+            }
+          }
+        }
+
+        // If we found a match, add it to movements
+        if (oldPos && cellKey) {
+          movements.push({ cellId: cellKey, oldPos, newPos });
+        }
+      }
+    }
+
+    return movements;
+  }
+
   private reset(): void {
     this.store = this.originalStore;
     this.statusMessage = 'Grid reset to original state';
+    this.previousPlayerPosition = this.playerPosition ?? null;
+    this.animationSystem.stop();
+    this.isAnimating = false;
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
     this.render();
   }
 
-  private render(): void {
-    // Clear canvas
-    this.canvas.innerHTML = '';
+  /**
+   * Check if movement is exactly one square within the same grid
+   */
+  private isSingleSquareMovement(oldPos: CellPosition, newPos: CellPosition): boolean {
+    // Must be in the same grid
+    if (oldPos.gridId !== newPos.gridId) {
+      return false;
+    }
 
+    // Calculate the movement distance
+    const rowDiff = Math.abs(newPos.row - oldPos.row);
+    const colDiff = Math.abs(newPos.col - oldPos.col);
+
+    // Must move exactly one square in one direction only
+    return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
+  }
+
+  /**
+   * Create animations for multiple cells that moved one square.
+   * All animations play simultaneously.
+   */
+  private createMultipleMovementAnimations(movements: Array<{
+    cellId: string;
+    oldPos: CellPosition;
+    newPos: CellPosition;
+  }>): void {
+    if (movements.length === 0) return;
+
+    const duration = 0.3; // 300ms animation
+    const animations: Array<{
+      nodeId: string;
+      channels: Array<{
+        target: 'position' | 'rotation' | 'scale';
+        interpolation: 'linear';
+        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
+      }>;
+    }> = [];
+
+    for (const movement of movements) {
+      const { oldPos, newPos } = movement;
+
+      // The content group is positioned at [0, 0, 0] relative to its parent cell group
+      // The parent cell group is positioned at the NEW cell's world coordinates
+      // To animate from the old position, we need a RELATIVE offset from new to old
+      const relativeOffset: [number, number, number] = [
+        oldPos.col - newPos.col,  // Difference in column
+        0,
+        oldPos.row - newPos.row   // Difference in row
+      ];
+      const targetPos: [number, number, number] = [0, 0, 0]; // End at natural position
+
+      // The root grid is rendered directly with content group IDs: root-cell-row-col-content
+      const contentGroupId = `root-cell-${newPos.row}-${newPos.col}-content`;
+
+      animations.push({
+        nodeId: contentGroupId,
+        channels: [{
+          target: 'position',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: relativeOffset, easing: Easing.easeInQuad },
+            { time: duration, value: targetPos }
+          ]
+        }]
+      });
+    }
+
+    // Create a single animation clip with all cell animations
+    const animationClip: AnimationClip = {
+      id: 'push-move',
+      duration,
+      loop: false,
+      animations
+    };
+
+    // Add and play the animation
+    this.animationSystem.addClip(animationClip);
+    this.animationSystem.play('push-move');
+
+    // Set animation flag
+    this.isAnimating = true;
+
+    // Start the animation loop
+    this.startAnimationLoop();
+  }
+
+  /**
+   * Start the animation loop using requestAnimationFrame
+   */
+  private startAnimationLoop(): void {
+    if (this.animationFrameId !== null) {
+      return; // Already running
+    }
+
+    this.lastFrameTime = performance.now();
+
+    const animate = (currentTime: number): void => {
+      const deltaTime = (currentTime - this.lastFrameTime) / 1000; // Convert to seconds
+      this.lastFrameTime = currentTime;
+
+      // Update animation system
+      this.animationSystem.update(deltaTime);
+
+      // Re-render with animation
+      this.render();
+
+      // Continue animation if still playing
+      const state = this.animationSystem.getState();
+      if (state.playing) {
+        this.animationFrameId = requestAnimationFrame(animate);
+      } else {
+        this.animationFrameId = null;
+        this.isAnimating = false;
+      }
+    };
+
+    this.animationFrameId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Rebuild scene data (analyze + build scene) without rendering.
+   * Used when we want to prepare for animation.
+   */
+  private rebuildSceneData(): void {
+    const playerPos = this.playerPosition;
+    if (!playerPos) return;
+
+    const grid = getGrid(this.store, playerPos.gridId);
+    if (!grid) return;
+
+    // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
+    this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+
+    // Phase 2: Build scene from CellTree (without rendering)
+    const result = buildIsometricScene(this.currentCellTree, {
+      width: this.renderWidth,
+      height: this.renderHeight,
+      highlightPosition: playerPos,
+      store: this.store,
+      tagFn: this.tagFn
+    });
+
+    this.currentScene = result.scene;
+    this.currentCamera = result.camera;
+
+    // Ensure renderer is ready (create once, reuse for all renders)
+    if (!this.currentRenderer) {
+      this.currentRenderer = new Renderer({
+        target: this.canvas,
+        backend: 'svg',
+        width: this.renderWidth,
+        height: this.renderHeight
+      });
+    }
+  }
+
+  private render(forceRebuild: boolean = false): void {
     const playerPos = this.playerPosition;
 
     if (!playerPos) {
@@ -165,7 +477,7 @@ class IsometricDemo {
       return;
     }
 
-    // Get the grid containing the player
+    // Get the grid containing the player (this is the root for visualization)
     const grid = getGrid(this.store, playerPos.gridId);
 
     if (!grid) {
@@ -174,21 +486,61 @@ class IsometricDemo {
       return;
     }
 
-    // Analyze and render the grid
     try {
-      // Phase 1: Analyze grid to build CellTree
-      const cellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+      // Rebuild scene only when necessary (store changed, or first render)
+      if (forceRebuild || !this.currentScene || !this.currentCellTree || !this.currentRenderer) {
+        // Clear canvas only when rebuilding
+        this.canvas.innerHTML = '';
 
-      // Phase 2: Render CellTree to isometric scene
-      const result = renderIsometric(cellTree, {
-        width: 800,
-        height: 600,
-        target: this.canvas,
-        highlightPosition: playerPos,
-        store: this.store,
-        tagFn: this.tagFn
-      });
-      this.currentScene = result.scene;
+        // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
+        this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+
+        // Phase 2: Build scene from CellTree (without rendering yet)
+        const result = buildIsometricScene(this.currentCellTree, {
+          width: this.renderWidth,
+          height: this.renderHeight,
+          highlightPosition: playerPos,
+          store: this.store,
+          tagFn: this.tagFn
+        });
+
+        this.currentScene = result.scene;
+        this.currentCamera = result.camera;
+
+        // Create renderer once (reuse for all future renders)
+        if (!this.currentRenderer) {
+          this.currentRenderer = new Renderer({
+            target: this.canvas,
+            backend: 'svg',
+            width: this.renderWidth,
+            height: this.renderHeight
+          });
+        }
+
+        // Now render the scene once
+        const screenSpace = project(
+          this.currentScene,
+          this.currentCamera,
+          this.renderWidth,
+          this.renderHeight
+        );
+        this.currentRenderer.render(screenSpace);
+      } else {
+        // During animation: only update transform overrides and re-render
+        const transformOverrides = this.animationSystem.evaluateTransforms();
+
+        // Re-project with animation overrides
+        const screenSpace = project(
+          this.currentScene,
+          this.currentCamera,
+          this.renderWidth,
+          this.renderHeight,
+          { transformOverrides }
+        );
+
+        // Re-render using the SAME renderer instance (it clears and re-renders automatically)
+        this.currentRenderer.render(screenSpace);
+      }
     } catch (error) {
       console.error('Render error:', error);
       this.canvas.innerHTML = `<div style="color: red; padding: 20px;">Render error: ${error}</div>`;
