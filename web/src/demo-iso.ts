@@ -129,9 +129,6 @@ class IsometricDemo {
       return;
     }
 
-    // Snapshot all concrete cell positions before the push
-    const oldCellPositions = this.snapshotCellPositions(playerPos.gridId);
-
     const result = push(
       this.store,
       playerPos,
@@ -141,60 +138,61 @@ class IsometricDemo {
     );
 
     if (this.isPushFailure(result)) {
-      // Push failed
+      // Push failed - just update status and render
       this.statusMessage = `❌ Push ${direction} failed: ${result.reason}`;
       if (result.details) {
         this.statusMessage += ` (${result.details})`;
       }
-    } else {
-      // Success - update store
-      this.store = result;
-
-      // Find new player position
-      const newPos = this.playerPosition;
-      if (newPos) {
-        this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
-
-        // Check if we changed grids
-        const changedGrids = playerPos.gridId !== newPos.gridId;
-
-        if (changedGrids) {
-          // Grid transition - stop any animations and force full rebuild
-          this.animationSystem.stop();
-          this.isAnimating = false;
-          if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-          }
-          // Clear everything to force complete rebuild with new grid as root
-          this.currentScene = null;
-          this.currentCellTree = null;
-          this.currentRenderer = null;
-          this.render(true);
-        } else {
-          // Same grid - detect movements and animate
-          const movements = this.detectMovements(playerPos.gridId, oldCellPositions);
-
-          if (movements.length > 0) {
-            // Will animate - rebuild scene data but animation will handle rendering
-            this.rebuildSceneData();
-            this.createMultipleMovementAnimations(movements);
-          } else {
-            // No animation - render immediately
-            this.render(true);
-          }
-        }
-
-        // Update previous position for next movement
-        this.previousPlayerPosition = newPos;
-      } else {
-        this.statusMessage = '✓ Push succeeded but player lost!';
-        this.render(true);
-      }
+      this.render(true);
+      this.updateStatus();
       return;
     }
 
-    this.render(true);
+    // Success - snapshot positions and update store
+    const oldCellPositions = this.snapshotCellPositions(playerPos.gridId);
+    this.store = result;
+
+    // Find new player position
+    const newPos = this.playerPosition;
+    if (newPos) {
+      this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
+
+      // Check if we changed grids
+      const changedGrids = playerPos.gridId !== newPos.gridId;
+
+      if (changedGrids) {
+        // Grid transition - stop any animations and force full rebuild
+        this.animationSystem.stop();
+        this.isAnimating = false;
+        if (this.animationFrameId !== null) {
+          cancelAnimationFrame(this.animationFrameId);
+          this.animationFrameId = null;
+        }
+        // Clear everything to force complete rebuild with new grid as root
+        this.currentScene = null;
+        this.currentCellTree = null;
+        this.currentRenderer = null;
+        this.render(true);
+      } else {
+        // Same grid - detect movements and animate
+        const movements = this.detectMovements(playerPos.gridId, oldCellPositions);
+
+        if (movements.length > 0) {
+          // Will animate - rebuild scene data but animation will handle rendering
+          this.rebuildSceneData();
+          this.createMultipleMovementAnimations(movements);
+        } else {
+          // No animation - render immediately
+          this.render(true);
+        }
+      }
+
+      // Update previous position for next movement
+      this.previousPlayerPosition = newPos;
+    } else {
+      this.statusMessage = '✓ Push succeeded but player lost!';
+      this.render(true);
+    }
   }
 
   private isPushFailure(result: GridStore | PushFailure): result is PushFailure {
@@ -489,8 +487,9 @@ class IsometricDemo {
     try {
       // Rebuild scene only when necessary (store changed, or first render)
       if (forceRebuild || !this.currentScene || !this.currentCellTree || !this.currentRenderer) {
-        // Clear canvas only when rebuilding
+        // Clear canvas - this detaches any existing SVG, so we must recreate the renderer
         this.canvas.innerHTML = '';
+        this.currentRenderer = null;
 
         // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
         this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
@@ -507,15 +506,13 @@ class IsometricDemo {
         this.currentScene = result.scene;
         this.currentCamera = result.camera;
 
-        // Create renderer once (reuse for all future renders)
-        if (!this.currentRenderer) {
-          this.currentRenderer = new Renderer({
-            target: this.canvas,
-            backend: 'svg',
-            width: this.renderWidth,
-            height: this.renderHeight
-          });
-        }
+        // Create new renderer after clearing canvas
+        this.currentRenderer = new Renderer({
+          target: this.canvas,
+          backend: 'svg',
+          width: this.renderWidth,
+          height: this.renderHeight
+        });
 
         // Now render the scene once
         const screenSpace = project(
@@ -596,11 +593,12 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 1 _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+
+      // main: "_ _ _|1 _ main|_ _ _"
   };
   
-
   const store = parseGrids(gridDefinition);
 
   // Tag function: cell '1' is the player
