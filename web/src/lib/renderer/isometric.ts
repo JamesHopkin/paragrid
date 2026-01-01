@@ -33,6 +33,7 @@ export interface RenderOptions {
   tagFn: TagFn;
   transformOverrides?: TransformOverrides;
   cellPositionOverrides?: CellPositionOverrides;
+  animatingCells?: Set<string>; // Cell IDs currently animating (for floor tile rendering)
 }
 
 /**
@@ -60,7 +61,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides } = options;
+  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, animatingCells } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -185,7 +186,7 @@ export function buildIsometricScene(
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
-  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides);
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides, animatingCells);
 
   // Build scene
   const scene = builder.build();
@@ -291,7 +292,8 @@ function renderGridDirect(
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
   tagFn: TagFn,
-  cellPositionOverrides?: CellPositionOverrides
+  cellPositionOverrides?: CellPositionOverrides,
+  animatingCells?: Set<string>
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
@@ -341,8 +343,13 @@ function renderGridDirect(
       const floorOffsetX = squareSize / 2;
       const floorOffsetZ = -squareSize / 2;
 
-      // Don't render floor tile if this cell contains a reference
-      if (isLight && !isRefNode(child)) {
+      // Render floor tile if:
+      // - This is a light square AND
+      // - Either it's not a reference, OR it's a reference that's currently animating
+      const isAnimating = animatingCells?.has(contentGroupId) ?? false;
+      const shouldRenderFloor = isLight && (!isRefNode(child) || isAnimating);
+
+      if (shouldRenderFloor) {
         // Calculate offset from effective position back to actual position
         const floorXOffset = (col - effectiveCol) + floorOffsetX;
         const floorZOffset = (row - effectiveRow) + floorOffsetZ;

@@ -42,6 +42,7 @@ class IsometricDemo {
   private readonly renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
   private cellPositionOverrides: CellPositionOverrides | undefined = undefined; // For direction-aware animation
+  private animatingCells: Set<string> = new Set(); // Cell IDs currently animating
 
   constructor(
     store: GridStore,
@@ -325,8 +326,9 @@ class IsometricDemo {
     }
     // Remove animation clip to clear transform overrides
     this.animationSystem.removeClip('push-move');
-    // Clear position overrides (store is always at final state)
+    // Clear animation state
     this.cellPositionOverrides = undefined;
+    this.animatingCells.clear();
     // Force render to show the final state
     this.render(true);
   }
@@ -415,6 +417,9 @@ class IsometricDemo {
 
     // Remove any existing animation clip to avoid conflicts
     this.animationSystem.removeClip('push-move');
+
+    // Track all animating cells (for floor tile rendering)
+    this.animatingCells = new Set(movements.map(m => m.cellId));
 
     // Build cell position overrides for away-from-camera movements
     // These cells need hierarchy at OLD position for correct z-sorting
@@ -542,9 +547,17 @@ class IsometricDemo {
         // Remove animation clip so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
 
+        // Check if we need to rebuild (either position overrides or animating cells)
+        const needsRebuild = this.cellPositionOverrides !== undefined || this.animatingCells.size > 0;
+
+        // Clear animation state
+        this.animatingCells.clear();
         if (this.cellPositionOverrides) {
-          console.log('Animation complete - clearing position overrides');
           this.cellPositionOverrides = undefined;
+        }
+
+        if (needsRebuild) {
+          console.log('Animation complete - rebuilding scene');
           // Rebuild scene data without clearing canvas (avoids flash)
           this.rebuildSceneData();
           // Render the final state (now with no animation overrides)
@@ -577,7 +590,8 @@ class IsometricDemo {
       highlightPosition: playerPos,
       store: this.store,
       tagFn: this.tagFn,
-      cellPositionOverrides: this.cellPositionOverrides
+      cellPositionOverrides: this.cellPositionOverrides,
+      animatingCells: this.animatingCells
     });
 
     this.currentScene = result.scene;
@@ -629,7 +643,8 @@ class IsometricDemo {
           highlightPosition: playerPos,
           store: this.store,
           tagFn: this.tagFn,
-          cellPositionOverrides: this.cellPositionOverrides
+          cellPositionOverrides: this.cellPositionOverrides,
+          animatingCells: this.animatingCells
         });
 
         this.currentScene = result.scene;
