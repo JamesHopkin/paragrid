@@ -411,12 +411,8 @@ function renderGridDirect(
           // Y-scale is the reciprocal of max dimension to keep cubes cubic
           const scaleY = 1 / Math.max(refCols, refRows);
 
-          // Center the grid within the cell
-          const offsetX = -(refCols - 1) / 2 * scaleX;
-          const offsetZ = -(refRows - 1) / 2 * scaleZ;
-
+          // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
-            translation: [offsetX, 0, offsetZ],
             scale: [scaleX, scaleY, scaleZ]
           });
         }
@@ -466,9 +462,10 @@ function buildGridTemplate(
     for (let col = 0; col < cols; col++) {
       const child = node.children[row][col];
 
-      // Position relative to grid origin
-      const x = col;
-      const z = row;
+      // Position relative to grid center (centered around origin)
+      // This eliminates the need for centering translation on references
+      const x = col - (cols - 1) / 2;
+      const z = row - (rows - 1) / 2;
 
       // Start a group for this cell
       builder.group(`${templateId}-cell-${row}-${col}`, {
@@ -514,11 +511,18 @@ function buildGridTemplate(
           // Keep the cell's normal color
         }
 
+        // Create content group with ID (matching root grid structure)
+        // This ensures ts-poly can target this group for animations
+        builder.group(`concrete-${child.id}`, {
+          position: [0, 0, 0]
+        });
+
         builder.instance(objectType, {
-          id: `concrete-${child.id}`,
           position: [0, yPos, 0],
           color: color
         });
+
+        builder.endGroup(); // End content group
       } else if (isRefNode(child) && isNestedNode(child.content)) {
         // Reference the SPECIFIC nested instance's template
         const nestedTemplateId = nodeToTemplateId.get(child.content);
@@ -534,12 +538,8 @@ function buildGridTemplate(
           // Y-scale is the reciprocal of max dimension to keep cubes cubic
           const scaleY = 1 / Math.max(refCols, refRows);
 
-          // Center the grid within the cell
-          const offsetX = -(refCols - 1) / 2 * scaleX;
-          const offsetZ = -(refRows - 1) / 2 * scaleZ;
-
+          // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
-            translation: [offsetX, 0, offsetZ],
             scale: [scaleX, scaleY, scaleZ]
           });
         }

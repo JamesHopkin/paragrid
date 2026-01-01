@@ -41,6 +41,168 @@ Two-phase approach:
 
 ---
 
+## Isometric Rendering
+
+The isometric renderer builds 3D scenes using the ts-poly library, which provides template instancing and ID-based animation.
+
+### Template System
+
+To efficiently handle recursive grids (including self-references), the renderer uses ts-poly's template system:
+
+**Template creation**: Each unique `NestedNode` instance (by object identity) becomes a template. For a self-referencing grid, different depth levels are different instances:
+- Depth 0 → template-0
+- Depth 1 → template-1
+- Depth 2 → template-2
+- ...until cutoff threshold
+
+**Root grid direct rendering**: The root grid (containing the player) is rendered directly into the scene graph (not as a template). This allows individual cells to be animated.
+
+**Template references**: When a root grid cell contains a reference, it uses `builder.reference(templateId, ...)` to instantiate that template's geometry.
+
+**Visual representation** of a self-referencing grid:
+
+```
+Analyzer Output (CellTree):
+  NestedNode@depth0 (gridId="main")
+    ├─ ConcreteNode(id="1")
+    ├─ RefNode → NestedNode@depth1 (gridId="main")  ← different instance!
+    │            ├─ ConcreteNode(id="1")
+    │            ├─ RefNode → NestedNode@depth2 (gridId="main")
+    │            │            ├─ ConcreteNode(id="1")
+    │            │            └─ CutoffNode  ← stopped here
+    │            └─ ...
+    └─ ...
+
+Renderer Output (ts-poly scene):
+  template-1:  ← built first (deepest)
+    - cell with concrete-1 group
+    - cell with reference to template-2
+
+  template-0:  ← built second
+    - cell with concrete-1 group
+    - cell with reference to template-1
+
+  Root scene:  ← built last
+    - cell with concrete-1 group (directly in scene)
+    - cell with reference to template-0
+```
+
+**Build order**: Templates must be built in reverse order (deepest first) so child templates exist before parents reference them.
+
+### Hierarchy and IDs
+
+Both root grid and templates use a consistent three-level hierarchy to enable ID-based animation:
+
+```
+Root Grid Structure:
+  cell group (at grid position [x, 0, z])
+    └─ content group ID="concrete-1" (at [0, 0, 0])
+         └─ instance (no ID)
+
+Template Structure:
+  cell group (at centered position [x', 0, z'])
+    └─ content group ID="concrete-1" (at [0, 0, 0])
+         └─ instance (no ID)
+```
+
+**Key principle**: IDs are attached to groups (which can be transformed), not instances (which cannot). When ts-poly animates ID `concrete-1`, all groups with that ID move together - whether in the root grid or nested inside templates at any depth. The content group at `[0,0,0]` is convention; animation transforms are relative to whatever position is set.
+
+### Animation System
+
+ts-poly provides ID-based animation where all nodes with the same ID receive the same animation transform:
+
+```
+Animation clip targets ID "concrete-1":
+  position: [0,0,0] → [1,0,0] over 0.3s
+
+Result: ALL groups with ID "concrete-1" animate together:
+  - Root grid instance ✓
+  - Template instance at depth 1 ✓
+  - Template instance at depth 2 ✓
+  - etc.
+```
+
+This enables synchronized animation of a cell and all its recursive clones.
+
+### Coordinate Spaces
+
+**Template centering**: Templates position their cells centered around the origin:
+```
+3×3 grid cells at:  [−1, 0], [0, 0], [1, 0]  (col 0, 1, 2)
+                    [−1, 1], [0, 1], [1, 1]
+                    [−1, 2], [0, 2], [1, 2]
+```
+
+This eliminates the need for centering translation when referencing templates. References only apply scale, keeping transform hierarchies simple.
+
+### Example: Self-Reference Animation
+
+**Grid setup**:
+```
+main: [concrete-1, Ref(main), concrete-2]
+```
+
+**Scene graph** (simplified, 2 depth levels):
+```
+root-cell-0-0 [position: [-1, 0, 0]]
+  └─ concrete-1 [position: [0, 0, 0]]  ← animated
+       └─ cube instance
+
+root-cell-0-1 [position: [0, 0, 0]]
+  └─ ref-main-auto [position: [0, 0, 0]]
+       └─ reference to template-0 [scale: [0.33, 0.33, 0.33]]
+            └─ template-0-cell-0-0 [position: [-1, 0, 0]]
+                 └─ concrete-1 [position: [0, 0, 0]]  ← animated (clone)
+                      └─ cube instance
+            ... (other template cells)
+
+root-cell-0-2 [position: [1, 0, 0]]
+  └─ concrete-2 [position: [0, 0, 0]]
+       └─ cube instance
+```
+
+**Animation behavior**: When `concrete-1` animates (e.g., moves east):
+- Both `concrete-1` groups receive `position: [0,0,0] → [1,0,0]` transform
+- Root instance moves from `[-1, 0, 0]` to `[0, 0, 0]` in world space
+- Template clone moves within the scaled template coordinate space
+- Both animate synchronously ✓
+
+### Current Limitation: Position Overrides
+
+For direction-aware animation, the root grid uses `cellPositionOverrides` to position certain cells at their OLD position before animating to NEW:
+
+```typescript
+// Away-from-camera: place hierarchy at OLD position
+cellPositionOverrides.set('concrete-1', { row: 0, col: 0 });
+// Then animate to NEW position
+```
+
+**Problem**: Position overrides only affect root grid cell group positioning, not template instances. Template instances are positioned based on the analyzed grid structure and cannot be repositioned via this mechanism.
+
+**Visual example** of the problem:
+
+```
+Scenario: concrete-1 moved from [0,0] to [1,0] (away from camera)
+
+Root grid (with position override):
+  root-cell-0-0 [position: [0, 0, 0]]  ← override places at OLD position
+    └─ concrete-1 [animated: [0,0,0] → [1,0,0]]
+         └─ cube
+  Result: animates from [0,0,0] to [1,0,0] ✓ CORRECT
+
+Template (cannot use position override):
+  template-0-cell-0-1 [position: [1, 0, 0]]  ← positioned at NEW (no override)
+    └─ concrete-1 [animated: [0,0,0] → [1,0,0]]
+         └─ cube
+  Result: starts at [1,0,0], animates to [2,0,0], snaps back ✗ WRONG
+```
+
+**Why overrides don't work**: The `cellPositionOverrides` map affects scene building logic in `renderGridDirect()`, which only builds the root grid. Templates are built separately by `buildGridTemplate()` and instantiated via `builder.reference()`. The override mechanism has no way to reach into template instances.
+
+**Proposed solution**: See `ts-poly-id-override-proposal.md` for ID-based transform overrides that would apply uniformly across all template depths during projection.
+
+---
+
 ## Key Decisions
 
 | Decision | Rationale |
