@@ -43,6 +43,9 @@ class IsometricDemo {
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
   private cellPositionOverrides: CellPositionOverrides | undefined = undefined; // For direction-aware animation
   private animatingCells: Set<string> = new Set(); // Cell IDs currently animating
+  private undoStack: GridStore[] = []; // Stack of previous states
+  private redoStack: GridStore[] = []; // Stack of undone states
+  private readonly maxHistorySize = 50; // Limit to prevent memory issues
 
   constructor(
     store: GridStore,
@@ -72,6 +75,24 @@ class IsometricDemo {
   private setupKeyboardHandlers(): void {
     document.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
+
+      // Handle undo/redo shortcuts
+      if ((e.ctrlKey || e.metaKey) && key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          this.redo();
+        } else {
+          this.undo();
+        }
+        return;
+      }
+
+      // Handle Ctrl+Y for redo (Windows convention)
+      if ((e.ctrlKey || e.metaKey) && key === 'y') {
+        e.preventDefault();
+        this.redo();
+        return;
+      }
 
       // Prevent default for WASD to avoid scrolling
       if (['w', 'a', 's', 'd', 'r'].includes(key)) {
@@ -195,7 +216,16 @@ class IsometricDemo {
       return;
     }
 
-    // Success - snapshot positions and update store
+    // Success - save current state to undo stack before updating
+    this.undoStack.push(this.store);
+    // Limit history size
+    if (this.undoStack.length > this.maxHistorySize) {
+      this.undoStack.shift(); // Remove oldest entry
+    }
+    // Clear redo stack since we're performing a new action
+    this.redoStack = [];
+
+    // Snapshot positions and update store
     const oldCellPositions = this.snapshotCellPositions(playerPos.gridId);
     this.store = result;
 
@@ -376,7 +406,72 @@ class IsometricDemo {
     this.statusMessage = 'Grid reset to original state';
     this.previousPlayerPosition = this.playerPosition ?? null;
     this.cancelCurrentAnimation();
+    // Clear both stacks when resetting
+    this.undoStack = [];
+    this.redoStack = [];
     this.render();
+  }
+
+  private undo(): void {
+    if (this.undoStack.length === 0) {
+      this.statusMessage = '⚠️ Nothing to undo';
+      this.updateStatus();
+      return;
+    }
+
+    // Cancel any ongoing animation
+    this.cancelCurrentAnimation();
+
+    // Save current state to redo stack
+    this.redoStack.push(this.store);
+
+    // Pop previous state from undo stack
+    const previousState = this.undoStack.pop()!;
+    this.store = previousState;
+
+    // Update player position tracking
+    this.previousPlayerPosition = this.playerPosition ?? null;
+
+    // Full scene rebuild needed
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+
+    this.statusMessage = '↶ Undo successful';
+    this.render(true);
+  }
+
+  private redo(): void {
+    if (this.redoStack.length === 0) {
+      this.statusMessage = '⚠️ Nothing to redo';
+      this.updateStatus();
+      return;
+    }
+
+    // Cancel any ongoing animation
+    this.cancelCurrentAnimation();
+
+    // Save current state to undo stack
+    this.undoStack.push(this.store);
+    // Limit history size
+    if (this.undoStack.length > this.maxHistorySize) {
+      this.undoStack.shift();
+    }
+
+    // Pop state from redo stack
+    const nextState = this.redoStack.pop()!;
+    this.store = nextState;
+
+    // Update player position tracking
+    this.previousPlayerPosition = this.playerPosition ?? null;
+
+    // Full scene rebuild needed
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+
+    this.statusMessage = '↷ Redo successful';
+    this.render(true);
   }
 
   /**
@@ -754,6 +849,8 @@ class IsometricDemo {
         <strong>Controls:</strong><br>
         <span class="key">W/A/S/D</span> - Move (Push)<br>
         <span class="key">R</span> - Reset<br>
+        <span class="key">Ctrl+Z</span> - Undo (${this.undoStack.length} available)<br>
+        <span class="key">Ctrl+Shift+Z</span> or <span class="key">Ctrl+Y</span> - Redo (${this.redoStack.length} available)<br>
         <strong style="margin-top: 0.5rem; display: inline-block;">Export:</strong><br>
         See buttons below for scene JSON and SVG
       </div>
