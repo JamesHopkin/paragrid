@@ -6,7 +6,7 @@ import { parseGrids } from './lib/parser/parser.js';
 import type { GridStore } from './lib/core/types.js';
 import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
-import type { CellPosition } from './lib/core/position.js';
+import { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
 import { push } from './lib/operations/push.js';
 import { createRuleSet } from './lib/operations/rules.js';
@@ -14,7 +14,7 @@ import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { analyze } from './lib/analyzer/index.js';
-import { renderIsometric, buildIsometricScene } from './lib/renderer/isometric.js';
+import { renderIsometric, buildIsometricScene, type CellPositionOverrides } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
 
@@ -41,6 +41,7 @@ class IsometricDemo {
   private readonly renderWidth = 800;
   private readonly renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
+  private cellPositionOverrides: CellPositionOverrides | undefined = undefined; // For direction-aware animation
 
   constructor(
     store: GridStore,
@@ -185,8 +186,8 @@ class IsometricDemo {
         const movements = this.detectMovements(playerPos.gridId, oldCellPositions);
 
         if (movements.length > 0) {
-          // Will animate - rebuild scene data but animation will handle rendering
-          this.rebuildSceneData();
+          // Create animations (this sets cellPositionOverrides)
+          // Then rebuild scene with those overrides
           this.createMultipleMovementAnimations(movements);
         } else {
           // No animation - render immediately
@@ -221,7 +222,7 @@ class IsometricDemo {
         if (cell && (isConcrete(cell) || cell.type === 'ref')) {
           snapshot.push({
             cell,
-            position: { gridId, row, col }
+            position: new CellPosition(gridId, row, col)
           });
         }
       }
@@ -249,7 +250,7 @@ class IsometricDemo {
         const newCell = grid.cells[row]?.[col];
         if (!newCell) continue;
 
-        const newPos: CellPosition = { gridId, row, col };
+        const newPos = new CellPosition(gridId, row, col);
 
         // Find matching cell in old snapshot
         let oldPos: CellPosition | null = null;
@@ -322,6 +323,10 @@ class IsometricDemo {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
+    // Remove animation clip to clear transform overrides
+    this.animationSystem.removeClip('push-move');
+    // Clear position overrides (store is always at final state)
+    this.cellPositionOverrides = undefined;
     // Force render to show the final state
     this.render(true);
   }
@@ -352,8 +357,38 @@ class IsometricDemo {
   }
 
   /**
+   * Transform world coordinates to camera-space Z coordinate.
+   * Higher camera-space Z means closer to camera.
+   */
+  private worldToCameraZ(worldX: number, worldZ: number): number {
+    if (!this.currentCamera) {
+      return 0; // Fallback if camera not ready
+    }
+
+    // Get camera yaw in radians (from camera config)
+    const yawDegrees = this.currentCamera.yaw ?? 50;
+    const yawRadians = (yawDegrees * Math.PI) / 180;
+
+    // Apply yaw rotation to get camera-relative coordinates
+    // Camera looks down the +Z axis after rotation
+    const cameraX = worldX * Math.cos(yawRadians) + worldZ * Math.sin(yawRadians);
+    const cameraZ = -worldX * Math.sin(yawRadians) + worldZ * Math.cos(yawRadians);
+
+    return cameraZ;
+  }
+
+  /**
+   * Determine if movement is toward the camera (increasing camera-space Z).
+   */
+  private isMovingTowardCamera(oldPos: CellPosition, newPos: CellPosition): boolean {
+    const oldCameraZ = this.worldToCameraZ(oldPos.col, oldPos.row);
+    const newCameraZ = this.worldToCameraZ(newPos.col, newPos.row);
+    return newCameraZ > oldCameraZ;
+  }
+
+  /**
    * Create animations for multiple cells that moved one square.
-   * All animations play simultaneously.
+   * Uses direction-aware animation strategy for correct z-ordering.
    */
   private createMultipleMovementAnimations(movements: Array<{
     cellId: string;
@@ -363,6 +398,39 @@ class IsometricDemo {
     if (movements.length === 0) return;
 
     const duration = 0.3; // 300ms animation
+
+    // Split movements by direction relative to camera
+    const towardCamera: typeof movements = [];
+    const awayFromCamera: typeof movements = [];
+
+    for (const movement of movements) {
+      if (this.isMovingTowardCamera(movement.oldPos, movement.newPos)) {
+        towardCamera.push(movement);
+      } else {
+        awayFromCamera.push(movement);
+      }
+    }
+
+    console.log(`Movements: ${towardCamera.length} toward camera, ${awayFromCamera.length} away from camera`);
+
+    // Remove any existing animation clip to avoid conflicts
+    this.animationSystem.removeClip('push-move');
+
+    // Build cell position overrides for away-from-camera movements
+    // These cells need hierarchy at OLD position for correct z-sorting
+    if (awayFromCamera.length > 0) {
+      this.cellPositionOverrides = new Map();
+      for (const movement of awayFromCamera) {
+        this.cellPositionOverrides.set(movement.cellId, {
+          row: movement.oldPos.row,
+          col: movement.oldPos.col
+        });
+      }
+    } else {
+      this.cellPositionOverrides = undefined;
+    }
+
+    // Build all animations
     const animations: Array<{
       nodeId: string;
       channels: Array<{
@@ -372,26 +440,19 @@ class IsometricDemo {
       }>;
     }> = [];
 
-    for (const movement of movements) {
-      const { cellId, oldPos, newPos } = movement;
-
-      // The content group is positioned at [0, 0, 0] relative to its parent cell group
-      // The parent cell group is positioned at the NEW cell's world coordinates
-      // To animate from the old position, we need a RELATIVE offset from new to old
+    // TOWARD CAMERA: hierarchy at NEW position, animate FROM old position (negative offset)
+    for (const movement of towardCamera) {
       const relativeOffset: [number, number, number] = [
-        oldPos.col - newPos.col,  // Difference in column
+        movement.oldPos.col - movement.newPos.col,
         0,
-        oldPos.row - newPos.row   // Difference in row
+        movement.oldPos.row - movement.newPos.row
       ];
-      const targetPos: [number, number, number] = [0, 0, 0]; // End at natural position
+      const targetPos: [number, number, number] = [0, 0, 0];
 
-      // Use the content-based ID so animations work across root and templates
-      const contentGroupId = cellId;
-
-      console.log(`Creating animation for ${contentGroupId}: [${relativeOffset}] -> [${targetPos}]`);
+      console.log(`  ${movement.cellId} (toward): [${relativeOffset}] -> [${targetPos}]`);
 
       animations.push({
-        nodeId: contentGroupId,
+        nodeId: movement.cellId,
         channels: [{
           target: 'position',
           interpolation: 'linear',
@@ -403,13 +464,40 @@ class IsometricDemo {
       });
     }
 
-    // Create a single animation clip with all cell animations
+    // AWAY FROM CAMERA: hierarchy at OLD position, animate TO new position (positive offset)
+    for (const movement of awayFromCamera) {
+      const startPos: [number, number, number] = [0, 0, 0]; // Starts at hierarchy position (OLD)
+      const targetOffset: [number, number, number] = [
+        movement.newPos.col - movement.oldPos.col,
+        0,
+        movement.newPos.row - movement.oldPos.row
+      ];
+
+      console.log(`  ${movement.cellId} (away): [${startPos}] -> [${targetOffset}]`);
+
+      animations.push({
+        nodeId: movement.cellId,
+        channels: [{
+          target: 'position',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startPos, easing: Easing.easeInQuad },
+            { time: duration, value: targetOffset }
+          ]
+        }]
+      });
+    }
+
+    // Create animation clip
     const animationClip: AnimationClip = {
       id: 'push-move',
       duration,
       loop: false,
       animations
     };
+
+    // Rebuild scene with the position overrides now in place
+    this.rebuildSceneData();
 
     // Add and play the animation
     this.animationSystem.addClip(animationClip);
@@ -447,8 +535,21 @@ class IsometricDemo {
       if (state.playing) {
         this.animationFrameId = requestAnimationFrame(animate);
       } else {
+        // Animation complete - clean up and render final state
         this.animationFrameId = null;
         this.isAnimating = false;
+
+        // Remove animation clip so transform overrides are cleared
+        this.animationSystem.removeClip('push-move');
+
+        if (this.cellPositionOverrides) {
+          console.log('Animation complete - clearing position overrides');
+          this.cellPositionOverrides = undefined;
+          // Rebuild scene data without clearing canvas (avoids flash)
+          this.rebuildSceneData();
+          // Render the final state (now with no animation overrides)
+          this.render(false);
+        }
       }
     };
 
@@ -475,7 +576,8 @@ class IsometricDemo {
       height: this.renderHeight,
       highlightPosition: playerPos,
       store: this.store,
-      tagFn: this.tagFn
+      tagFn: this.tagFn,
+      cellPositionOverrides: this.cellPositionOverrides
     });
 
     this.currentScene = result.scene;
@@ -526,7 +628,8 @@ class IsometricDemo {
           height: this.renderHeight,
           highlightPosition: playerPos,
           store: this.store,
-          tagFn: this.tagFn
+          tagFn: this.tagFn,
+          cellPositionOverrides: this.cellPositionOverrides
         });
 
         this.currentScene = result.scene;
@@ -619,12 +722,22 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+      // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
       // main: "_ _ _|1 _ main|_ _ _"
-  };
   
+main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
+                        '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ fifth _ 9|' +
+                        '9 _ _ _ _ _ _ _ 9|9 9 9 9 9 9 9 9 9',
+first: '_ _ _|_ 2 _|_ _ _',
+second: '_ _ _|_ 3 _|_ _ _',
+third: '_ _ _|_ 4 _|_ _ _',
+fourth: '_ _ _|_ 5 _|_ _ _',
+fifth: '_ _ _|_ 6 _|_ _ _'
+  };
+
+
   const store = parseGrids(gridDefinition);
 
   // Tag function: cell '1' is the player

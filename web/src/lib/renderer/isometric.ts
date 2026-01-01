@@ -16,6 +16,12 @@ import { Concrete, isRef, getGrid } from '../core/types.js';
 import { getGridColor } from './colors.js';
 
 /**
+ * Cell position override for scene building.
+ * Maps cell group ID to [row, col] position to use instead of store position.
+ */
+export type CellPositionOverrides = Map<string, { row: number; col: number }>;
+
+/**
  * Render options for the isometric renderer.
  */
 export interface RenderOptions {
@@ -26,6 +32,7 @@ export interface RenderOptions {
   store: GridStore;
   tagFn: TagFn;
   transformOverrides?: TransformOverrides;
+  cellPositionOverrides?: CellPositionOverrides;
 }
 
 /**
@@ -53,7 +60,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn } = options;
+  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -178,7 +185,7 @@ export function buildIsometricScene(
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
-  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn);
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides);
 
   // Build scene
   const scene = builder.build();
@@ -243,6 +250,11 @@ function getFloorColors(gridId: string): { light: string; dark: string } {
     'd': { light: '#7a3a3a', dark: '#200505' },        // Dark red - strong red tint
     'e': { light: '#3a7a5a', dark: '#052010' },        // Dark teal - strong teal tint
     'f': { light: '#7a5a3a', dark: '#201005' },        // Dark brown - strong brown tint
+    'first': { light: '#3a5a7a', dark: '#051020' },    // Dark blue - strong blue tint
+    'second': { light: '#6a3a6a', dark: '#100510' },   // Dark purple - strong purple tint
+    'third': { light: '#7a3a3a', dark: '#200505' },    // Dark red - strong red tint
+    'fourth': { light: '#3a7a5a', dark: '#052010' },   // Dark teal - strong teal tint
+    'fifth': { light: '#7a5a3a', dark: '#201005' },    // Dark brown - strong brown tint
   };
 
   return gridColors[gridId] || { light: '#7a7a3a', dark: '#202005' };
@@ -278,7 +290,8 @@ function renderGridDirect(
   squareSize: number,
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
-  tagFn: TagFn
+  tagFn: TagFn,
+  cellPositionOverrides?: CellPositionOverrides
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
@@ -288,33 +301,7 @@ function renderGridDirect(
     for (let col = 0; col < cols; col++) {
       const child = node.children[row][col];
 
-      // Position in scene (with root offset applied)
-      const x = translation[0] + col;
-      const y = translation[1];
-      const z = translation[2] + row;
-
-      // Create a group for this cell with a predictable ID
-      const cellGroupId = `root-cell-${row}-${col}`;
-      builder.group(cellGroupId, {
-        position: [x, y, z]
-      });
-
-      // Render floor (checkerboard pattern) - skip for RefNodes
-      const isLight = (row + col) % 2 === 0;
-      const floorOffsetX = squareSize / 2;
-      const floorOffsetZ = -squareSize / 2;
-
-      // Don't render floor tile if this cell contains a reference
-      if (isLight && !isRefNode(child)) {
-        builder.group(`root-floor-${row}-${col}`, { layer: -1 });
-        builder.instance('floor-square', {
-          position: [floorOffsetX, 0, floorOffsetZ],
-          color: floorColors.light
-        });
-        builder.endGroup();
-      }
-
-      // Create a content group with content-based ID for animations
+      // Determine content group ID early (needed for position override lookup)
       let contentGroupId: string;
       if (isConcreteNode(child)) {
         contentGroupId = `concrete-${child.id}`;
@@ -324,8 +311,6 @@ function renderGridDirect(
           const primarySuffix = cell.isPrimary === true ? 'primary' :
                                 cell.isPrimary === false ? 'secondary' :
                                 'auto';
-          // Use cell.gridId (from grid store) not child.gridId (from CellNode tree)
-          // because the tree may have the wrong gridId for teleporting references
           contentGroupId = `ref-${cell.gridId}-${primarySuffix}`;
         } else {
           contentGroupId = `ref-${child.gridId}-${row}-${col}`;
@@ -334,6 +319,43 @@ function renderGridDirect(
         contentGroupId = `empty-${row}-${col}`;
       }
 
+      // Check for position override (for direction-aware animation)
+      const posOverride = cellPositionOverrides?.get(contentGroupId);
+      const effectiveRow = posOverride?.row ?? row;
+      const effectiveCol = posOverride?.col ?? col;
+
+      // Position in scene (with root offset applied, using effective position)
+      const x = translation[0] + effectiveCol;
+      const y = translation[1];
+      const z = translation[2] + effectiveRow;
+
+      // Create a group for this cell with a predictable ID
+      const cellGroupId = `root-cell-${row}-${col}`;
+      builder.group(cellGroupId, {
+        position: [x, y, z]
+      });
+
+      // Render floor at ACTUAL grid position (not overridden position)
+      // Floor should stay put even when content hierarchy is moved for z-sorting
+      const isLight = (row + col) % 2 === 0;
+      const floorOffsetX = squareSize / 2;
+      const floorOffsetZ = -squareSize / 2;
+
+      // Don't render floor tile if this cell contains a reference
+      if (isLight && !isRefNode(child)) {
+        // Calculate offset from effective position back to actual position
+        const floorXOffset = (col - effectiveCol) + floorOffsetX;
+        const floorZOffset = (row - effectiveRow) + floorOffsetZ;
+
+        builder.group(`root-floor-${row}-${col}`, { layer: -1 });
+        builder.instance('floor-square', {
+          position: [floorXOffset, 0, floorZOffset],
+          color: floorColors.light
+        });
+        builder.endGroup();
+      }
+
+      // Create a content group with content-based ID for animations (ID computed above)
       builder.group(contentGroupId, {
         position: [0, 0, 0]
       });
@@ -347,7 +369,7 @@ function renderGridDirect(
         const hasStop = tags.has('stop');
 
         let objectType = 'concrete-cube';
-        let yPos = 0.3;
+        let yPos = 0.4;
         let color = getCellColor(child.id);
 
         if (hasStop) {
@@ -358,7 +380,7 @@ function renderGridDirect(
 
         if (hasPlayer) {
           objectType = 'player-octahedron';
-          yPos = 0.3;
+          yPos = 0.8 / Math.sqrt(2); // Octahedron's bottom is at -size/sqrt(2)
           // Keep the cell's normal color
         }
 
@@ -470,7 +492,7 @@ function buildGridTemplate(
         const hasStop = tags.has('stop');
 
         let objectType = 'concrete-cube';
-        let yPos = 0.3;
+        let yPos = 0.4;
         let color = getCellColor(child.id);
 
         if (hasStop) {
@@ -481,7 +503,7 @@ function buildGridTemplate(
 
         if (hasPlayer) {
           objectType = 'player-octahedron';
-          yPos = 0.3;
+          yPos = 0.8 / Math.sqrt(2); // Octahedron's bottom is at -size/sqrt(2)
           // Keep the cell's normal color
         }
 
