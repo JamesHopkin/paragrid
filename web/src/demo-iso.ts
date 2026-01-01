@@ -105,6 +105,13 @@ class IsometricDemo {
         this.exportScene();
       });
     }
+
+    const exportSvgButton = document.getElementById('export-svg');
+    if (exportSvgButton) {
+      exportSvgButton.addEventListener('click', () => {
+        this.exportSceneSVG();
+      });
+    }
   }
 
   private exportScene(): void {
@@ -116,6 +123,37 @@ class IsometricDemo {
     const json = sceneToJSON(this.currentScene);
     console.log('Scene JSON:');
     console.log(json);
+  }
+
+  private exportSceneSVG(): void {
+    if (!this.currentRenderer) {
+      console.warn('No renderer available to export SVG');
+      return;
+    }
+
+    // Get the SVG element from the canvas
+    const svgElement = this.canvas.querySelector('svg');
+    if (!svgElement) {
+      console.warn('No SVG element found in canvas');
+      return;
+    }
+
+    // Serialize the SVG to a string
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgElement);
+
+    // Create a Blob and download link
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'paragrid-scene.svg';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    console.log('SVG exported successfully');
   }
 
   private attemptPush(direction: Direction): void {
@@ -717,7 +755,7 @@ class IsometricDemo {
         <span class="key">W/A/S/D</span> - Move (Push)<br>
         <span class="key">R</span> - Reset<br>
         <strong style="margin-top: 0.5rem; display: inline-block;">Export:</strong><br>
-        See button below for scene JSON
+        See buttons below for scene JSON and SVG
       </div>
     `;
 
@@ -737,19 +775,18 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-      // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
       // main: "_ _ _|1 _ main|_ _ _"
   
-main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
-                        '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ fifth _ 9|' +
-                        '9 _ _ _ _ _ _ _ 9|9 9 9 9 9 9 9 9 9',
-first: '_ _ _|_ 2 _|_ _ _',
-second: '_ _ _|_ 3 _|_ _ _',
-third: '_ _ _|_ 4 _|_ _ _',
-fourth: '_ _ _|_ 5 _|_ _ _',
-fifth: '_ _ _|_ 6 _|_ _ _'
+// main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ *first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
+//                         '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ ~first _ 9|' +
+//                         '9 _ _ _ _ _ _ _ 9|9 9 9 9 9 9 9 9 9',
+// first: '_ _ _|_ 2 _|_ _ _',
+// second: '_ _ _|_ 3 _|_ _ _',
+// third: '_ _ _|_ 4 _|_ _ _',
+// fourth: '_ _ _|_ 5 _|_ _ _'
   };
 
 
