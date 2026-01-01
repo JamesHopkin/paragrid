@@ -167,12 +167,14 @@ export function buildIsometricScene(
   const offsetX = -(cols - 1) / 2;
   const offsetZ = -(rows - 1) / 2;
 
-  // Add base floor with root grid's dark color
+  // Add base floor with root grid's dark color (in layer -1)
   const rootFloorColors = getFloorColors(root.gridId);
+  builder.group('base-floor-layer', { layer: -1 });
   builder.instance('floor-base', {
     position: [baseWidth / 2, 0, -baseHeight / 2],
     color: rootFloorColors.dark
   });
+  builder.endGroup();
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
@@ -304,10 +306,12 @@ function renderGridDirect(
 
       // Don't render floor tile if this cell contains a reference
       if (isLight && !isRefNode(child)) {
+        builder.group(`root-floor-${row}-${col}`, { layer: -1 });
         builder.instance('floor-square', {
           position: [floorOffsetX, 0, floorOffsetZ],
           color: floorColors.light
         });
+        builder.endGroup();
       }
 
       // Create a content group with content-based ID for animations
@@ -358,6 +362,7 @@ function renderGridDirect(
           // Keep the cell's normal color
         }
 
+        // Don't add ID to instance - the parent group already has the content-based ID
         builder.instance(objectType, {
           position: [0, yPos, 0],
           color: color
@@ -448,10 +453,12 @@ function buildGridTemplate(
 
       // Don't render floor tile if this cell contains a reference
       if (isLight && !isRefNode(child)) {
+        builder.group(`${templateId}-floor-${row}-${col}`, { layer: -1 });
         builder.instance('floor-square', {
           position: [floorOffsetX, 0, floorOffsetZ],
           color: floorColors.light
         });
+        builder.endGroup();
       }
 
       // Render cell content
@@ -479,6 +486,7 @@ function buildGridTemplate(
         }
 
         builder.instance(objectType, {
+          id: `concrete-${child.id}`,
           position: [0, yPos, 0],
           color: color
         });
