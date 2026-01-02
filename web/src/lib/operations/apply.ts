@@ -4,6 +4,7 @@
 
 import type { Cell, GridStore } from '../core/types.js';
 import type { CellPosition } from '../core/position.js';
+import type { PushChain, PushResult, TransitionType } from './push.js';
 
 /**
  * Apply a push operation by rotating cell contents along the path.
@@ -14,16 +15,23 @@ import type { CellPosition } from '../core/position.js';
  * Example: [A, B, C] -> [C, A, B]
  *
  * @param store - The grid store containing all grids
- * @param path - List of [position, original_cell] tuples representing the push path
- * @returns New GridStore with updated grids (original store unchanged)
+ * @param path - List of [position, original_cell, transition] tuples representing the push path
+ * @returns PushResult with updated GridStore and the push chain
  */
 export function applyPush(
   store: GridStore,
-  path: ReadonlyArray<readonly [CellPosition, Cell]>
-): GridStore {
+  path: ReadonlyArray<readonly [CellPosition, Cell, TransitionType]>
+): PushResult {
   if (path.length === 0) {
-    return store;
+    return { store, chain: [] };
   }
+
+  // Convert path to PushChain format
+  const chain: PushChain = path.map(([position, cell, transition]) => ({
+    position,
+    cell,
+    transition,
+  }));
 
   // Extract cells and rotate: [c1, c2, c3] -> [c3, c1, c2]
   const cells = path.map(([_, cell]) => cell);
@@ -71,7 +79,7 @@ export function applyPush(
     };
   }
 
-  return newStore;
+  return { store: newStore, chain };
 }
 
 /**

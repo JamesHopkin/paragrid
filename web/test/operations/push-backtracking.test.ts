@@ -69,13 +69,13 @@ describe('TestPushBacktracking', () => {
 
     if (!isPushFailure(result)) {
       // Result: [Empty, A, Ref(inner)]
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Concrete('A'));
-      expect(result.main.cells[0][2]).toEqual(Ref('inner'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][2]).toEqual(Ref('inner'));
 
       // Inner grid should be unchanged (Ref treated as solid, not entered)
-      expect(result.inner.cells[0][0]).toEqual(Concrete('X'));
-      expect(result.inner.cells[0][1]).toEqual(Concrete('STOP'));
+      expect(result.store.inner.cells[0][0]).toEqual(Concrete('X'));
+      expect(result.store.inner.cells[0][1]).toEqual(Concrete('STOP'));
     }
   });
 
@@ -107,8 +107,8 @@ describe('TestPushBacktracking', () => {
 
     if (!isPushFailure(resultSimple) && !isPushFailure(resultBacktrack)) {
       // Results should be identical
-      expect(resultSimple.main.cells).toEqual(resultBacktrack.main.cells);
-      expect(resultSimple.inner.cells).toEqual(resultBacktrack.inner.cells);
+      expect(resultSimple.store.main.cells).toEqual(resultBacktrack.store.main.cells);
+      expect(resultSimple.store.inner.cells).toEqual(resultBacktrack.store.inner.cells);
     }
   });
 
@@ -169,9 +169,9 @@ describe('TestPushBacktracking', () => {
 
     if (!isPushFailure(result)) {
       // Result: [Empty, A, Ref(B)]
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Concrete('A'));
-      expect(result.main.cells[0][2]).toEqual(Ref('B'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][2]).toEqual(Ref('B'));
     }
   });
 });

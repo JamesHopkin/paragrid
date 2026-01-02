@@ -51,11 +51,11 @@ describe('TestPushSwallowing', () => {
     // Pushing east enters from west (right side), so ball goes to position (0,1)
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Ref('pocket'));
-      expect(result.main.cells[0][2].type).toBe('empty');
-      expect(result.pocket.cells[0][0].type).toBe('empty');
-      expect(result.pocket.cells[0][1]).toEqual(Concrete('ball'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Ref('pocket'));
+      expect(result.store.main.cells[0][2].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0].type).toBe('empty');
+      expect(result.store.pocket.cells[0][1]).toEqual(Concrete('ball'));
     }
   });
 
@@ -92,11 +92,11 @@ describe('TestPushSwallowing', () => {
     // Pushing west enters from east (left side), so ball goes to position (0,0)
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Ref('pocket'));
-      expect(result.main.cells[0][2].type).toBe('empty');
-      expect(result.pocket.cells[0][0]).toEqual(Concrete('ball'));
-      expect(result.pocket.cells[0][1].type).toBe('empty');
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Ref('pocket'));
+      expect(result.store.main.cells[0][2].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0]).toEqual(Concrete('ball'));
+      expect(result.store.pocket.cells[0][1].type).toBe('empty');
     }
   });
 
@@ -134,11 +134,11 @@ describe('TestPushSwallowing', () => {
     // Pushing south enters from north (bottom edge), so ball goes to position (1,0)
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[1][0]).toEqual(Ref('pocket'));
-      expect(result.main.cells[2][0].type).toBe('empty');
-      expect(result.pocket.cells[0][0].type).toBe('empty');
-      expect(result.pocket.cells[1][0]).toEqual(Concrete('ball'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[1][0]).toEqual(Ref('pocket'));
+      expect(result.store.main.cells[2][0].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0].type).toBe('empty');
+      expect(result.store.pocket.cells[1][0]).toEqual(Concrete('ball'));
     }
   });
 
@@ -176,11 +176,11 @@ describe('TestPushSwallowing', () => {
     // Pushing north enters from south (top edge), so ball goes to position (0,0)
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[1][0]).toEqual(Ref('pocket'));
-      expect(result.main.cells[2][0].type).toBe('empty');
-      expect(result.pocket.cells[0][0]).toEqual(Concrete('ball'));
-      expect(result.pocket.cells[1][0].type).toBe('empty');
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[1][0]).toEqual(Ref('pocket'));
+      expect(result.store.main.cells[2][0].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0]).toEqual(Concrete('ball'));
+      expect(result.store.pocket.cells[1][0].type).toBe('empty');
     }
   });
 
@@ -266,12 +266,12 @@ describe('TestPushSwallowing', () => {
     // Instead should push Ref as solid: [Empty, Ref(inner), 1]
     expect(isPushFailure(resultDefault)).toBe(false);
     if (!isPushFailure(resultDefault)) {
-      expect(resultDefault.main.cells[0][0].type).toBe('empty');
-      expect(resultDefault.main.cells[0][1]).toEqual(Ref('inner'));
-      expect(resultDefault.main.cells[0][2]).toEqual(Concrete('1'));
+      expect(resultDefault.store.main.cells[0][0].type).toBe('empty');
+      expect(resultDefault.store.main.cells[0][1]).toEqual(Ref('inner'));
+      expect(resultDefault.store.main.cells[0][2]).toEqual(Concrete('1'));
       // Inner should still be empty (no swallowing should have occurred)
-      expect(resultDefault.inner.cells[0][0].type).toBe('empty');
-      expect(resultDefault.inner.cells[0][1].type).toBe('empty');
+      expect(resultDefault.store.inner.cells[0][0].type).toBe('empty');
+      expect(resultDefault.store.inner.cells[0][1].type).toBe('empty');
     }
 
     // Test with SWALLOW_FIRST strategy - now swallow SHOULD be tried first and succeed
@@ -285,12 +285,12 @@ describe('TestPushSwallowing', () => {
     // Should swallow 1 into inner
     expect(isPushFailure(resultSwallowFirst)).toBe(false);
     if (!isPushFailure(resultSwallowFirst)) {
-      expect(resultSwallowFirst.main.cells[0][0].type).toBe('empty');
-      expect(resultSwallowFirst.main.cells[0][1]).toEqual(Ref('inner'));
-      expect(resultSwallowFirst.main.cells[0][2].type).toBe('empty');
+      expect(resultSwallowFirst.store.main.cells[0][0].type).toBe('empty');
+      expect(resultSwallowFirst.store.main.cells[0][1]).toEqual(Ref('inner'));
+      expect(resultSwallowFirst.store.main.cells[0][2].type).toBe('empty');
       // 1 should be in inner now
-      expect(resultSwallowFirst.inner.cells[0][0].type).toBe('empty');
-      expect(resultSwallowFirst.inner.cells[0][1]).toEqual(Concrete('1'));
+      expect(resultSwallowFirst.store.inner.cells[0][0].type).toBe('empty');
+      expect(resultSwallowFirst.store.inner.cells[0][1]).toEqual(Concrete('1'));
     }
   });
 
@@ -334,11 +334,11 @@ describe('TestPushSwallowing', () => {
     // Pushing east enters from west (right side), so Ref(other) goes to position (0,1)
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Ref('pocket'));
-      expect(result.main.cells[0][2].type).toBe('empty');
-      expect(result.pocket.cells[0][0].type).toBe('empty');
-      expect(result.pocket.cells[0][1]).toEqual(Ref('other'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Ref('pocket'));
+      expect(result.store.main.cells[0][2].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0].type).toBe('empty');
+      expect(result.store.pocket.cells[0][1]).toEqual(Ref('other'));
     }
   });
 
@@ -415,8 +415,8 @@ describe('TestPushSwallowing', () => {
     if (!isPushFailure(result)) {
       // If push succeeded, the wall should still be in main grid, not in pocket
       // Check that pocket is still empty (no swallowing occurred)
-      expect(result.pocket.cells[0][0].type).toBe('empty');
-      expect(result.pocket.cells[0][1].type).toBe('empty');
+      expect(result.store.pocket.cells[0][0].type).toBe('empty');
+      expect(result.store.pocket.cells[0][1].type).toBe('empty');
     }
   });
 

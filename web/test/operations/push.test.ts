@@ -28,9 +28,9 @@ describe('TestPush', () => {
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
       // After push: [A, B, Empty] -> [Empty, A, B]
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Concrete('A'));
-      expect(result.main.cells[0][2]).toEqual(Concrete('B'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][2]).toEqual(Concrete('B'));
     }
   });
 
@@ -127,13 +127,13 @@ describe('TestPush', () => {
     if (!isPushFailure(result)) {
       // After push: A -> X -> Y -> Empty
       // Rotation: [A, X, Y, Empty] -> [Empty, A, X, Y]
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Ref('inner')); // Ref not pushed
-      expect(result.main.cells[0][2]).toEqual(Concrete('Y'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Ref('inner')); // Ref not pushed
+      expect(result.store.main.cells[0][2]).toEqual(Concrete('Y'));
 
       // Inner grid updated
-      expect(result.inner.cells[0][0]).toEqual(Concrete('A'));
-      expect(result.inner.cells[0][1]).toEqual(Concrete('X'));
+      expect(result.store.inner.cells[0][0]).toEqual(Concrete('A'));
+      expect(result.store.inner.cells[0][1]).toEqual(Concrete('X'));
     }
   });
 
@@ -167,12 +167,12 @@ describe('TestPush', () => {
       // Path: [A, Ref(locked), Empty]
       // Ref acts as solid object, gets pushed
       // Rotation: [A, Ref, Empty] -> [Empty, A, Ref]
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Concrete('A'));
-      expect(result.main.cells[0][2]).toEqual(Ref('locked'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][2]).toEqual(Ref('locked'));
 
       // Locked grid unchanged
-      expect(result.locked.cells[0][0]).toEqual(Concrete('SECRET'));
+      expect(result.store.locked.cells[0][0]).toEqual(Concrete('SECRET'));
     }
   });
 
@@ -203,12 +203,12 @@ describe('TestPush', () => {
     expect(isPushFailure(result)).toBe(false);
     if (!isPushFailure(result)) {
       // Both grids should be updated
-      expect(result.main).toBeDefined();
-      expect(result.inner).toBeDefined();
+      expect(result.store.main).toBeDefined();
+      expect(result.store.inner).toBeDefined();
 
       // Verify changes
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.inner.cells[0][0]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.inner.cells[0][0]).toEqual(Concrete('A'));
     }
   });
 
@@ -229,12 +229,12 @@ describe('TestPush', () => {
     if (!isPushFailure(result)) {
       // After push: [A, B, Empty, C, D] -> [Empty, A, B, C, D]
       // Only the first 3 cells should be affected
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][1]).toEqual(Concrete('A'));
-      expect(result.main.cells[0][2]).toEqual(Concrete('B'));
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][1]).toEqual(Concrete('A'));
+      expect(result.store.main.cells[0][2]).toEqual(Concrete('B'));
       // C and D should remain unchanged
-      expect(result.main.cells[0][3]).toEqual(Concrete('C'));
-      expect(result.main.cells[0][4]).toEqual(Concrete('D'));
+      expect(result.store.main.cells[0][3]).toEqual(Concrete('C'));
+      expect(result.store.main.cells[0][4]).toEqual(Concrete('D'));
     }
   });
 
@@ -267,11 +267,11 @@ describe('TestPush', () => {
       // Path should be: [A, X, Empty]
       // After rotation: [Empty, A, X]
       // Main[0,0] should be Empty, Main[0,2] should still be C (unchanged)
-      expect(result.main.cells[0][0].type).toBe('empty');
-      expect(result.main.cells[0][2]).toEqual(Concrete('C')); // C unchanged
+      expect(result.store.main.cells[0][0].type).toBe('empty');
+      expect(result.store.main.cells[0][2]).toEqual(Concrete('C')); // C unchanged
       // Inner should have [A, X]
-      expect(result.inner.cells[0][0]).toEqual(Concrete('A'));
-      expect(result.inner.cells[0][1]).toEqual(Concrete('X'));
+      expect(result.store.inner.cells[0][0]).toEqual(Concrete('A'));
+      expect(result.store.inner.cells[0][1]).toEqual(Concrete('X'));
     }
   });
 
@@ -326,12 +326,12 @@ describe('TestPush', () => {
     // Path: [1, main, 5] where main swallows 5
     // 5 enters main from west at middle right = [1, 2]
     // Rotation: [_, 1, main] with 5 at [1, 2]
-    expect(result.main.cells[0][0].type).toBe('empty');
-    expect(result.main.cells[0][1]).toEqual(Concrete('1'));
-    expect(result.main.cells[0][2]).toEqual(Ref('main'));
+    expect(result.store.main.cells[0][0].type).toBe('empty');
+    expect(result.store.main.cells[0][1]).toEqual(Concrete('1'));
+    expect(result.store.main.cells[0][2]).toEqual(Ref('main'));
 
     // Cell 5 should have been swallowed into position [1, 2]
-    expect(result.main.cells[1][2]).toEqual(Concrete('5'));
+    expect(result.store.main.cells[1][2]).toEqual(Concrete('5'));
   });
 
   it('test_push_east_with_self_ref_portal', () => {
@@ -372,11 +372,11 @@ describe('TestPush', () => {
     // Expected outcome with PORTAL strategy:
     // 1 enters main from east at middle left = [1, 0]
     // Rotation: [_, main, 5] with 1 at [1, 0]
-    expect(result.main.cells[0][0].type).toBe('empty');
-    expect(result.main.cells[0][1]).toEqual(Ref('main'));
-    expect(result.main.cells[0][2]).toEqual(Concrete('5'));
+    expect(result.store.main.cells[0][0].type).toBe('empty');
+    expect(result.store.main.cells[0][1]).toEqual(Ref('main'));
+    expect(result.store.main.cells[0][2]).toEqual(Concrete('5'));
 
     // Cell 1 should have entered at position [1, 0]
-    expect(result.main.cells[1][0]).toEqual(Concrete('1'));
+    expect(result.store.main.cells[1][0]).toEqual(Concrete('1'));
   });
 });

@@ -15,6 +15,41 @@ import { applyPush } from './apply.js';
 import type { TagFn } from '../tagging/types.js';
 
 /**
+ * How a position in the push chain was reached.
+ * - 'enter': Entered a grid through a Ref cell
+ * - 'exit': Exited from a nested grid to parent
+ * - 'move': Moved within the same grid
+ * - null: Initial position (or cycle back to start)
+ */
+export type TransitionType = 'enter' | 'exit' | 'move' | null;
+
+/**
+ * A single entry in a push chain, representing a cell position and its content
+ * before the push operation.
+ */
+export interface PushChainEntry {
+  readonly position: CellPosition;
+  readonly cell: Cell;
+  readonly transition: TransitionType;
+  // Future: Add more metadata fields for custom animations
+  // readonly metadata?: { duration?: number; easing?: string; ... }
+}
+
+/**
+ * The complete chain of positions and cells involved in a push operation.
+ * Represents the full path traversed during a push, from start to end.
+ */
+export type PushChain = ReadonlyArray<PushChainEntry>;
+
+/**
+ * Result of a successful push operation.
+ */
+export interface PushResult {
+  readonly store: GridStore;
+  readonly chain: PushChain;
+}
+
+/**
  * Simple push operation without backtracking.
  *
  * The push operation moves cell contents forward along a path, with the contents
@@ -32,7 +67,7 @@ import type { TagFn } from '../tagging/types.js';
  * @param rules - RuleSet governing Ref handling behavior
  * @param tagFn - Optional function to tag cells (e.g., for 'stop' tag)
  * @param maxDepth - Maximum traversal depth to prevent infinite loops
- * @returns New GridStore with pushed contents if successful, PushFailure with reason if push fails
+ * @returns PushResult with new GridStore and push chain if successful, PushFailure with reason if push fails
  */
 export function pushSimple(
   store: GridStore,
@@ -41,7 +76,7 @@ export function pushSimple(
   rules: RuleSet,
   tagFn?: TagFn,
   maxDepth: number = 1000
-): GridStore | PushFailure {
+): PushResult | PushFailure {
   // Check if starting cell has stop tag - stop-tagged cells cannot be pushed
   const startCell = getCell(store, start);
   if (tagFn && tagFn(startCell).has('stop')) {
@@ -54,11 +89,12 @@ export function pushSimple(
 
   // Initialize navigator
   const nav = new Navigator(store, start, direction);
-  const path: CellPosition[] = [start];
+  const path: Array<[CellPosition, TransitionType]> = [[start, null]];
   const visited = new Set<string>([`${start.gridId},${start.row},${start.col}`]);
   let depth = 0;
 
   // Try to advance to first position
+  const prevGridId = nav.current.gridId;
   if (!nav.tryAdvance()) {
     return {
       reason: 'BLOCKED',
@@ -66,6 +102,8 @@ export function pushSimple(
       details: 'Cannot advance from start position (hit edge)',
     };
   }
+  // Track the transition type for the current position
+  let currentTransition: TransitionType = nav.current.gridId !== prevGridId ? 'exit' : 'move';
 
   while (depth < maxDepth) {
     depth++;
@@ -75,12 +113,11 @@ export function pushSimple(
 
     // Check for empty (success)
     if (isEmpty(currentCell)) {
-      path.push(nav.current);
+      path.push([nav.current, currentTransition]);
       // Build final path with cells for applyPush
-      const finalPath: Array<readonly [CellPosition, Cell]> = path.map(pos => [
-        pos,
-        getCell(store, pos),
-      ]);
+      const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = path.map(
+        ([pos, trans]) => [pos, getCell(store, pos), trans]
+      );
       return applyPush(store, finalPath);
     }
 
@@ -98,12 +135,11 @@ export function pushSimple(
     if (visited.has(currentKey)) {
       // Cycle detected - check if cycling back to start (success) or elsewhere (failure)
       if (nav.current.equals(start)) {
-        path.push(nav.current);
+        path.push([nav.current, currentTransition]);
         // Build final path with cells for applyPush
-        const finalPath: Array<readonly [CellPosition, Cell]> = path.map(pos => [
-          pos,
-          getCell(store, pos),
-        ]);
+        const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = path.map(
+          ([pos, trans]) => [pos, getCell(store, pos), trans]
+        );
         return applyPush(store, finalPath);
       } else {
         return {
@@ -117,7 +153,7 @@ export function pushSimple(
     visited.add(currentKey);
 
     // Get S (source) and T (target)
-    const S_pos = path.length > 0 ? path[path.length - 1] : null;
+    const S_pos = path.length > 0 ? path[path.length - 1][0] : null;
     const S_cell = S_pos ? getCell(store, S_pos) : null;
     const T_cell = currentCell;
 
@@ -149,19 +185,25 @@ export function pushSimple(
       };
     }
 
-    // Execute the selected strategy
+    // Execute the selected strategy and compute next transition
     if (selectedStrategy === RefStrategyType.SOLID) {
-      path.push(nav.current);
+      path.push([nav.current, currentTransition]);
+      const beforeGridId = nav.current.gridId;
       nav.advance();
+      currentTransition = nav.current.gridId !== beforeGridId ? 'exit' : 'move';
     } else if (selectedStrategy === RefStrategyType.PORTAL) {
       nav.enter(rules);
+      currentTransition = 'enter';
     } else if (selectedStrategy === RefStrategyType.SWALLOW) {
-      path.push(nav.current);
+      path.push([nav.current, currentTransition]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       nav.flip();
+      const beforeGridId = nav.current.gridId;
       nav.advance();
+      currentTransition = nav.current.gridId !== beforeGridId ? 'exit' : 'move';
       nav.enter(rules);
+      currentTransition = 'enter';
     }
   }
 
@@ -176,10 +218,11 @@ export function pushSimple(
  * State for backtracking in push operations.
  */
 interface State {
-  readonly path: CellPosition[];
+  readonly path: Array<[CellPosition, TransitionType]>;
   readonly nav: Navigator;
   readonly strategies: RefStrategyType[];
   readonly visited: Set<string>;
+  readonly nextTransition: TransitionType;
 }
 
 /**
@@ -200,7 +243,7 @@ interface State {
  * @param tagFn - Optional function to tag cells (e.g., for 'stop' tag)
  * @param maxDepth - Maximum traversal depth to prevent infinite loops
  * @param maxBacktrackDepth - Maximum number of backtracking attempts
- * @returns New GridStore with pushed contents if successful, PushFailure with reason if push fails
+ * @returns PushResult with new GridStore and push chain if successful, PushFailure with reason if push fails
  */
 export function push(
   store: GridStore,
@@ -210,16 +253,17 @@ export function push(
   tagFn?: TagFn,
   maxDepth: number = 1000,
   maxBacktrackDepth: number = 10
-): GridStore | PushFailure {
+): PushResult | PushFailure {
   /**
    * Create new state or return termination status.
    *
    * @returns 'succeed' if push succeeds, PushFailure if it fails, or a new State to continue processing
    */
   function makeNewState(
-    path: CellPosition[],
+    path: Array<[CellPosition, TransitionType]>,
     nav: Navigator,
-    visited: Set<string>
+    visited: Set<string>,
+    nextTransition: TransitionType
   ): 'succeed' | PushFailure | State {
     // Check for empty (success)
     const currentCell = getCell(store, nav.current);
@@ -259,7 +303,7 @@ export function push(
     const strategies: RefStrategyType[] = [];
 
     // Get S (source) and T (target)
-    const S_pos = path.length > 0 ? path[path.length - 1] : null;
+    const S_pos = path.length > 0 ? path[path.length - 1][0] : null;
     const S_cell = S_pos ? getCell(store, S_pos) : null;
     const T_cell = currentCell;
 
@@ -291,6 +335,7 @@ export function push(
       nav,
       strategies,
       visited: newVisited,
+      nextTransition,
     };
   }
 
@@ -311,6 +356,7 @@ export function push(
   const initialVisited = new Set<string>([`${start.gridId},${start.row},${start.col}`]);
 
   // Try to advance to first position
+  const prevGridId = nav.current.gridId;
   if (!nav.tryAdvance()) {
     return {
       reason: 'BLOCKED',
@@ -318,17 +364,18 @@ export function push(
       details: 'Cannot advance from start position (hit edge)',
     };
   }
+  const firstTransition: TransitionType = nav.current.gridId !== prevGridId ? 'exit' : 'move';
 
   // Create initial state
-  const initialState = makeNewState([start], nav, initialVisited);
+  const initialState = makeNewState([[start, null]], nav, initialVisited, firstTransition);
   if (typeof initialState === 'object' && 'reason' in initialState) {
     return initialState; // Failed immediately
   }
   if (initialState === 'succeed') {
     // Immediate success - pushed directly into empty
-    const finalPath: Array<readonly [CellPosition, Cell]> = [
-      [start, getCell(store, start)],
-      [nav.current, getCell(store, nav.current)],
+    const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = [
+      [start, getCell(store, start), null],
+      [nav.current, getCell(store, nav.current), firstTransition],
     ];
     return applyPush(store, finalPath);
   }
@@ -353,29 +400,37 @@ export function push(
     const strategy = state.strategies.shift()!;
 
     const newPath = [...state.path];
+    let nextTransition: TransitionType;
+
     if (strategy === RefStrategyType.SOLID) {
-      newPath.push(navClone.current);
+      newPath.push([navClone.current, state.nextTransition]);
+      const beforeGridId = navClone.current.gridId;
       navClone.advance();
+      nextTransition = navClone.current.gridId !== beforeGridId ? 'exit' : 'move';
     } else if (strategy === RefStrategyType.PORTAL) {
       navClone.enter(rules);
+      nextTransition = 'enter';
     } else if (strategy === RefStrategyType.SWALLOW) {
-      newPath.push(navClone.current);
+      newPath.push([navClone.current, state.nextTransition]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       navClone.flip();
+      const beforeGridId = navClone.current.gridId;
       navClone.advance();
       navClone.enter(rules);
+      nextTransition = 'enter';
+    } else {
+      throw new Error(`Unknown strategy: ${strategy}`);
     }
 
-    const newState = makeNewState(newPath, navClone, state.visited);
+    const newState = makeNewState(newPath, navClone, state.visited, nextTransition);
 
     if (newState === 'succeed') {
       // Build final path with cells for applyPush
-      const pathWithCells: Array<readonly [CellPosition, Cell]> = newPath.map(pos => [
-        pos,
-        getCell(store, pos),
-      ]);
-      pathWithCells.push([navClone.current, getCell(store, navClone.current)]);
+      const pathWithCells: Array<readonly [CellPosition, Cell, TransitionType]> = newPath.map(
+        ([pos, trans]) => [pos, getCell(store, pos), trans]
+      );
+      pathWithCells.push([navClone.current, getCell(store, navClone.current), nextTransition]);
       return applyPush(store, pathWithCells);
     } else if (typeof newState === 'object' && 'reason' in newState) {
       // Store failure for potential return if all strategies exhausted
