@@ -15,6 +15,7 @@ import type { TagFn } from '../tagging/types.js';
 import { Concrete, isRef, getGrid, getCell } from '../core/types.js';
 import { getGridColor } from './colors.js';
 import type { ExitTransformation } from '../navigator/exit-transform.js';
+import { analyze } from '../analyzer/index.js';
 
 /**
  * Cell position override for scene building.
@@ -634,6 +635,7 @@ function renderExitPreview(
   if (cell.type === 'concrete') {
     // Render concrete cell
     const tags = tagFn(cell);
+    const hasPlayer = tags.has('player');
     const hasStop = tags.has('stop');
 
     let objectType = 'concrete-cube';
@@ -646,20 +648,56 @@ function renderExitPreview(
       color = '#4a3a5a';
     }
 
+    if (hasPlayer) {
+      objectType = 'player-octahedron';
+      yPos = (0.8 / Math.sqrt(2)) * scale; // Octahedron's bottom is at -size/sqrt(2), scaled
+      // Keep the cell's normal color
+    }
+
     builder.instance(objectType, {
       position: [0, yPos, 0],
       scale: [scale, scale, scale],
       color: color
     });
   } else if (isRef(cell)) {
-    // For reference cells, we need to render the entire referenced grid
-    // This requires analyzing the referenced grid
-    // For now, we'll render a placeholder cube
-    builder.instance('concrete-cube', {
-      position: [0, 0.4 * scale, 0],
-      scale: [scale, scale, scale],
-      color: '#888888' // Grey placeholder
-    });
+    // For reference cells, render the entire referenced grid at scale
+    const refGridId = cell.gridId;
+    const refGrid = getGrid(store, refGridId);
+
+    if (refGrid) {
+      // Analyze the referenced grid to get its cell tree
+      const refCellTree = analyze(store, refGridId, refGrid.cols, refGrid.rows);
+
+      if (isNestedNode(refCellTree)) {
+        // Try to find existing template for this reference
+        let refTemplateId = nodeToTemplateId.get(refCellTree);
+
+        // If template doesn't exist, we need to build it on-demand
+        if (!refTemplateId) {
+          // Create a unique template ID for this exit preview reference
+          refTemplateId = `exit-preview-grid-${index}-${refGridId}`;
+
+          // Build the template for this grid
+          const floorColors = getFloorColors(refGridId);
+          buildGridTemplate(refCellTree, refTemplateId, builder, floorColors, 0.9, nodeToTemplateId, store, tagFn);
+
+          // Don't add to nodeToTemplateId map since it's only for this exit preview
+        }
+
+        // Use the template
+        const refRows = refCellTree.children.length;
+        const refCols = refCellTree.children[0]?.length || 0;
+
+        // The referenced grid should fill the exit preview cell (which is scale×scale in size)
+        const scaleX = scale / refCols;
+        const scaleZ = scale / refRows;
+        const scaleY = scale / Math.max(refCols, refRows);
+
+        builder.reference(refTemplateId, {
+          scale: [scaleX, scaleY, scaleZ]
+        });
+      }
+    }
   }
   // Empty cells render nothing
 
