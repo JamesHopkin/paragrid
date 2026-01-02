@@ -17,6 +17,7 @@ import { analyze } from './lib/analyzer/index.js';
 import { renderIsometric, buildIsometricScene, type CellPositionOverrides } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
+import { computeExitTransformation, getEdgePosition, type ExitTransformation } from './lib/navigator/exit-transform.js';
 
 /**
  * Interactive demo class.
@@ -763,6 +764,40 @@ class IsometricDemo {
   }
 
   /**
+   * Compute exit previews for all four compass directions.
+   * Checks if it's possible to exit in each direction.
+   * Returns array of exit transformations (may be empty).
+   */
+  private computeExitPreviews(): ExitTransformation[] {
+    const playerPos = this.playerPosition;
+    if (!playerPos) return [];
+
+    const directions = [Direction.N, Direction.S, Direction.E, Direction.W];
+    const previews: ExitTransformation[] = [];
+
+    for (const direction of directions) {
+      // Get a position on the edge for this direction
+      const edgePos = getEdgePosition(this.store, playerPos.gridId, direction);
+      if (!edgePos) continue;
+
+      // Compute exit transformation
+      const result = computeExitTransformation(
+        this.store,
+        playerPos.gridId,
+        direction,
+        edgePos,
+        createRuleSet()
+      );
+
+      if (result) {
+        previews.push(result);
+      }
+    }
+
+    return previews;
+  }
+
+  /**
    * Rebuild scene data (analyze + build scene) without rendering.
    * Used when we want to prepare for animation.
    */
@@ -776,6 +811,9 @@ class IsometricDemo {
     // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
     this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
 
+    // Compute exit previews for all directions
+    const exitPreviews = this.computeExitPreviews();
+
     // Phase 2: Build scene from CellTree (without rendering)
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
@@ -784,7 +822,8 @@ class IsometricDemo {
       store: this.store,
       tagFn: this.tagFn,
       cellPositionOverrides: this.cellPositionOverrides,
-      animatingCells: this.animatingCells
+      animatingCells: this.animatingCells,
+      exitPreviews: exitPreviews
     });
 
     this.currentScene = result.scene;
@@ -829,6 +868,9 @@ class IsometricDemo {
         // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
         this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
 
+        // Compute exit previews for all directions
+        const exitPreviews = this.computeExitPreviews();
+
         // Phase 2: Build scene from CellTree (without rendering yet)
         const result = buildIsometricScene(this.currentCellTree, {
           width: this.renderWidth,
@@ -837,7 +879,8 @@ class IsometricDemo {
           store: this.store,
           tagFn: this.tagFn,
           cellPositionOverrides: this.cellPositionOverrides,
-          animatingCells: this.animatingCells
+          animatingCells: this.animatingCells,
+          exitPreviews: exitPreviews
         });
 
         this.currentScene = result.scene;
@@ -932,7 +975,7 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main 2 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
       // main: '9 _ _|_ a b|1 _ _',

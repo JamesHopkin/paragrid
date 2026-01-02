@@ -12,8 +12,9 @@ import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } fr
 import type { CellPosition } from '../core/position.js';
 import type { GridStore } from '../core/types.js';
 import type { TagFn } from '../tagging/types.js';
-import { Concrete, isRef, getGrid } from '../core/types.js';
+import { Concrete, isRef, getGrid, getCell } from '../core/types.js';
 import { getGridColor } from './colors.js';
+import type { ExitTransformation } from '../navigator/exit-transform.js';
 
 /**
  * Cell position override for scene building.
@@ -34,6 +35,7 @@ export interface RenderOptions {
   transformOverrides?: TransformOverrides;
   cellPositionOverrides?: CellPositionOverrides;
   animatingCells?: Set<string>; // Cell IDs currently animating (for floor tile rendering)
+  exitPreviews?: ExitTransformation[]; // Optional exit previews to render
 }
 
 /**
@@ -61,7 +63,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, animatingCells } = options;
+  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, animatingCells, exitPreviews } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -187,6 +189,13 @@ export function buildIsometricScene(
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
   renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides, animatingCells);
+
+  // PASS 4: Render exit previews if provided
+  if (exitPreviews && exitPreviews.length > 0) {
+    for (let i = 0; i < exitPreviews.length; i++) {
+      renderExitPreview(exitPreviews[i], builder, [offsetX, 0, offsetZ], cols, rows, store, tagFn, nodeToTemplateId, i);
+    }
+  }
 
   // Build scene
   const scene = builder.build();
@@ -551,5 +560,109 @@ function buildGridTemplate(
   }
 
   builder.endTemplate();
+}
+
+/**
+ * Render exit preview cell to the east of the current grid.
+ * Shows the cell content at correct scale and position.
+ *
+ * POSITIONING SUMMARY:
+ * - Current grid: 8x8 cells (for example), each cell is 1.0 units in world space
+ * - Current grid is INSIDE a reference cell in the parent grid at position (refCol, refRow)
+ * - Exit cell is at position (exitCol, exitRow) in the parent grid
+ * - Scale: The entire current grid (8x8) fits into ONE parent cell, so scale = 8
+ * - Goal: Show the exit cell (which is scale×scale units large) at the correct position
+ *
+ * Example: If current ref is at parent (2, 3) and exit is at parent (3, 3):
+ * - They're 1 parent-cell apart horizontally
+ * - In current grid's coordinates: 1 parent-cell = 8 current-cells
+ * - But we want to position the CENTER of the exit cell, not its edge
+ * - So offset = (1 - 0.5) * 8 = 4.0 units from the east edge
+ */
+function renderExitPreview(
+  exitPreview: ExitTransformation,
+  builder: SceneBuilder,
+  rootTranslation: readonly [number, number, number],
+  rootCols: number,
+  rootRows: number,
+  store: GridStore,
+  tagFn: TagFn,
+  nodeToTemplateId: Map<NestedNode, string>,
+  index: number = 0
+): void {
+  const { exitPosition, scale, currentRefPosition, targetGridId } = exitPreview;
+
+  // Get the cell at the exit position
+  const targetGrid = getGrid(store, targetGridId);
+  if (!targetGrid) return;
+
+  const cell = getCell(targetGrid, exitPosition.row, exitPosition.col);
+  if (!cell) return;
+
+  // Calculate position in world space
+  // The exit cell is in the parent grid coordinate system
+  // We need to map it relative to the current grid's position
+  if (!currentRefPosition) return;
+
+  // Current grid occupies position [currentRefPosition.row, currentRefPosition.col] in parent
+  // Exit cell is at [exitPosition.row, exitPosition.col] in parent
+  // Each parent cell = scale units in current grid's coordinate system
+
+  // Offset from current grid's ref position to exit position (in parent cells)
+  const parentColDiff = exitPosition.col - currentRefPosition.col;
+  const parentRowDiff = exitPosition.row - currentRefPosition.row;
+
+  // Convert to current grid's coordinate system
+  // Current grid origin (cell 0,0) maps to parent cell's origin at (refCol, refRow)
+  // Exit cell at (exitCol, exitRow) in parent has its CENTER at (exitCol + 0.5, exitRow + 0.5)
+  // In current units, this is at: ((exitCol + 0.5) - refCol, (exitRow + 0.5) - refRow) * scale
+  // Which simplifies to: (parentColDiff + 0.5, parentRowDiff + 0.5) * scale
+  const xOffset = (parentColDiff + 0.5) * scale;
+  const zOffset = (parentRowDiff + 0.5) * scale;
+
+  // Position in scene (current grid origin is at rootTranslation)
+  const x = rootTranslation[0] + xOffset;
+  const y = rootTranslation[1];
+  const z = rootTranslation[2] + zOffset;
+
+  // Create group for exit preview cell
+  builder.group(`exit-preview-cell-${index}`, {
+    position: [x, y, z]
+  });
+
+  // Render cell content based on type
+  if (cell.type === 'concrete') {
+    // Render concrete cell
+    const tags = tagFn(cell);
+    const hasStop = tags.has('stop');
+
+    let objectType = 'concrete-cube';
+    let yPos = 0.4 * scale; // Scale the height
+    let color = getCellColor(cell.id);
+
+    if (hasStop) {
+      objectType = 'stop-box';
+      yPos = 0;
+      color = '#4a3a5a';
+    }
+
+    builder.instance(objectType, {
+      position: [0, yPos, 0],
+      scale: [scale, scale, scale],
+      color: color
+    });
+  } else if (isRef(cell)) {
+    // For reference cells, we need to render the entire referenced grid
+    // This requires analyzing the referenced grid
+    // For now, we'll render a placeholder cube
+    builder.instance('concrete-cube', {
+      position: [0, 0.4 * scale, 0],
+      scale: [scale, scale, scale],
+      color: '#888888' // Grey placeholder
+    });
+  }
+  // Empty cells render nothing
+
+  builder.endGroup();
 }
 
