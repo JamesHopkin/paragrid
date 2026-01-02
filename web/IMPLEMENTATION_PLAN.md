@@ -1044,6 +1044,81 @@ npx tsc --noEmit
 
 ---
 
-*Last Updated: 2025-12-30*
+## Visualization & Demo Features
+
+**Status**: Prototype isometric renderer and interactive demo (post-core implementation)
+
+### ✅ Completed Features
+
+#### Isometric Renderer (`src/lib/renderer/isometric.ts`)
+- [x] Two-phase rendering: analyze → render using CellTree
+- [x] Template-based rendering for recursive grid references
+- [x] Cycle handling with unique templates per depth level
+- [x] Grid-specific checkerboard floor colors
+- [x] Floating cubes for concrete cells, octahedrons for player
+- [x] Half-height boxes for 'stop' tagged cells
+- [x] Proper scaling and nesting of referenced grids
+- [x] Animation support via transform overrides
+- [x] Position overrides for direction-aware z-sorting
+- [x] SVG and JSON export capabilities
+
+#### Interactive Demo (`src/demo-iso.ts`, `demo-iso.html`)
+- [x] WASD keyboard navigation with push mechanics
+- [x] Real-time isometric visualization of grid state
+- [x] Player tracking with octahedron rendering
+- [x] Smooth push animations with easing
+- [x] Direction-aware animation (toward/away from camera)
+- [x] Undo/redo system (Ctrl+Z / Ctrl+Shift+Z)
+- [x] Grid reset functionality
+- [x] Status display with position tracking
+- [x] Scene export (JSON and SVG)
+
+#### Exit Preview System ✨ NEW
+- [x] **Multi-directional exit detection** - Checks all four compass directions (N/S/E/W)
+- [x] **Transformation calculations** (`src/lib/navigator/exit-transform.ts`)
+  - Computes scale factor based on grid nesting depth
+  - Calculates correct world-space position of exit cells
+  - Handles self-references and cascading exits
+- [x] **Visual preview rendering**
+  - Shows cell contents at exit locations
+  - Proper scaling (e.g., 8× for 8×8 grid nested in parent cell)
+  - Player octahedrons rendered correctly
+  - Referenced grids rendered with full structure and floor tiles
+  - No floor tiles for preview cells (content only)
+- [x] **Documentation** (`docs/exit-transformation-spec.md`)
+  - Complete specification of coordinate systems
+  - Transformation math explained
+  - Usage examples and edge cases
+
+**Known Issues**:
+- Referenced grids in exit previews may not always align exactly (positioning tweaks needed)
+
+### Architecture
+
+**Rendering Pipeline**:
+1. **Analyze Phase**: `analyze()` produces CellTree with rational dimensions
+2. **Template Building**: Create reusable geometry for each unique grid instance
+3. **Scene Building**: Construct scene graph with proper transformations
+4. **Projection**: Convert 3D scene to 2D screen space with camera
+5. **Rendering**: SVG rendering to DOM
+
+**Animation System**:
+- Uses `iso-render` AnimationSystem for transform overrides
+- Position-based animations for push operations
+- Direction-aware z-sorting to prevent visual artifacts
+- Easing functions for smooth motion
+- Cancelable animations for rapid input
+
+**Exit Preview Flow**:
+1. Check each compass direction for valid exits using Navigator
+2. For valid exits, compute transformation (scale + offset)
+3. Analyze referenced grid if preview shows a reference
+4. Build on-demand templates for preview grids
+5. Render at correct scale and position relative to current grid
+
+---
+
+*Last Updated: 2026-01-02*
 *Status: Phase 7 Complete - 46/78 tests passing (59%)*
+*Visualization: Isometric demo with exit previews*
 *Next: Phase 8 - Implement Pull Operations (14 tests)*
