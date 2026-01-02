@@ -82,7 +82,8 @@ This metadata enables:
 
 ## Implementation Notes
 
-- The transition metadata is computed during the push operation based on grid ID changes
-- When advancing: if the grid ID changes, it's an `'exit'`; otherwise it's a `'move'`
-- When entering: the transition is always `'enter'`
-- The backtracking algorithm (`push`) also tracks transitions correctly
+- The transition metadata is tracked directly by the `Navigator` class
+- `Navigator.tryAdvance()` sets the transition to `'move'` or `'exit'` based on whether it crossed a grid boundary
+- `Navigator.tryEnter()` sets the transition to `'enter'`
+- This approach correctly handles self-referencing grids where the grid ID may stay the same but the operation is still an enter or exit
+- The backtracking algorithm (`push`) preserves transition information through the decision stack

@@ -12,6 +12,15 @@ import { getCellAtPosition, findPrimaryRef } from '../utils/immutable.js';
 import { tryEnter } from './try-enter.js';
 
 /**
+ * Type of transition that occurred during the last navigation operation.
+ * - 'move': Moved within the same grid
+ * - 'exit': Exited from a nested grid to parent
+ * - 'enter': Entered a grid through a Ref cell
+ * - null: No transition yet (initial state)
+ */
+export type NavigatorTransition = 'move' | 'exit' | 'enter' | null;
+
+/**
  * Navigator for stateful grid traversal.
  *
  * Handles:
@@ -36,11 +45,15 @@ export class Navigator {
   /** Direction deltas for movement */
   private readonly deltas: Record<Direction, [number, number]>;
 
+  /** Type of the last navigation operation performed */
+  private lastTransitionType: NavigatorTransition;
+
   constructor(store: GridStore, position: CellPosition, direction: Direction) {
     this.store = store;
     this.current = position.clone();
     this.direction = direction;
     this.visitedGrids = new Set();
+    this.lastTransitionType = null;
 
     this.deltas = {
       [Direction.N]: [-1, 0],
@@ -51,11 +64,19 @@ export class Navigator {
   }
 
   /**
+   * Get the type of transition that occurred during the last navigation operation.
+   */
+  getLastTransition(): NavigatorTransition {
+    return this.lastTransitionType;
+  }
+
+  /**
    * Create a copy for backtracking.
    */
   clone(): Navigator {
     const nav = new Navigator(this.store, this.current, this.direction);
     nav.visitedGrids = new Set(this.visitedGrids);
+    nav.lastTransitionType = this.lastTransitionType;
     return nav;
   }
 
@@ -64,6 +85,7 @@ export class Navigator {
    * Handles exiting from nested grids back to parent grids.
    *
    * Clears visitedGrids on any advance.
+   * Sets lastTransitionType to 'move' or 'exit' based on operation.
    *
    * @returns false if can't advance (hit root edge or exit cycle)
    */
@@ -114,6 +136,7 @@ export class Navigator {
         ) {
           // Successfully exited to valid position
           this.current = new CellPosition(parentGridId, exitRow, exitCol);
+          this.lastTransitionType = 'exit';
           return true;
         }
 
@@ -122,7 +145,9 @@ export class Navigator {
       }
     }
 
+    // Move within same grid
     this.current = new CellPosition(this.current.gridId, nextRow, nextCol);
+    this.lastTransitionType = 'move';
     return true;
   }
 
@@ -140,6 +165,7 @@ export class Navigator {
   /**
    * Try to enter the Ref at current position from the current direction.
    * Uses visitedGrids to detect entry cycles.
+   * Sets lastTransitionType to 'enter' on success.
    *
    * @param rules - Rules governing entry behavior
    * @returns false if can't enter or if cycle detected
@@ -162,6 +188,7 @@ export class Navigator {
 
     this.visitedGrids.add(cell.gridId);
     this.current = entryPos;
+    this.lastTransitionType = 'enter';
     return true;
   }
 

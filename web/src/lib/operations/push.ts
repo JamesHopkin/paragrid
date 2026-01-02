@@ -94,7 +94,6 @@ export function pushSimple(
   let depth = 0;
 
   // Try to advance to first position
-  const prevGridId = nav.current.gridId;
   if (!nav.tryAdvance()) {
     return {
       reason: 'BLOCKED',
@@ -102,8 +101,8 @@ export function pushSimple(
       details: 'Cannot advance from start position (hit edge)',
     };
   }
-  // Track the transition type for the current position
-  let currentTransition: TransitionType = nav.current.gridId !== prevGridId ? 'exit' : 'move';
+  // Get the transition type from the navigator
+  let currentTransition: TransitionType = nav.getLastTransition();
 
   while (depth < maxDepth) {
     depth++;
@@ -185,25 +184,22 @@ export function pushSimple(
       };
     }
 
-    // Execute the selected strategy and compute next transition
+    // Execute the selected strategy and get next transition from navigator
     if (selectedStrategy === RefStrategyType.SOLID) {
       path.push([nav.current, currentTransition]);
-      const beforeGridId = nav.current.gridId;
       nav.advance();
-      currentTransition = nav.current.gridId !== beforeGridId ? 'exit' : 'move';
+      currentTransition = nav.getLastTransition();
     } else if (selectedStrategy === RefStrategyType.PORTAL) {
       nav.enter(rules);
-      currentTransition = 'enter';
+      currentTransition = nav.getLastTransition();
     } else if (selectedStrategy === RefStrategyType.SWALLOW) {
       path.push([nav.current, currentTransition]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       nav.flip();
-      const beforeGridId = nav.current.gridId;
       nav.advance();
-      currentTransition = nav.current.gridId !== beforeGridId ? 'exit' : 'move';
       nav.enter(rules);
-      currentTransition = 'enter';
+      currentTransition = nav.getLastTransition();
     }
   }
 
@@ -356,7 +352,6 @@ export function push(
   const initialVisited = new Set<string>([`${start.gridId},${start.row},${start.col}`]);
 
   // Try to advance to first position
-  const prevGridId = nav.current.gridId;
   if (!nav.tryAdvance()) {
     return {
       reason: 'BLOCKED',
@@ -364,7 +359,7 @@ export function push(
       details: 'Cannot advance from start position (hit edge)',
     };
   }
-  const firstTransition: TransitionType = nav.current.gridId !== prevGridId ? 'exit' : 'move';
+  const firstTransition: TransitionType = nav.getLastTransition();
 
   // Create initial state
   const initialState = makeNewState([[start, null]], nav, initialVisited, firstTransition);
@@ -404,21 +399,19 @@ export function push(
 
     if (strategy === RefStrategyType.SOLID) {
       newPath.push([navClone.current, state.nextTransition]);
-      const beforeGridId = navClone.current.gridId;
       navClone.advance();
-      nextTransition = navClone.current.gridId !== beforeGridId ? 'exit' : 'move';
+      nextTransition = navClone.getLastTransition();
     } else if (strategy === RefStrategyType.PORTAL) {
       navClone.enter(rules);
-      nextTransition = 'enter';
+      nextTransition = navClone.getLastTransition();
     } else if (strategy === RefStrategyType.SWALLOW) {
       newPath.push([navClone.current, state.nextTransition]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       navClone.flip();
-      const beforeGridId = navClone.current.gridId;
       navClone.advance();
       navClone.enter(rules);
-      nextTransition = 'enter';
+      nextTransition = navClone.getLastTransition();
     } else {
       throw new Error(`Unknown strategy: ${strategy}`);
     }

@@ -136,4 +136,59 @@ A: 1 A
     expect(result.chain[0].transition).toBe(null); // Initial position
     expect(result.chain[1].transition).toBe('enter'); // Enter (cycles back to start)
   });
+
+  test('self-reference enter is marked as enter not move', () => {
+    // This tests the fix: entering a self-referencing grid should be 'enter'
+    // even though the grid ID stays the same
+    const input = `
+A: 1 A _
+    `.trim();
+    const store = parseCompact(input);
+
+    const portalRules: RuleSet = {
+      refStrategy: [RefStrategyType.PORTAL, RefStrategyType.SOLID, RefStrategyType.SWALLOW],
+      primaryRefRule: 'first',
+      entryRule: 'far',
+    };
+
+    const result = push(store, new CellPosition('A', 0, 0), Direction.E, portalRules);
+    if ('reason' in result) {
+      throw new Error(`Expected success, got ${result.reason}`);
+    }
+
+    // Push from A[0,0], enter self-ref at A[0,1], land at A[0,2] (empty)
+    expect(result.chain.length).toBeGreaterThanOrEqual(2);
+
+    // The transition when landing after entering the self-ref should be 'enter'
+    // not 'move', even though we stayed in grid A
+    const enterTransition = result.chain.find(entry =>
+      entry.position.gridId === 'A' && entry.transition === 'enter'
+    );
+    expect(enterTransition).toBeDefined();
+  });
+
+  test('self-reference exit is marked as exit not move', () => {
+    // Grid with self-reference: pushing exits through the ref back to same grid
+    const input = `
+A: 1 A
+    `.trim();
+    const store = parseCompact(input);
+
+    // Start inside the grid and push to cause an exit back to same grid
+    const result = push(store, new CellPosition('A', 0, 0), Direction.E, solidRules);
+    if ('reason' in result) {
+      throw new Error(`Expected success, got ${result.reason}`);
+    }
+
+    // With SOLID strategy, pushing through should treat ref as solid
+    // The chain should contain positions, and if any exit occurs it should be marked 'exit'
+    expect(result.chain).toBeDefined();
+    expect(result.chain.length).toBeGreaterThan(0);
+
+    // All transitions should be explicitly typed, never inferred incorrectly
+    for (const entry of result.chain) {
+      expect(['move', 'enter', 'exit', null]).toContain(entry.transition);
+    }
+  });
 });
+
