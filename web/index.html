@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Paragrid Web</title>
+    <title>Paragrid - Web Demos</title>
     <style>
       * {
         margin: 0;
@@ -13,34 +13,71 @@
 
       body {
         font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: #1a1a1a;
+        color: #e0e0e0;
         padding: 2rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
       }
 
       .container {
-        max-width: 1200px;
-        margin: 0 auto;
+        max-width: 600px;
+        text-align: center;
       }
 
       h1 {
         color: #4fc3f7;
+        margin-bottom: 1rem;
+        font-size: 2.5rem;
+      }
+
+      p {
+        color: #aaa;
+        margin-bottom: 2rem;
+        line-height: 1.6;
+      }
+
+      .demo-link {
+        display: block;
+        background: #4fc3f7;
+        color: #1a1a1a;
+        text-decoration: none;
+        padding: 1rem 2rem;
+        border-radius: 8px;
+        font-size: 1.2rem;
+        font-weight: bold;
+        transition: background 0.2s;
+        margin-bottom: 1rem;
+      }
+
+      .demo-link:hover {
+        background: #81d4fa;
+      }
+
+      .demo-link:active {
+        background: #29b6f6;
+      }
+
+      .demo-description {
+        font-size: 0.9rem;
+        color: #888;
+        margin-bottom: 2rem;
       }
     </style>
   </head>
   <body>
     <div class="container">
-      <h1>Paragrid Web - Isometric Demo</h1>
+      <h1>Paragrid Web</h1>
+      <p>
+        Visualization system for recursive grid structures with references and teleportation semantics.
+      </p>
 
-      <div id="canvas" style="margin: 2rem 0; background: #2a2a2a; min-height: 600px; border-radius: 8px;"></div>
-
-      <div id="status" style="background: #2d2d2d; padding: 1rem; border-radius: 8px; font-family: monospace;"></div>
-
-      <button id="export-scene" style="margin-top: 1rem; padding: 0.5rem 1rem; background: #4fc3f7; color: #000; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-        Export Scene JSON
-      </button>
+      <a href="/demo-iso.html" class="demo-link">Isometric Demo</a>
+      <p class="demo-description">
+        Interactive 3D visualization with WASD navigation, undo/redo, and SVG export.
+      </p>
     </div>
-
-    <script type="module" src="/src/demo-iso.ts"></script>
   </body>
 </html>
