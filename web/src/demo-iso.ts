@@ -791,6 +791,36 @@ class IsometricDemo {
 
       if (result) {
         previews.push(result);
+
+        // For North and South, also preview cells horizontally adjacent to the exit cell in parent
+        if ((direction === Direction.N || direction === Direction.S) && result.targetGridId && result.currentRefPosition) {
+          const targetGrid = getGrid(this.store, result.targetGridId);
+          if (targetGrid) {
+            // Preview cell to the east of the exit cell
+            const eastCol = result.exitPosition.col + 1;
+            if (eastCol < targetGrid.cols) {
+              const eastPreview: ExitTransformation = {
+                targetGridId: result.targetGridId,
+                exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, eastCol),
+                scale: result.scale,
+                currentRefPosition: result.currentRefPosition
+              };
+              previews.push(eastPreview);
+            }
+
+            // Preview cell to the west of the exit cell
+            const westCol = result.exitPosition.col - 1;
+            if (westCol >= 0) {
+              const westPreview: ExitTransformation = {
+                targetGridId: result.targetGridId,
+                exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, westCol),
+                scale: result.scale,
+                currentRefPosition: result.currentRefPosition
+              };
+              previews.push(westPreview);
+            }
+          }
+        }
       }
     }
 
@@ -975,7 +1005,7 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main *inner _ 1 _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main *inner _ 1 _ 9|9 2 _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
       // main: '9 _ _|_ a b|1 _ _',
