@@ -8,7 +8,7 @@ import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
 import { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
-import { push } from './lib/operations/push.js';
+import { push, type PushResult } from './lib/operations/push.js';
 import { createRuleSet } from './lib/operations/rules.js';
 import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
@@ -225,9 +225,9 @@ class IsometricDemo {
     // Clear redo stack since we're performing a new action
     this.redoStack = [];
 
-    // Snapshot positions and update store
-    const oldCellPositions = this.snapshotCellPositions(playerPos.gridId);
-    this.store = result;
+    // Update store and get push chain
+    this.store = result.store;
+    const pushChain = result.chain;
 
     // Find new player position
     const newPos = this.playerPosition;
@@ -251,8 +251,8 @@ class IsometricDemo {
         this.currentRenderer = null;
         this.render(true);
       } else {
-        // Same grid - detect movements and animate
-        const movements = this.detectMovements(playerPos.gridId, oldCellPositions);
+        // Same grid - convert push chain to movements and animate
+        const movements = this.chainToMovements(pushChain, playerPos.gridId);
 
         if (movements.length > 0) {
           // Create animations (this sets cellPositionOverrides)
@@ -272,8 +272,68 @@ class IsometricDemo {
     }
   }
 
-  private isPushFailure(result: GridStore | PushFailure): result is PushFailure {
+  private isPushFailure(result: PushResult | PushFailure): result is PushFailure {
     return 'reason' in result && 'position' in result;
+  }
+
+  /**
+   * Convert a push chain to movement animations.
+   * The chain represents positions and their cells BEFORE the push.
+   * After a push, cells rotate forward: each cell moves to the next position in the chain.
+   *
+   * Example: [(pos0, A), (pos1, B), (pos2, Empty)]
+   * After rotation: pos0←Empty, pos1←A, pos2←B
+   * Movements: A(pos0→pos1), B(pos1→pos2), Empty(pos2→pos0)
+   */
+  private chainToMovements(chain: import('./lib/operations/push.js').PushChain, targetGridId: string): Array<{
+    cellId: string;
+    oldPos: CellPosition;
+    newPos: CellPosition;
+  }> {
+    const movements: Array<{ cellId: string; oldPos: CellPosition; newPos: CellPosition }> = [];
+
+    if (chain.length === 0) return movements;
+
+    // Filter chain to only positions in the target grid
+    const gridChain = chain.filter(entry => entry.position.gridId === targetGridId);
+
+    if (gridChain.length === 0) return movements;
+
+    // For each cell in the chain, determine its movement
+    // Cell at position[i] moves to position[i+1] (with wraparound)
+    for (let i = 0; i < gridChain.length; i++) {
+      const entry = gridChain[i];
+      const cell = entry.cell;
+      const oldPos = entry.position;
+      const newPos = gridChain[(i + 1) % gridChain.length].position;
+
+      // Only animate non-empty cells
+      if (cell.type === 'empty') continue;
+
+      // Skip if cell didn't actually move (same position)
+      if (oldPos.equals(newPos)) continue;
+
+      // Only animate single-square movements
+      if (!this.isSingleSquareMovement(oldPos, newPos)) continue;
+
+      // Generate cell ID for animation
+      // Must match the ID generation in isometric.ts renderGridDirect
+      let cellId: string;
+      if (isConcrete(cell)) {
+        cellId = `concrete-${cell.id}`;
+      } else if (cell.type === 'ref') {
+        const primarySuffix = cell.isPrimary === true ? 'primary' :
+                              cell.isPrimary === false ? 'secondary' :
+                              'auto';
+        cellId = `ref-${cell.gridId}-${primarySuffix}`;
+      } else {
+        continue; // Unknown cell type
+      }
+
+      movements.push({ cellId, oldPos, newPos });
+    }
+
+    return movements;
   }
 
   /**
@@ -539,7 +599,7 @@ class IsometricDemo {
     const awayFromCamera: typeof movements = [];
 
     for (const movement of movements) {
-      if (this.isMovingTowardCamera(movement.oldPos, movement.newPos)) {
+      if (true) { //this.isMovingTowardCamera(movement.oldPos, movement.newPos)) {
         towardCamera.push(movement);
       } else {
         awayFromCamera.push(movement);
@@ -872,10 +932,12 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-      // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
-      main: "9 9 9|1 _ main|_ _ _"
+      // main: '9 _ _|_ a b|1 _ _',
+      // a: 'main _|_ _', b: '_ _|_ _'
+      // main: "9 9 9|1 _ main|_ _ _"
   
 // main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ *first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
 //                         '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ ~first _ 9|' +
