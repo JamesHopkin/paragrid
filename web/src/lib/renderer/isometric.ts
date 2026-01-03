@@ -248,27 +248,28 @@ export function renderIsometric(
 /**
  * Get floor colors for a grid based on its ID.
  * Returns { light, dark } for checkerboard pattern.
- * Main grid gets dark grey, others get distinct bright colors with strong tints.
+ * Main grid gets dark grey, others get distinct bright colors.
+ * Dark colors are 25% brightness of light colors (same hue).
  */
 function getFloorColors(gridId: string): { light: string; dark: string } {
   // Color palette per grid name
   const gridColors: Record<string, { light: string; dark: string }> = {
     'main': { light: '#3a3a3a', dark: '#0a0a0a' },     // Subdued grey
-    'inner': { light: '#3a5a7a', dark: '#051020' },    // Dark blue - strong blue tint
-    'a': { light: '#3a5a7a', dark: '#051020' },        // Dark blue - strong blue tint
-    'b': { light: '#6a3a6a', dark: '#100510' },        // Dark purple - strong purple tint
-    'c': { light: '#6a6a3a', dark: '#101005' },        // Dark olive - strong olive tint
-    'd': { light: '#7a3a3a', dark: '#200505' },        // Dark red - strong red tint
-    'e': { light: '#3a7a5a', dark: '#052010' },        // Dark teal - strong teal tint
-    'f': { light: '#7a5a3a', dark: '#201005' },        // Dark brown - strong brown tint
-    'first': { light: '#3a5a7a', dark: '#051020' },    // Dark blue - strong blue tint
-    'second': { light: '#6a3a6a', dark: '#100510' },   // Dark purple - strong purple tint
-    'third': { light: '#7a3a3a', dark: '#200505' },    // Dark red - strong red tint
-    'fourth': { light: '#3a7a5a', dark: '#052010' },   // Dark teal - strong teal tint
-    'fifth': { light: '#7a5a3a', dark: '#201005' },    // Dark brown - strong brown tint
+    'inner': { light: '#3a5a7a', dark: '#0f171f' },    // Blue - 25% brightness
+    'a': { light: '#3a5a7a', dark: '#0f171f' },        // Blue - 25% brightness
+    'b': { light: '#6a3a6a', dark: '#1b0f1b' },        // Purple - 25% brightness
+    'c': { light: '#6a6a3a', dark: '#1b1b0f' },        // Olive - 25% brightness
+    'd': { light: '#7a3a3a', dark: '#1f0f0f' },        // Red - 25% brightness
+    'e': { light: '#3a7a5a', dark: '#0f1f17' },        // Teal - 25% brightness
+    'f': { light: '#7a5a3a', dark: '#1f170f' },        // Brown - 25% brightness
+    'first': { light: '#3a5a7a', dark: '#0f171f' },    // Blue - 25% brightness
+    'second': { light: '#6a3a6a', dark: '#1b0f1b' },   // Purple - 25% brightness
+    'third': { light: '#7a3a3a', dark: '#1f0f0f' },    // Red - 25% brightness
+    'fourth': { light: '#3a7a5a', dark: '#0f1f17' },   // Teal - 25% brightness
+    'fifth': { light: '#7a5a3a', dark: '#1f170f' },    // Brown - 25% brightness
   };
 
-  return gridColors[gridId] || { light: '#7a7a3a', dark: '#202005' };
+  return gridColors[gridId] || { light: '#7a7a3a', dark: '#1f1f0f' };
 }
 
 /**
@@ -468,6 +469,29 @@ function buildGridTemplate(
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
 
+  // Create and render base floor for this grid template
+  const baseWidth = cols - 0.1;
+  const baseHeight = rows - 0.1;
+  const baseOffsetX = baseWidth / 2;
+  const baseOffsetZ = -baseHeight / 2;
+
+  builder.object(`${templateId}-floor-base`, {
+    type: 'shape',
+    vertices: [
+      [0, 0, 0],
+      [-baseWidth, 0, 0],
+      [-baseWidth, 0, baseHeight],
+      [0, 0, baseHeight]
+    ]
+  });
+
+  builder.group(`${templateId}-base-floor-layer`, { layer: -1 });
+  builder.instance(`${templateId}-floor-base`, {
+    position: [baseOffsetX, 0, baseOffsetZ],
+    color: floorColors.dark
+  });
+  builder.endGroup();
+
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
       const child = node.children[row][col];
@@ -614,12 +638,13 @@ function renderExitPreview(
   const parentRowDiff = exitPosition.row - currentRefPosition.row;
 
   // Convert to current grid's coordinate system
-  // Current grid origin (cell 0,0) maps to parent cell's origin at (refCol, refRow)
-  // Exit cell at (exitCol, exitRow) in parent has its CENTER at (exitCol + 0.5, exitRow + 0.5)
-  // In current units, this is at: ((exitCol + 0.5) - refCol, (exitRow + 0.5) - refRow) * scale
-  // Which simplifies to: (parentColDiff + 0.5, parentRowDiff + 0.5) * scale
-  const xOffset = (parentColDiff + 0.5) * scale;
-  const zOffset = (parentRowDiff + 0.5) * scale;
+  // Current grid cell [0,0] center is at rootTranslation
+  // Current grid cell [0,0] top-left corner is at rootTranslation - [0.5, 0.5]
+  // Parent cell's top-left corner aligns with current grid's top-left corner
+  // Exit cell is offset by parentColDiff * scale from parent cell's corner
+  // Exit cell's center is at an additional (scale - 1) / 2 from its corner
+  const xOffset = parentColDiff * scale + (scale - 1) / 2;
+  const zOffset = parentRowDiff * scale + (scale - 1) / 2;
 
   // Position in scene (current grid origin is at rootTranslation)
   const x = rootTranslation[0] + xOffset;
@@ -630,6 +655,35 @@ function renderExitPreview(
   builder.group(`exit-preview-cell-${index}`, {
     position: [x, y, z]
   });
+
+  // Render floor for the exit preview cell
+  // Use the target grid's floor colors
+  const targetFloorColors = getFloorColors(targetGridId);
+  const isLight = (exitPosition.row + exitPosition.col) % 2 === 0;
+
+  if (isLight && cell.type !== 'ref') {
+    // Render a scaled floor square for the exit preview
+    // The floor should be centered at the origin of this group
+    const floorSize = scale * 0.9; // Match the squareSize used elsewhere
+    const floorOffsetX = floorSize / 2;
+    const floorOffsetZ = -floorSize / 2;
+
+    builder.group(`exit-preview-floor-${index}`, { layer: -1 });
+    builder.object(`exit-floor-square-${index}`, {
+      type: 'shape',
+      vertices: [
+        [0, 0, 0],
+        [-floorSize, 0, 0],
+        [-floorSize, 0, floorSize],
+        [0, 0, floorSize]
+      ]
+    });
+    builder.instance(`exit-floor-square-${index}`, {
+      position: [floorOffsetX, 0, floorOffsetZ],
+      color: targetFloorColors.light
+    });
+    builder.endGroup();
+  }
 
   // Render cell content based on type
   if (cell.type === 'concrete') {
