@@ -15,6 +15,7 @@ import type { TagFn } from '../tagging/types.js';
 import { Concrete, isRef, getGrid, getCell } from '../core/types.js';
 import { getGridColor } from './colors.js';
 import type { ExitTransformation } from '../navigator/exit-transform.js';
+import { Direction } from '../core/direction.js';
 import { analyze } from '../analyzer/index.js';
 
 /**
@@ -452,6 +453,7 @@ function renderGridDirect(
  * @param nodeToTemplateId - Map from NestedNode instances to their template IDs
  * @param store - Grid store for looking up cells
  * @param tagFn - Tag function to check cell tags
+ * @param baseLayer - Base layer for content (floor will be baseLayer - 1), defaults to 0
  */
 function buildGridTemplate(
   node: NestedNode,
@@ -461,7 +463,8 @@ function buildGridTemplate(
   squareSize: number,
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
-  tagFn: TagFn
+  tagFn: TagFn,
+  baseLayer: number = 0
 ): void {
   builder.template(templateId);
 
@@ -485,7 +488,8 @@ function buildGridTemplate(
     ]
   });
 
-  builder.group(`${templateId}-base-floor-layer`, { layer: -1 });
+  const floorLayer = baseLayer - 1;
+  builder.group(`${templateId}-base-floor-layer`, { layer: floorLayer });
   builder.instance(`${templateId}-floor-base`, {
     position: [baseOffsetX, 0, baseOffsetZ],
     color: floorColors.dark
@@ -511,7 +515,7 @@ function buildGridTemplate(
 
       // Don't render floor tile if this cell contains a reference
       if (isLight && !isRefNode(child)) {
-        builder.group(`${templateId}-floor-${row}-${col}`, { layer: -1 });
+        builder.group(`${templateId}-floor-${row}-${col}`, { layer: floorLayer });
         builder.instance('floor-square', {
           position: [0, 0, 0],  // floor-square is now centered at origin
           color: floorColors.light
@@ -613,7 +617,14 @@ function renderExitPreview(
   nodeToTemplateId: Map<NestedNode, string>,
   index: number = 0
 ): void {
-  const { exitPosition, scale, currentRefPosition, targetGridId } = exitPreview;
+  const { exitPosition, scale, currentRefPosition, targetGridId, direction } = exitPreview;
+
+  // Determine layers based on direction
+  // S and W directions: content at layer 2, floor at layer 1
+  // Other directions (N, E, null): content at layer -2, floor at layer -3
+  const isSouthOrWest = direction === Direction.S || direction === Direction.W;
+  const contentLayer = isSouthOrWest ? 2 : -2;
+  const floorLayer = contentLayer - 1;
 
   // Get the cell at the exit position
   const targetGrid = getGrid(store, targetGridId);
@@ -649,7 +660,7 @@ function renderExitPreview(
   const y = rootTranslation[1];
   const z = rootTranslation[2] + zOffset;
 
-  // Create group for exit preview cell
+  // Create group for exit preview cell (no layer on parent)
   builder.group(`exit-preview-cell-${index}`, {
     position: [x, y, z]
   });
@@ -668,7 +679,7 @@ function renderExitPreview(
     const floorHalfSize = floorSize / 2;
     const floorColor = isLight ? targetFloorColors.light : targetFloorColors.dark;
 
-    builder.group(`exit-preview-floor-${index}`, { layer: -1 });
+    builder.group(`exit-preview-floor-${index}`, { layer: floorLayer });
     builder.object(`exit-floor-square-${index}`, {
       type: 'shape',
       vertices: [
@@ -685,7 +696,8 @@ function renderExitPreview(
     builder.endGroup();
   }
 
-  // Render cell content based on type
+  // Render cell content based on type (wrapped in content layer group)
+  builder.group(`exit-preview-content-${index}`, { layer: contentLayer });
   if (cell.type === 'concrete') {
     // Render concrete cell
     const tags = tagFn(cell);
@@ -731,9 +743,9 @@ function renderExitPreview(
           // Create a unique template ID for this exit preview reference
           refTemplateId = `exit-preview-grid-${index}-${refGridId}`;
 
-          // Build the template for this grid
+          // Build the template for this grid with preview layers
           const floorColors = getFloorColors(refGridId);
-          buildGridTemplate(refCellTree, refTemplateId, builder, floorColors, 0.9, nodeToTemplateId, store, tagFn);
+          buildGridTemplate(refCellTree, refTemplateId, builder, floorColors, 0.9, nodeToTemplateId, store, tagFn, contentLayer);
 
           // Don't add to nodeToTemplateId map since it's only for this exit preview
         }
@@ -754,7 +766,8 @@ function renderExitPreview(
     }
   }
   // Empty cells render nothing
+  builder.endGroup(); // End content layer group
 
-  builder.endGroup();
+  builder.endGroup(); // End exit-preview-cell group
 }
 

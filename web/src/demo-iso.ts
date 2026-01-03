@@ -836,7 +836,8 @@ class IsometricDemo {
                 targetGridId: result.targetGridId,
                 exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, eastCol),
                 scale: result.scale,
-                currentRefPosition: result.currentRefPosition
+                currentRefPosition: result.currentRefPosition,
+                direction: direction  // Inherit direction from main exit
               };
               previews.push(eastPreview);
             }
@@ -848,7 +849,8 @@ class IsometricDemo {
                 targetGridId: result.targetGridId,
                 exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, westCol),
                 scale: result.scale,
-                currentRefPosition: result.currentRefPosition
+                currentRefPosition: result.currentRefPosition,
+                direction: direction  // Inherit direction from main exit
               };
               previews.push(westPreview);
             }
@@ -1032,10 +1034,30 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 3 _ 9|9 _ _ _ _ *inner _ 9|9 1 _ _ _ _ _ _|9 2 _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main *inner _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
-  simple: { main: '1 _ _|_ 9 _|_ _ 2' }
+  simple: { main: '1 _ _|_ 9 _|_ _ 2' },
+  doubleExit: {
+    main: '_ _ _|_ 2 _|_ a _',
+    a: '_ b _|_ _ _|_ _ _',
+    b: '_ 1 _|_ _ _|_ _ _' },
+
+  exitEnter: {
+    main: '_ _ 9|_ a b|1 _ _',
+    a: '_ b|_ _', b: '2 _|_ _'
+  },
+
+  tricky: {
+    main: '9 9 9 9 9 9 9|9 _ _ _ _ _ 9|9 _ a _ b _ 9|9 _ _ _ _ _ 9|' +
+              '9 _ c _ 1 _ 9|9 _ _ _ _ _ 9|9 9 9 9 9 9 9',
+    a: '_ 9 _|_ _ _|_ _ _',
+    b: '9 9 9 9 9|9 9 9 _ _' + '|9 9 9 9 9'.repeat(3),
+    c: '9 ' + '_ '.repeat(10) + '9|' +
+        '_ '.repeat(11) + '9|' + 
+        ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
+        '9 ' + '_ '.repeat(10) + '9'
+  }
 };
 
 // Initialize the demo when the page loads
@@ -1049,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.swap;
+  const gridDefinition = GRIDS.swapEdited;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 

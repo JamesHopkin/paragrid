@@ -21,6 +21,8 @@ export interface ExitTransformation {
   scale: number;
   /** Position of current grid's reference cell in target grid (where current lives) */
   currentRefPosition: { row: number; col: number } | null;
+  /** Direction of exit (for layer assignment in rendering) */
+  direction: Direction | null;
 }
 
 /**
@@ -93,7 +95,8 @@ export function computeExitTransformation(
     targetGridId,
     exitPosition,
     scale,
-    currentRefPosition
+    currentRefPosition,
+    direction
   };
 }
 
