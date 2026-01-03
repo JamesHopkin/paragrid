@@ -208,7 +208,7 @@ export function buildIsometricScene(
   const scale = Math.min(width, height) / (maxDim * 1.2);
 
   const camera = Camera.custom({
-    yaw: 50, pitch: 30, groundScale: 1.0, heightScale: 1.0, scale,
+    yaw: 40, pitch: 28, groundScale: 1.0, heightScale: 1.0, scale,
     offset: [width / 2 - 370, height / 2 - 340]
   });
 
@@ -242,7 +242,20 @@ export function renderIsometric(
     height
   });
 
-  renderer.render(screenSpace);
+  // Configure layer opacity: layers >1 should be 50% transparent
+  const layerConfig: Record<number, { opacity: number }> = {
+    2: { opacity: 0.5 },
+    3: { opacity: 0.5 },
+    4: { opacity: 0.5 },
+    5: { opacity: 0.5 },
+    6: { opacity: 0.5 },
+    7: { opacity: 0.5 },
+    8: { opacity: 0.5 },
+    9: { opacity: 0.5 },
+    10: { opacity: 0.5 }
+  };
+
+  renderer.render(screenSpace, { layers: layerConfig });
 
   return { scene };
 }
@@ -550,7 +563,8 @@ function buildGridTemplate(
         // Create content group with ID (matching root grid structure)
         // This ensures ts-poly can target this group for animations
         builder.group(`concrete-${child.id}`, {
-          position: [0, 0, 0]
+          position: [0, 0, 0],
+          layer: baseLayer
         });
 
         builder.instance(objectType, {
@@ -576,7 +590,8 @@ function buildGridTemplate(
 
           // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
-            scale: [scaleX, scaleY, scaleZ]
+            scale: [scaleX, scaleY, scaleZ],
+            layer: baseLayer
           });
         }
       }

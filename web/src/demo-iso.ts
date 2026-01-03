@@ -863,6 +863,24 @@ class IsometricDemo {
   }
 
   /**
+   * Get layer configuration for rendering.
+   * Layers >1 should be 50% transparent.
+   */
+  private getLayerConfig(): Record<number, { opacity: number }> {
+    return {
+      2: { opacity: 0.5 },
+      3: { opacity: 0.5 },
+      4: { opacity: 0.5 },
+      5: { opacity: 0.5 },
+      6: { opacity: 0.5 },
+      7: { opacity: 0.5 },
+      8: { opacity: 0.5 },
+      9: { opacity: 0.5 },
+      10: { opacity: 0.5 }
+    };
+  }
+
+  /**
    * Rebuild scene data (analyze + build scene) without rendering.
    * Used when we want to prepare for animation.
    */
@@ -966,7 +984,8 @@ class IsometricDemo {
           this.renderWidth,
           this.renderHeight
         );
-        this.currentRenderer.render(screenSpace);
+
+        this.currentRenderer.render(screenSpace, { layers: this.getLayerConfig() });
       } else {
         // During animation: only update transform overrides and re-render
         const transformOverrides = this.animationSystem.evaluateTransforms();
@@ -981,7 +1000,7 @@ class IsometricDemo {
         );
 
         // Re-render using the SAME renderer instance (it clears and re-renders automatically)
-        this.currentRenderer.render(screenSpace);
+        this.currentRenderer.render(screenSpace, { layers: this.getLayerConfig() });
       }
     } catch (error) {
       console.error('Render error:', error);
@@ -1034,7 +1053,7 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main *inner _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main *inner _ _ _ 9|9 1 _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
@@ -1057,7 +1076,11 @@ const GRIDS = {
         '_ '.repeat(11) + '9|' + 
         ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
         '9 ' + '_ '.repeat(10) + '9'
-  }
+  },
+  transparency: {
+   main: '_ _ _|_ a _|2 _ _',
+   a: '_ _ _|_ 1 _|_ _ _'
+  },
 };
 
 // Initialize the demo when the page loads
@@ -1071,7 +1094,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.swapEdited;
+  const gridDefinition = GRIDS.tricky;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
