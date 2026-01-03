@@ -125,26 +125,28 @@ export function buildIsometricScene(
   // This is critical for cycles: each depth level is a different instance
   // NOTE: We skip the root node - it will be rendered directly, not as a template
   const nodeToTemplateId = new Map<NestedNode, string>();
+  const nodeToDepth = new Map<NestedNode, number>();
   let templateCounter = 0;
 
-  function collectNodes(node: CellNode, isRoot: boolean = false): void {
+  function collectNodes(node: CellNode, isRoot: boolean = false, depth: number = 0): void {
     if (isNestedNode(node)) {
       // Skip adding root to template map - we'll render it directly
       if (!isRoot && !nodeToTemplateId.has(node)) {
         nodeToTemplateId.set(node, `grid-template-${templateCounter++}`);
+        nodeToDepth.set(node, depth);
       }
       // Recurse into children to collect nested instances
       for (const row of node.children) {
         for (const child of row) {
-          collectNodes(child, false);
+          collectNodes(child, false, depth);
         }
       }
     } else if (isRefNode(node)) {
-      collectNodes(node.content, false);
+      collectNodes(node.content, false, depth + 1);
     }
   }
 
-  collectNodes(root, true);
+  collectNodes(root, true, 0);
 
   // PASS 2: Build templates for all unique NestedNode instances
   // CRITICAL: Build in REVERSE order so child templates exist before parents reference them
@@ -155,8 +157,9 @@ export function buildIsometricScene(
   for (let i = nodesToBuild.length - 1; i >= 0; i--) {
     const node = nodesToBuild[i];
     const templateId = nodeToTemplateId.get(node)!;
+    const depth = nodeToDepth.get(node) ?? 0;
     const floorColors = getFloorColors(node.gridId);
-    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn);
+    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn, 0, depth);
   }
 
   // Get root grid dimensions
@@ -180,9 +183,9 @@ export function buildIsometricScene(
   const offsetX = -(cols - 1) / 2;
   const offsetZ = -(rows - 1) / 2;
 
-  // Add base floor with root grid's dark color (in layer -1)
+  // Add base floor with root grid's dark color (in layer -50)
   const rootFloorColors = getFloorColors(root.gridId);
-  builder.group('base-floor-layer', { layer: -1 });
+  builder.group('base-floor-layer', { layer: -50 });
   builder.instance('floor-base', {
     position: [baseWidth / 2, 0, -baseHeight / 2],
     color: rootFloorColors.dark
@@ -242,17 +245,12 @@ export function renderIsometric(
     height
   });
 
-  // Configure layer opacity: layers >1 should be 50% transparent
-  const layerConfig: Record<number, { opacity: number }> = {
-    2: { opacity: 0.5 },
-    3: { opacity: 0.5 },
-    4: { opacity: 0.5 },
-    5: { opacity: 0.5 },
-    6: { opacity: 0.5 },
-    7: { opacity: 0.5 },
-    8: { opacity: 0.5 },
-    9: { opacity: 0.5 },
-    10: { opacity: 0.5 }
+  // Configure layer opacity: layers >= 200 should be 50% transparent
+  const layerConfig = (layer: number) => {
+    if (layer >= 200) {
+      return { opacity: 0.5 };
+    }
+    return { opacity: 1.0 };
   };
 
   renderer.render(screenSpace, { layers: layerConfig });
@@ -379,7 +377,7 @@ function renderGridDirect(
         const floorXOffset = (col - effectiveCol);
         const floorZOffset = (row - effectiveRow);
 
-        builder.group(`root-floor-${row}-${col}`, { layer: -1 });
+        builder.group(`root-floor-${row}-${col}`, { layer: -50 });
         builder.instance('floor-square', {
           position: [floorXOffset, 0, floorZOffset],
           color: floorColors.light
@@ -466,7 +464,8 @@ function renderGridDirect(
  * @param nodeToTemplateId - Map from NestedNode instances to their template IDs
  * @param store - Grid store for looking up cells
  * @param tagFn - Tag function to check cell tags
- * @param baseLayer - Base layer for content (floor will be baseLayer - 1), defaults to 0
+ * @param baseLayer - Base layer for content (floor will be baseLayer - 50 + recursionDepth), defaults to 0
+ * @param recursionDepth - Depth of recursion for floor layer calculation, defaults to 0
  */
 function buildGridTemplate(
   node: NestedNode,
@@ -477,7 +476,8 @@ function buildGridTemplate(
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
   tagFn: TagFn,
-  baseLayer: number = 0
+  baseLayer: number = 0,
+  recursionDepth: number = 0
 ): void {
   builder.template(templateId);
 
@@ -501,7 +501,7 @@ function buildGridTemplate(
     ]
   });
 
-  const floorLayer = baseLayer - 1;
+  const floorLayer = baseLayer - 50 + recursionDepth;
   builder.group(`${templateId}-base-floor-layer`, { layer: floorLayer });
   builder.instance(`${templateId}-floor-base`, {
     position: [baseOffsetX, 0, baseOffsetZ],
@@ -635,11 +635,11 @@ function renderExitPreview(
   const { exitPosition, scale, currentRefPosition, targetGridId, direction } = exitPreview;
 
   // Determine layers based on direction
-  // S and W directions: content at layer 2, floor at layer 1
-  // Other directions (N, E, null): content at layer -2, floor at layer -3
+  // S and W directions: content at layer 200, floor at layer 150
+  // Other directions (N, E, null): content at layer -200, floor at layer -250
   const isSouthOrWest = direction === Direction.S || direction === Direction.W;
-  const contentLayer = isSouthOrWest ? 2 : -2;
-  const floorLayer = contentLayer - 1;
+  const contentLayer = isSouthOrWest ? 200 : -200;
+  const floorLayer = isSouthOrWest ? 150 : -250;
 
   // Get the cell at the exit position
   const targetGrid = getGrid(store, targetGridId);
@@ -760,7 +760,7 @@ function renderExitPreview(
 
           // Build the template for this grid with preview layers
           const floorColors = getFloorColors(refGridId);
-          buildGridTemplate(refCellTree, refTemplateId, builder, floorColors, 0.9, nodeToTemplateId, store, tagFn, contentLayer);
+          buildGridTemplate(refCellTree, refTemplateId, builder, floorColors, 0.9, nodeToTemplateId, store, tagFn, contentLayer, 0);
 
           // Don't add to nodeToTemplateId map since it's only for this exit preview
         }
