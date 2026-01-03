@@ -235,11 +235,12 @@ class IsometricDemo {
     if (newPos) {
       this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
 
-      // Check if we changed grids
+      // Check if we changed grids (enter/exit transitions)
       const changedGrids = playerPos.gridId !== newPos.gridId;
 
       if (changedGrids) {
-        // Grid transition - stop any animations and force full rebuild
+        // Grid transition (exit/enter) - no animation for these, just instant transition
+        // Stop any animations and force full rebuild with the new grid as root
         this.animationSystem.stop();
         this.isAnimating = false;
         if (this.animationFrameId !== null) {
@@ -285,6 +286,9 @@ class IsometricDemo {
    * Example: [(pos0, A), (pos1, B), (pos2, Empty)]
    * After rotation: pos0←Empty, pos1←A, pos2←B
    * Movements: A(pos0→pos1), B(pos1→pos2), Empty(pos2→pos0)
+   *
+   * IMPORTANT: This function only creates animations for simple single-square movements
+   * within the same grid. Exit/enter transitions are NOT animated.
    */
   private chainToMovements(chain: import('./lib/operations/push.js').PushChain, targetGridId: string): Array<{
     cellId: string;
@@ -295,8 +299,12 @@ class IsometricDemo {
 
     if (chain.length === 0) return movements;
 
-    // Filter chain to only positions in the target grid
-    const gridChain = chain.filter(entry => entry.position.gridId === targetGridId);
+    // Filter chain to only positions in the target grid AND only 'move' transitions
+    // Skip 'enter' and 'exit' transitions - we only animate simple moves for now
+    const gridChain = chain.filter(entry =>
+      entry.position.gridId === targetGridId &&
+      (entry.transition === 'move' || entry.transition === null)
+    );
 
     if (gridChain.length === 0) return movements;
 
@@ -1005,12 +1013,13 @@ document.addEventListener('DOMContentLoaded', () => {
   //        [9, _, 9]
   //        [9, 9, 9]
   const gridDefinition = {
-      main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 _ main *inner _ 1 _ 9|9 2 _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+      // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+      // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
-      // main: '9 _ _|_ a b|1 _ _',
-      // a: 'main _|_ _', b: '_ _|_ _'
-      // main: "9 9 9|1 _ main|_ _ _"
+      main: '_ _ 9|a b _|1 _ _',
+      a: '_ main|_ _', b: '_ _|_ _'
+ 
+     // main: "9 9 9|1 _ main|_ _ _"
   
 // main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ *first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
 //                         '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ ~first _ 9|' +
