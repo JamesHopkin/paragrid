@@ -84,13 +84,14 @@ export function buildIsometricScene(
 
   // Define reusable objects
   const squareSize = 1.0;
+  const halfSize = squareSize / 2;
   builder.object('floor-square', {
     type: 'shape',
     vertices: [
-      [0, 0, 0],                    // back-right (origin)
-      [-squareSize, 0, 0],          // back-left
-      [-squareSize, 0, squareSize], // front-left
-      [0, 0, squareSize]            // front-right
+      [halfSize, 0, -halfSize],     // back-right
+      [-halfSize, 0, -halfSize],    // back-left
+      [-halfSize, 0, halfSize],     // front-left
+      [halfSize, 0, halfSize]       // front-right
     ]
   });
 
@@ -351,8 +352,6 @@ function renderGridDirect(
       // Render floor at ACTUAL grid position (not overridden position)
       // Floor should stay put even when content hierarchy is moved for z-sorting
       const isLight = (row + col) % 2 === 0;
-      const floorOffsetX = squareSize / 2;
-      const floorOffsetZ = -squareSize / 2;
 
       // Render floor tile if:
       // - This is a light square AND
@@ -362,8 +361,9 @@ function renderGridDirect(
 
       if (shouldRenderFloor) {
         // Calculate offset from effective position back to actual position
-        const floorXOffset = (col - effectiveCol) + floorOffsetX;
-        const floorZOffset = (row - effectiveRow) + floorOffsetZ;
+        // floor-square is now centered at origin, so no additional offset needed
+        const floorXOffset = (col - effectiveCol);
+        const floorZOffset = (row - effectiveRow);
 
         builder.group(`root-floor-${row}-${col}`, { layer: -1 });
         builder.instance('floor-square', {
@@ -508,14 +508,12 @@ function buildGridTemplate(
 
       // Render floor (checkerboard pattern) - skip for RefNodes
       const isLight = (row + col) % 2 === 0;
-      const floorOffsetX = squareSize / 2;
-      const floorOffsetZ = -squareSize / 2;
 
       // Don't render floor tile if this cell contains a reference
       if (isLight && !isRefNode(child)) {
         builder.group(`${templateId}-floor-${row}-${col}`, { layer: -1 });
         builder.instance('floor-square', {
-          position: [floorOffsetX, 0, floorOffsetZ],
+          position: [0, 0, 0],  // floor-square is now centered at origin
           color: floorColors.light
         });
         builder.endGroup();
@@ -667,22 +665,21 @@ function renderExitPreview(
     // Render a scaled floor square for the exit preview
     // The floor should be centered at the origin of this group
     const floorSize = scale * 1.0; // Match the squareSize used elsewhere
-    const floorOffsetX = floorSize / 2;
-    const floorOffsetZ = -floorSize / 2;
+    const floorHalfSize = floorSize / 2;
     const floorColor = isLight ? targetFloorColors.light : targetFloorColors.dark;
 
     builder.group(`exit-preview-floor-${index}`, { layer: -1 });
     builder.object(`exit-floor-square-${index}`, {
       type: 'shape',
       vertices: [
-        [0, 0, 0],
-        [-floorSize, 0, 0],
-        [-floorSize, 0, floorSize],
-        [0, 0, floorSize]
+        [floorHalfSize, 0, -floorHalfSize],
+        [-floorHalfSize, 0, -floorHalfSize],
+        [-floorHalfSize, 0, floorHalfSize],
+        [floorHalfSize, 0, floorHalfSize]
       ]
     });
     builder.instance(`exit-floor-square-${index}`, {
-      position: [floorOffsetX, 0, floorOffsetZ],
+      position: [0, 0, 0],  // floor square is now centered at origin
       color: floorColor
     });
     builder.endGroup();
