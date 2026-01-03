@@ -7,6 +7,32 @@
  */
 
 import { SceneBuilder, Camera, cube, octahedron, project, Renderer, type Scene, type TransformOverrides } from 'iso-render';
+
+/**
+ * Create a camera with paragrid's standard viewing angles.
+ *
+ * @param center - World position to center view on
+ * @param viewWidth - Horizontal span of view in world units
+ * @param viewportWidth - Viewport width in pixels
+ * @param viewportHeight - Viewport height in pixels
+ */
+export function createParagridCamera(
+  center: readonly [number, number, number],
+  viewWidth: number,
+  viewportWidth: number,
+  viewportHeight: number
+) {
+  return Camera.custom({
+    center,
+    rightEdge: [center[0] + viewWidth / 2, center[1], center[2]],
+    viewportWidth,
+    viewportHeight,
+    yaw: 40,
+    pitch: 28,
+    groundScale: 1.0,
+    heightScale: 1.0
+  });
+}
 import type { CellNode, NestedNode, ConcreteNode, RefNode } from '../analyzer/types.js';
 import { isNestedNode, isConcreteNode, isRefNode, isEmptyNode, isCutoffNode } from '../analyzer/types.js';
 import type { CellPosition } from '../core/position.js';
@@ -209,12 +235,8 @@ export function buildIsometricScene(
 
   // Setup camera
   const maxDim = Math.max(rows, cols);
-  const scale = Math.min(width, height) / (maxDim * 1.2);
-
-  const camera = Camera.custom({
-    yaw: 40, pitch: 28, groundScale: 1.0, heightScale: 1.0, scale,
-    offset: [width / 2 - 370, height / 2 - 340]
-  });
+  const viewWidth = maxDim * 1.2;
+  const camera = createParagridCamera([0, 0, 0], viewWidth, width, height);
 
   return { scene, camera, width, height };
 }

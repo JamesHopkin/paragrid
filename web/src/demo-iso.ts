@@ -3,7 +3,7 @@
  */
 
 import { parseGrids } from './lib/parser/parser.js';
-import type { GridStore } from './lib/core/types.js';
+import type { GridStore, Grid } from './lib/core/types.js';
 import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
 import { CellPosition } from './lib/core/position.js';
@@ -14,7 +14,8 @@ import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { analyze } from './lib/analyzer/index.js';
-import { renderIsometric, buildIsometricScene, type CellPositionOverrides } from './lib/renderer/isometric.js';
+import { findPrimaryRef } from './lib/utils/immutable.js';
+import { renderIsometric, buildIsometricScene, createParagridCamera, type CellPositionOverrides } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
 import { computeExitTransformation, getEdgePosition, type ExitTransformation } from './lib/navigator/exit-transform.js';
@@ -877,6 +878,75 @@ class IsometricDemo {
   }
 
   /**
+   * Determine which grid to render and camera scale adjustment.
+   * Returns parent grid if available, otherwise current grid.
+   */
+  private getRenderGridInfo(playerPos: CellPosition): {
+    gridId: string;
+    grid: Grid;
+    currentGridMaxDim: number;
+    refPosition: { row: number; col: number } | null;
+  } {
+    const currentGrid = getGrid(this.store, playerPos.gridId);
+    if (!currentGrid) {
+      throw new Error(`Player grid ${playerPos.gridId} not found`);
+    }
+
+    // Try to find parent grid
+    const primaryRef = findPrimaryRef(this.store, playerPos.gridId);
+
+    console.log('getRenderGridInfo:', {
+      playerGridId: playerPos.gridId,
+      primaryRef: primaryRef,
+      hasParent: !!primaryRef
+    });
+
+    const currentMaxDim = Math.max(currentGrid.rows, currentGrid.cols);
+
+    if (!primaryRef) {
+      // No parent - render current grid normally
+      console.log('  -> No parent found, rendering current grid');
+      return {
+        gridId: playerPos.gridId,
+        grid: currentGrid,
+        currentGridMaxDim: currentMaxDim,
+        refPosition: null
+      };
+    }
+
+    const [parentGridId, refRow, refCol] = primaryRef;
+    const parentGrid = getGrid(this.store, parentGridId);
+
+    if (!parentGrid) {
+      // Parent not found - fallback to current grid
+      console.log('  -> Parent grid not found in store, fallback to current');
+      return {
+        gridId: playerPos.gridId,
+        grid: currentGrid,
+        currentGridMaxDim: currentMaxDim,
+        refPosition: null
+      };
+    }
+
+    // Render parent grid, but keep the view width based on current grid
+    // This maintains the same zoom level as if we were rendering current grid alone
+    console.log('  -> Rendering parent grid:', {
+      parentGridId,
+      parentDims: `${parentGrid.rows}x${parentGrid.cols}`,
+      currentDims: `${currentGrid.rows}x${currentGrid.cols}`,
+      currentGridMaxDim: currentMaxDim,
+      refPosition: { row: refRow, col: refCol }
+    });
+
+    return {
+      gridId: parentGridId,
+      grid: parentGrid,
+      currentGridMaxDim: currentMaxDim,
+      refPosition: { row: refRow, col: refCol }
+    };
+  }
+
+  /**
    * Rebuild scene data (analyze + build scene) without rendering.
    * Used when we want to prepare for animation.
    */
@@ -884,11 +954,11 @@ class IsometricDemo {
     const playerPos = this.playerPosition;
     if (!playerPos) return;
 
-    const grid = getGrid(this.store, playerPos.gridId);
-    if (!grid) return;
+    // Get render grid info (current or parent)
+    const { gridId, grid, currentGridMaxDim, refPosition } = this.getRenderGridInfo(playerPos);
 
-    // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
-    this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+    // Phase 1: Analyze grid to build CellTree
+    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
 
     // Compute exit previews for all directions (only if enabled)
     const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
@@ -908,6 +978,39 @@ class IsometricDemo {
 
     this.currentScene = result.scene;
     this.currentCamera = result.camera;
+
+    // Adjust camera for parent grid rendering
+    if (refPosition) {
+      console.log('Adjusting camera (rebuildSceneData) for parent grid');
+
+      // Calculate world position of reference cell (grid is centered at origin)
+      const centerX = (grid.cols - 1) / 2;
+      const centerZ = (grid.rows - 1) / 2;
+      const refX = refPosition.col - centerX;
+      const refZ = refPosition.row - centerZ;
+
+      // View width: show approximately 1 parent cell (the reference cell)
+      // The reference cell is 1×1 in parent coordinates, so viewWidth ≈ 1.2
+      const viewWidth = 1.2;
+
+      console.log('Camera adjustment:', {
+        refPosition,
+        worldCenter: [refX, 0, refZ],
+        currentGridMaxDim,
+        viewWidth,
+        viewport: [this.renderWidth, this.renderHeight]
+      });
+
+      // Create camera centered on reference cell
+      this.currentCamera = createParagridCamera(
+        [refX, 0, refZ],
+        viewWidth,
+        this.renderWidth,
+        this.renderHeight
+      );
+
+      console.log('Camera created with createParagridCamera');
+    }
 
     // Ensure renderer is ready (create once, reuse for all renders)
     if (!this.currentRenderer) {
@@ -929,15 +1032,6 @@ class IsometricDemo {
       return;
     }
 
-    // Get the grid containing the player (this is the root for visualization)
-    const grid = getGrid(this.store, playerPos.gridId);
-
-    if (!grid) {
-      this.canvas.innerHTML = `<div style="color: red; padding: 20px;">Error: Player grid not found!</div>`;
-      this.updateStatus();
-      return;
-    }
-
     try {
       // Rebuild scene only when necessary (store changed, or first render)
       if (forceRebuild || !this.currentScene || !this.currentCellTree || !this.currentRenderer) {
@@ -945,8 +1039,11 @@ class IsometricDemo {
         this.canvas.innerHTML = '';
         this.currentRenderer = null;
 
-        // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
-        this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
+        // Get render grid info (current or parent)
+        const { gridId, grid, currentGridMaxDim, refPosition } = this.getRenderGridInfo(playerPos);
+
+        // Phase 1: Analyze grid to build CellTree
+        this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
 
         // Compute exit previews for all directions (only if enabled)
         const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
@@ -966,6 +1063,39 @@ class IsometricDemo {
 
         this.currentScene = result.scene;
         this.currentCamera = result.camera;
+
+        // Adjust camera for parent grid rendering
+        if (refPosition) {
+          console.log('Adjusting camera (render) for parent grid');
+
+          // Calculate world position of reference cell (grid is centered at origin)
+          const centerX = (grid.cols - 1) / 2;
+          const centerZ = (grid.rows - 1) / 2;
+          const refX = refPosition.col - centerX;
+          const refZ = refPosition.row - centerZ;
+
+          // View width: show approximately 1 parent cell (the reference cell)
+          // The reference cell is 1×1 in parent coordinates, so viewWidth ≈ 1.2
+          const viewWidth = 1.2;
+
+          console.log('Camera adjustment:', {
+            refPosition,
+            worldCenter: [refX, 0, refZ],
+            currentGridMaxDim,
+            viewWidth,
+            viewport: [this.renderWidth, this.renderHeight]
+          });
+
+          // Create camera centered on reference cell
+          this.currentCamera = createParagridCamera(
+            [refX, 0, refZ],
+            viewWidth,
+            this.renderWidth,
+            this.renderHeight
+          );
+
+          console.log('Camera created with createParagridCamera');
+        }
 
         // Create new renderer after clearing canvas
         this.currentRenderer = new Renderer({
