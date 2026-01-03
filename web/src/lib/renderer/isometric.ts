@@ -45,12 +45,6 @@ import { Direction } from '../core/direction.js';
 import { analyze } from '../analyzer/index.js';
 
 /**
- * Cell position override for scene building.
- * Maps cell group ID to [row, col] position to use instead of store position.
- */
-export type CellPositionOverrides = Map<string, { row: number; col: number }>;
-
-/**
  * Render options for the isometric renderer.
  */
 export interface RenderOptions {
@@ -61,7 +55,6 @@ export interface RenderOptions {
   store: GridStore;
   tagFn: TagFn;
   transformOverrides?: TransformOverrides;
-  cellPositionOverrides?: CellPositionOverrides;
   exitPreviews?: ExitTransformation[]; // Optional exit previews to render
   enableExitPreviews?: boolean; // Enable exit preview rendering (default: false)
 }
@@ -91,7 +84,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, exitPreviews, enableExitPreviews = false } = options;
+  const { width, height, highlightPosition, store, tagFn, exitPreviews, enableExitPreviews = false } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -242,7 +235,7 @@ export function buildIsometricScene(
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
-  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides);
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn);
 
   // PASS 4: Render exit previews if enabled and provided
   if (enableExitPreviews && exitPreviews && exitPreviews.length > 0) {
@@ -359,8 +352,7 @@ function renderGridDirect(
   squareSize: number,
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
-  tagFn: TagFn,
-  cellPositionOverrides?: CellPositionOverrides
+  tagFn: TagFn
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
@@ -388,15 +380,10 @@ function renderGridDirect(
         contentGroupId = `empty-${row}-${col}`;
       }
 
-      // Check for position override (for direction-aware animation)
-      const posOverride = cellPositionOverrides?.get(contentGroupId);
-      const effectiveRow = posOverride?.row ?? row;
-      const effectiveCol = posOverride?.col ?? col;
-
-      // Position in scene (with root offset applied, using effective position)
-      const x = translation[0] + effectiveCol;
+      // Position in scene (with root offset applied)
+      const x = translation[0] + col;
       const y = translation[1];
-      const z = translation[2] + effectiveRow;
+      const z = translation[2] + row;
 
       // Create a group for this cell with a predictable ID
       const cellGroupId = `root-cell-${row}-${col}`;
@@ -404,20 +391,14 @@ function renderGridDirect(
         position: [x, y, z]
       });
 
-      // Render floor at ACTUAL grid position (not overridden position)
-      // Floor should stay put even when content hierarchy is moved for z-sorting
+      // Render floor tile
       const isLight = (row + col) % 2 === 0;
 
       // Always render light floor tiles (no cut-outs for references)
       if (isLight) {
-        // Calculate offset from effective position back to actual position
-        // floor-square is now centered at origin, so no additional offset needed
-        const floorXOffset = (col - effectiveCol);
-        const floorZOffset = (row - effectiveRow);
-
         builder.group(`root-floor-${row}-${col}`, { layer: -50 });
         builder.instance('floor-square', {
-          position: [floorXOffset, 0, floorZOffset],
+          position: [0, 0, 0],
           color: floorColors.light
         });
         builder.endGroup();

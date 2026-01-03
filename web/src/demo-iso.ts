@@ -15,7 +15,7 @@ import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { analyze } from './lib/analyzer/index.js';
 import { findPrimaryRef } from './lib/utils/immutable.js';
-import { renderIsometric, buildIsometricScene, createParagridCamera, type CellPositionOverrides } from './lib/renderer/isometric.js';
+import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
 import { computeExitTransformation, getEdgePosition, type ExitTransformation } from './lib/navigator/exit-transform.js';
@@ -43,7 +43,6 @@ class IsometricDemo {
   private readonly renderWidth = 800;
   private readonly renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
-  private cellPositionOverrides: CellPositionOverrides | undefined = undefined; // For direction-aware animation
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
@@ -269,8 +268,7 @@ class IsometricDemo {
         const movements = this.chainToMovements(pushChain, playerPos.gridId);
 
         if (movements.length > 0) {
-          // Create animations (this sets cellPositionOverrides)
-          // Then rebuild scene with those overrides
+          // Create animations for all movements
           this.createMultipleMovementAnimations(movements);
         } else {
           // No animation - render immediately
@@ -489,8 +487,6 @@ class IsometricDemo {
     }
     // Remove animation clip to clear transform overrides
     this.animationSystem.removeClip('push-move');
-    // Clear animation state
-    this.cellPositionOverrides = undefined;
     // Force render to show the final state
     this.render(true);
   }
@@ -586,38 +582,7 @@ class IsometricDemo {
   }
 
   /**
-   * Transform world coordinates to camera-space Z coordinate.
-   * Higher camera-space Z means closer to camera.
-   */
-  private worldToCameraZ(worldX: number, worldZ: number): number {
-    if (!this.currentCamera) {
-      return 0; // Fallback if camera not ready
-    }
-
-    // Get camera yaw in radians (from camera config)
-    const yawDegrees = this.currentCamera.yaw ?? 50;
-    const yawRadians = (yawDegrees * Math.PI) / 180;
-
-    // Apply yaw rotation to get camera-relative coordinates
-    // Camera looks down the +Z axis after rotation
-    const cameraX = worldX * Math.cos(yawRadians) + worldZ * Math.sin(yawRadians);
-    const cameraZ = -worldX * Math.sin(yawRadians) + worldZ * Math.cos(yawRadians);
-
-    return cameraZ;
-  }
-
-  /**
-   * Determine if movement is toward the camera (increasing camera-space Z).
-   */
-  private isMovingTowardCamera(oldPos: CellPosition, newPos: CellPosition): boolean {
-    const oldCameraZ = this.worldToCameraZ(oldPos.col, oldPos.row);
-    const newCameraZ = this.worldToCameraZ(newPos.col, newPos.row);
-    return newCameraZ > oldCameraZ;
-  }
-
-  /**
    * Create animations for multiple cells that moved one square.
-   * Uses direction-aware animation strategy for correct z-ordering.
    */
   private createMultipleMovementAnimations(movements: Array<{
     cellId: string;
@@ -628,38 +593,11 @@ class IsometricDemo {
 
     const duration = 0.3; // 300ms animation
 
-    // Split movements by direction relative to camera
-    const towardCamera: typeof movements = [];
-    const awayFromCamera: typeof movements = [];
-
-    for (const movement of movements) {
-      if (true) { //this.isMovingTowardCamera(movement.oldPos, movement.newPos)) {
-        towardCamera.push(movement);
-      } else {
-        awayFromCamera.push(movement);
-      }
-    }
-
-    console.log(`Movements: ${towardCamera.length} toward camera, ${awayFromCamera.length} away from camera`);
-
     // Remove any existing animation clip to avoid conflicts
     this.animationSystem.removeClip('push-move');
 
-    // Build cell position overrides for away-from-camera movements
-    // These cells need hierarchy at OLD position for correct z-sorting
-    if (awayFromCamera.length > 0) {
-      this.cellPositionOverrides = new Map();
-      for (const movement of awayFromCamera) {
-        this.cellPositionOverrides.set(movement.cellId, {
-          row: movement.oldPos.row,
-          col: movement.oldPos.col
-        });
-      }
-    } else {
-      this.cellPositionOverrides = undefined;
-    }
-
-    // Build all animations
+    // Build animations for all movements
+    // Hierarchy is at NEW position, animate FROM old position (negative offset)
     const animations: Array<{
       nodeId: string;
       channels: Array<{
@@ -669,8 +607,7 @@ class IsometricDemo {
       }>;
     }> = [];
 
-    // TOWARD CAMERA: hierarchy at NEW position, animate FROM old position (negative offset)
-    for (const movement of towardCamera) {
+    for (const movement of movements) {
       const relativeOffset: [number, number, number] = [
         movement.oldPos.col - movement.newPos.col,
         0,
@@ -678,7 +615,7 @@ class IsometricDemo {
       ];
       const targetPos: [number, number, number] = [0, 0, 0];
 
-      console.log(`  ${movement.cellId} (toward): [${relativeOffset}] -> [${targetPos}]`);
+      console.log(`  ${movement.cellId}: [${relativeOffset}] -> [${targetPos}]`);
 
       animations.push({
         nodeId: movement.cellId,
@@ -693,30 +630,6 @@ class IsometricDemo {
       });
     }
 
-    // AWAY FROM CAMERA: hierarchy at OLD position, animate TO new position (positive offset)
-    for (const movement of awayFromCamera) {
-      const startPos: [number, number, number] = [0, 0, 0]; // Starts at hierarchy position (OLD)
-      const targetOffset: [number, number, number] = [
-        movement.newPos.col - movement.oldPos.col,
-        0,
-        movement.newPos.row - movement.oldPos.row
-      ];
-
-      console.log(`  ${movement.cellId} (away): [${startPos}] -> [${targetOffset}]`);
-
-      animations.push({
-        nodeId: movement.cellId,
-        channels: [{
-          target: 'position',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startPos, easing: Easing.easeInQuad },
-            { time: duration, value: targetOffset }
-          ]
-        }]
-      });
-    }
-
     // Create animation clip
     const animationClip: AnimationClip = {
       id: 'push-move',
@@ -725,7 +638,7 @@ class IsometricDemo {
       animations
     };
 
-    // Rebuild scene with the position overrides now in place
+    // Rebuild scene data
     this.rebuildSceneData();
 
     // Add and play the animation
@@ -770,22 +683,6 @@ class IsometricDemo {
 
         // Remove animation clip so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
-
-        // Check if we need to rebuild (position overrides)
-        const needsRebuild = this.cellPositionOverrides !== undefined;
-
-        // Clear animation state
-        if (this.cellPositionOverrides) {
-          this.cellPositionOverrides = undefined;
-        }
-
-        if (needsRebuild) {
-          console.log('Animation complete - rebuilding scene');
-          // Rebuild scene data without clearing canvas (avoids flash)
-          this.rebuildSceneData();
-          // Render the final state (now with no animation overrides)
-          this.render(false);
-        }
       }
     };
 
@@ -964,7 +861,6 @@ class IsometricDemo {
       highlightPosition: playerPos,
       store: this.store,
       tagFn: this.tagFn,
-      cellPositionOverrides: this.cellPositionOverrides,
       exitPreviews: exitPreviews,
       enableExitPreviews: this.enableExitPreviews
     });
@@ -1048,7 +944,6 @@ class IsometricDemo {
           highlightPosition: playerPos,
           store: this.store,
           tagFn: this.tagFn,
-          cellPositionOverrides: this.cellPositionOverrides,
           exitPreviews: exitPreviews,
           enableExitPreviews: this.enableExitPreviews
         });
