@@ -230,6 +230,17 @@ class IsometricDemo {
     this.store = result.store;
     const pushChain = result.chain;
 
+    // DEBUG: Log the full push chain
+    console.log('=== PUSH CHAIN ===');
+    for (const entry of pushChain) {
+      const pos = entry.position;
+      const cell = entry.cell;
+      const cellType = cell.type === 'concrete' ? `Concrete(${cell.id})` :
+                       cell.type === 'ref' ? `Ref(${cell.gridId})` :
+                       cell.type === 'empty' ? 'Empty' : 'Unknown';
+      console.log(`  [${pos.gridId}:${pos.row},${pos.col}] ${cellType} - transition: ${entry.transition}`);
+    }
+
     // Find new player position
     const newPos = this.playerPosition;
     if (newPos) {
@@ -289,6 +300,9 @@ class IsometricDemo {
    *
    * IMPORTANT: This function only creates animations for simple single-square movements
    * within the same grid. Exit/enter transitions are NOT animated.
+   *
+   * The transition metadata on each entry describes HOW we arrived at that position.
+   * To determine if a movement should be animated, we check the DESTINATION's transition.
    */
   private chainToMovements(chain: import('./lib/operations/push.js').PushChain, targetGridId: string): Array<{
     cellId: string;
@@ -299,28 +313,39 @@ class IsometricDemo {
 
     if (chain.length === 0) return movements;
 
-    // Filter chain to only positions in the target grid AND only 'move' transitions
-    // Skip 'enter' and 'exit' transitions - we only animate simple moves for now
-    const gridChain = chain.filter(entry =>
-      entry.position.gridId === targetGridId &&
-      (entry.transition === 'move' || entry.transition === null)
-    );
-
-    if (gridChain.length === 0) return movements;
-
     // For each cell in the chain, determine its movement
-    // Cell at position[i] moves to position[i+1] (with wraparound)
-    for (let i = 0; i < gridChain.length; i++) {
-      const entry = gridChain[i];
+    // Cell at position[i] moves to position[i+1] (with wraparound in the FULL chain)
+    for (let i = 0; i < chain.length; i++) {
+      const entry = chain[i];
       const cell = entry.cell;
       const oldPos = entry.position;
-      const newPos = gridChain[(i + 1) % gridChain.length].position;
+
+      // Only process entries in the target grid
+      if (oldPos.gridId !== targetGridId) continue;
+
+      // Find the next position in the FULL chain (with wraparound)
+      const nextIndex = (i + 1) % chain.length;
+      const nextEntry = chain[nextIndex];
+      const newPos = nextEntry.position;
+
+      // Only animate if BOTH source and destination are in the target grid
+      if (newPos.gridId !== targetGridId) {
+        console.log(`  Skipping animation for cell at ${oldPos}: destination ${newPos} is in different grid`);
+        continue;
+      }
 
       // Only animate non-empty cells
       if (cell.type === 'empty') continue;
 
       // Skip if cell didn't actually move (same position)
       if (oldPos.equals(newPos)) continue;
+
+      // Check the DESTINATION's transition to see what kind of movement this is
+      // Skip animations for enter/exit transitions - we only animate simple moves
+      if (nextEntry.transition === 'enter' || nextEntry.transition === 'exit') {
+        console.log(`  Skipping animation for cell at ${oldPos} -> ${newPos}: destination transition is ${nextEntry.transition}`);
+        continue;
+      }
 
       // Only animate single-square movements
       if (!this.isSingleSquareMovement(oldPos, newPos)) continue;
@@ -1001,6 +1026,18 @@ class IsometricDemo {
   }
 }
 
+const GRIDS = {
+  swap: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+  },
+  swapEdited: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 3 _ 9|9 _ _ _ _ *inner _ 9|9 1 _ _ _ _ _ _|9 2 _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+  },
+  simple: { main: '1 _ _|_ 9 _|_ _ 2' }
+};
+
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
   // Test 4x4 with self-reference and inner reference
@@ -1012,12 +1049,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = {
+  const gridDefinition = GRIDS.swap;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
-      main: '_ _ 9|a b _|1 _ _',
-      a: '_ main|_ _', b: '_ _|_ _'
+      // main: '_ _ 9|_ a b|1 _ _',
+      // a: '_ b|_ _', b: '2 _|_ _'
  
      // main: "9 9 9|1 _ main|_ _ _"
   
@@ -1028,7 +1065,6 @@ document.addEventListener('DOMContentLoaded', () => {
 // second: '_ _ _|_ 3 _|_ _ _',
 // third: '_ _ _|_ 4 _|_ _ _',
 // fourth: '_ _ _|_ 5 _|_ _ _'
-  };
 
 
   const store = parseGrids(gridDefinition);

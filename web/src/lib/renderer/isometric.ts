@@ -661,12 +661,15 @@ function renderExitPreview(
   const targetFloorColors = getFloorColors(targetGridId);
   const isLight = (exitPosition.row + exitPosition.col) % 2 === 0;
 
-  if (isLight && cell.type !== 'ref') {
+  // Always render floor tile for exit previews (except for references)
+  // Use light color for light squares, dark color for dark squares
+  if (cell.type !== 'ref') {
     // Render a scaled floor square for the exit preview
     // The floor should be centered at the origin of this group
     const floorSize = scale * 1.0; // Match the squareSize used elsewhere
     const floorOffsetX = floorSize / 2;
     const floorOffsetZ = -floorSize / 2;
+    const floorColor = isLight ? targetFloorColors.light : targetFloorColors.dark;
 
     builder.group(`exit-preview-floor-${index}`, { layer: -1 });
     builder.object(`exit-floor-square-${index}`, {
@@ -680,7 +683,7 @@ function renderExitPreview(
     });
     builder.instance(`exit-floor-square-${index}`, {
       position: [floorOffsetX, 0, floorOffsetZ],
-      color: targetFloorColors.light
+      color: floorColor
     });
     builder.endGroup();
   }
