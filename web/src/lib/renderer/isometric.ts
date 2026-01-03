@@ -126,26 +126,48 @@ export function buildIsometricScene(
   builder.object('concrete-cube', cube(0.8));
   builder.object('player-octahedron', octahedron(0.8));
 
-  // Half-height box for 'stop' tagged cells (broader than regular cubes)
+  // Septagonal prism for 'stop' tagged cells
   const halfHeight = 0.3;
-  const boxSize = 0.9;
-  const half = boxSize / 2;
+  const radius = 0.25;
+  const numSides = 7;
+
+  // Generate vertices for bottom and top septagon
+  const bottomVerts: [number, number, number][] = [];
+  const topVerts: [number, number, number][] = [];
+
+  for (let i = 0; i < numSides; i++) {
+    const angle = (i * 2 * Math.PI) / numSides; // Rotated so flat edge faces forward
+    const x = radius * Math.cos(angle);
+    const z = radius * Math.sin(angle);
+    bottomVerts.push([x, 0, z]);
+    topVerts.push([x, halfHeight, z]);
+  }
+
+  // Build faces for septagonal prism
+  const septagonFaces: { vertices: [number, number, number][] }[] = [];
+
+  // Bottom face (viewed from below, counter-clockwise winding)
+  septagonFaces.push({ vertices: [...bottomVerts] });
+
+  // Top face (viewed from above, counter-clockwise winding)
+  septagonFaces.push({ vertices: [...topVerts].reverse() });
+
+  // Side faces (counter-clockwise winding when viewed from outside)
+  for (let i = 0; i < numSides; i++) {
+    const next = (i + 1) % numSides;
+    septagonFaces.push({
+      vertices: [
+        bottomVerts[i],
+        topVerts[i],
+        topVerts[next],
+        bottomVerts[next]
+      ]
+    });
+  }
+
   builder.object('stop-box', {
     type: 'solid',
-    faces: [
-      // Bottom
-      { vertices: [[-half, 0, -half], [half, 0, -half], [half, 0, half], [-half, 0, half]] },
-      // Top
-      { vertices: [[-half, halfHeight, -half], [-half, halfHeight, half], [half, halfHeight, half], [half, halfHeight, -half]] },
-      // Front
-      { vertices: [[half, 0, half], [half, halfHeight, half], [-half, halfHeight, half], [-half, 0, half]] },
-      // Back
-      { vertices: [[-half, 0, -half], [-half, halfHeight, -half], [half, halfHeight, -half], [half, 0, -half]] },
-      // Left
-      { vertices: [[-half, 0, half], [-half, halfHeight, half], [-half, halfHeight, -half], [-half, 0, -half]] },
-      // Right
-      { vertices: [[half, 0, -half], [half, halfHeight, -half], [half, halfHeight, half], [half, 0, half]] }
-    ]
+    faces: septagonFaces
   });
 
   // PASS 1: Collect all unique NestedNode instances by object identity
@@ -288,24 +310,24 @@ export function renderIsometric(
  * Dark colors are 33% brightness of light colors (same hue).
  */
 function getFloorColors(gridId: string): { light: string; dark: string } {
-  // Color palette per grid name
+  // Color palette per grid name (light colors are 30% less bright than original)
   const gridColors: Record<string, { light: string; dark: string }> = {
-    'main': { light: '#3a3a3a', dark: '#0a0a0a' },     // Subdued grey
-    'inner': { light: '#3a5a7a', dark: '#131e28' },    // Blue - 33% brightness
-    'a': { light: '#3a5a7a', dark: '#131e28' },        // Blue - 33% brightness
-    'b': { light: '#6a3a6a', dark: '#231323' },        // Purple - 33% brightness
-    'c': { light: '#6a6a3a', dark: '#232313' },        // Olive - 33% brightness
-    'd': { light: '#7a3a3a', dark: '#281313' },        // Red - 33% brightness
-    'e': { light: '#3a7a5a', dark: '#13281e' },        // Teal - 33% brightness
-    'f': { light: '#7a5a3a', dark: '#281e13' },        // Brown - 33% brightness
-    'first': { light: '#3a5a7a', dark: '#131e28' },    // Blue - 33% brightness
-    'second': { light: '#6a3a6a', dark: '#231323' },   // Purple - 33% brightness
-    'third': { light: '#7a3a3a', dark: '#281313' },    // Red - 33% brightness
-    'fourth': { light: '#3a7a5a', dark: '#13281e' },   // Teal - 33% brightness
-    'fifth': { light: '#7a5a3a', dark: '#281e13' },    // Brown - 33% brightness
+    'main': { light: '#292929', dark: '#0a0a0a' },     // Subdued grey
+    'inner': { light: '#293f55', dark: '#131e28' },    // Blue - 33% brightness
+    'a': { light: '#293f55', dark: '#131e28' },        // Blue - 33% brightness
+    'b': { light: '#4a294a', dark: '#231323' },        // Purple - 33% brightness
+    'c': { light: '#4a4a29', dark: '#232313' },        // Olive - 33% brightness
+    'd': { light: '#552929', dark: '#281313' },        // Red - 33% brightness
+    'e': { light: '#29553f', dark: '#13281e' },        // Teal - 33% brightness
+    'f': { light: '#553f29', dark: '#281e13' },        // Brown - 33% brightness
+    'first': { light: '#293f55', dark: '#131e28' },    // Blue - 33% brightness
+    'second': { light: '#4a294a', dark: '#231323' },   // Purple - 33% brightness
+    'third': { light: '#552929', dark: '#281313' },    // Red - 33% brightness
+    'fourth': { light: '#29553f', dark: '#13281e' },   // Teal - 33% brightness
+    'fifth': { light: '#553f29', dark: '#281e13' },    // Brown - 33% brightness
   };
 
-  return gridColors[gridId] || { light: '#7a7a3a', dark: '#282813' };
+  return gridColors[gridId] || { light: '#555529', dark: '#282813' };
 }
 
 /**
@@ -602,6 +624,27 @@ function buildGridTemplate(
         if (!nestedTemplateId) {
           console.error(`Template not found for nested grid: ${child.content.gridId}`);
         } else {
+          // Look up the actual cell to get isPrimary information
+          const grid = getGrid(store, node.gridId);
+          const cell = grid?.cells[row]?.[col];
+
+          // Create content group with ID (matching root grid structure)
+          // This ensures animations can target this group
+          let contentGroupId: string;
+          if (cell && isRef(cell)) {
+            const primarySuffix = cell.isPrimary === true ? 'primary' :
+                                  cell.isPrimary === false ? 'secondary' :
+                                  'auto';
+            contentGroupId = `ref-${cell.gridId}-${primarySuffix}`;
+          } else {
+            contentGroupId = `ref-${child.gridId}-${row}-${col}`;
+          }
+
+          builder.group(contentGroupId, {
+            position: [0, 0, 0],
+            layer: baseLayer
+          });
+
           const refRows = child.content.children.length;
           const refCols = child.content.children[0]?.length || 0;
 
@@ -613,9 +656,10 @@ function buildGridTemplate(
 
           // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
-            scale: [scaleX, scaleY, scaleZ],
-            layer: baseLayer
+            scale: [scaleX, scaleY, scaleZ]
           });
+
+          builder.endGroup(); // End content group
         }
       }
       // Empty and Cutoff nodes don't add geometry
