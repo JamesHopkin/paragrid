@@ -61,7 +61,26 @@ export function computeExitTransformation(
     return undefined;
   }
 
-  const [parentGridId, refRow, refCol] = primaryRef;
+  const [immediateParentGridId, refRow, refCol] = primaryRef;
+
+  // For position calculation to work, currentRefPosition must be in the same
+  // coordinate system as exitPosition (the target grid).
+  // With exit chains, we need to find where the immediate parent lives in the target.
+  let currentRefPosition: { row: number; col: number };
+
+  if (targetGridId === immediateParentGridId) {
+    // Simple case: exited to immediate parent
+    // Current grid's ref position is already in the target grid
+    currentRefPosition = { row: refRow, col: refCol };
+  } else {
+    // Exit chain: target is an ancestor of immediate parent
+    // Find where immediate parent lives in target grid
+    const parentPos = findPositionInAncestor(store, immediateParentGridId, targetGridId);
+    if (!parentPos) {
+      return undefined; // Shouldn't happen, but safety check
+    }
+    currentRefPosition = parentPos;
+  }
 
   // Compute scale: how many current-grid cells fit in one parent-grid cell
   const currentGrid = store[currentGridId];
@@ -74,8 +93,42 @@ export function computeExitTransformation(
     targetGridId,
     exitPosition,
     scale,
-    currentRefPosition: { row: refRow, col: refCol }
+    currentRefPosition
   };
+}
+
+/**
+ * Find where childGridId lives in ancestorGridId by walking up the parent chain.
+ * Returns null if childGridId is not nested in ancestorGridId.
+ */
+function findPositionInAncestor(
+  store: GridStore,
+  childGridId: string,
+  ancestorGridId: string
+): { row: number; col: number } | null {
+  if (childGridId === ancestorGridId) {
+    return null; // Can't find position of grid in itself
+  }
+
+  let gridId = childGridId;
+
+  while (gridId !== ancestorGridId) {
+    const primaryRef = findPrimaryRef(store, gridId);
+    if (!primaryRef) {
+      return null; // Hit root without finding ancestor
+    }
+
+    const [parentGridId, row, col] = primaryRef;
+
+    if (parentGridId === ancestorGridId) {
+      // Found it!
+      return { row, col };
+    }
+
+    gridId = parentGridId;
+  }
+
+  return null; // Shouldn't reach here
 }
 
 /**
