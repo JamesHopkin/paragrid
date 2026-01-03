@@ -47,6 +47,7 @@ class IsometricDemo {
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
+  private readonly enableExitPreviews = false; // Enable exit preview rendering and calculation (default: false)
 
   constructor(
     store: GridStore,
@@ -889,8 +890,8 @@ class IsometricDemo {
     // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
     this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
 
-    // Compute exit previews for all directions
-    const exitPreviews = this.computeExitPreviews();
+    // Compute exit previews for all directions (only if enabled)
+    const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
 
     // Phase 2: Build scene from CellTree (without rendering)
     const result = buildIsometricScene(this.currentCellTree, {
@@ -901,7 +902,8 @@ class IsometricDemo {
       tagFn: this.tagFn,
       cellPositionOverrides: this.cellPositionOverrides,
       animatingCells: this.animatingCells,
-      exitPreviews: exitPreviews
+      exitPreviews: exitPreviews,
+      enableExitPreviews: this.enableExitPreviews
     });
 
     this.currentScene = result.scene;
@@ -946,8 +948,8 @@ class IsometricDemo {
         // Phase 1: Analyze grid to build CellTree (from player's current grid as root)
         this.currentCellTree = analyze(this.store, playerPos.gridId, grid.cols, grid.rows);
 
-        // Compute exit previews for all directions
-        const exitPreviews = this.computeExitPreviews();
+        // Compute exit previews for all directions (only if enabled)
+        const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
 
         // Phase 2: Build scene from CellTree (without rendering yet)
         const result = buildIsometricScene(this.currentCellTree, {
@@ -958,7 +960,8 @@ class IsometricDemo {
           tagFn: this.tagFn,
           cellPositionOverrides: this.cellPositionOverrides,
           animatingCells: this.animatingCells,
-          exitPreviews: exitPreviews
+          exitPreviews: exitPreviews,
+          enableExitPreviews: this.enableExitPreviews
         });
 
         this.currentScene = result.scene;

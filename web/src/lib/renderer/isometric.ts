@@ -38,6 +38,7 @@ export interface RenderOptions {
   cellPositionOverrides?: CellPositionOverrides;
   animatingCells?: Set<string>; // Cell IDs currently animating (for floor tile rendering)
   exitPreviews?: ExitTransformation[]; // Optional exit previews to render
+  enableExitPreviews?: boolean; // Enable exit preview rendering (default: false)
 }
 
 /**
@@ -65,7 +66,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, animatingCells, exitPreviews } = options;
+  const { width, height, highlightPosition, store, tagFn, cellPositionOverrides, animatingCells, exitPreviews, enableExitPreviews = false } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -196,8 +197,8 @@ export function buildIsometricScene(
   // This allows us to animate individual cells directly
   renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, cellPositionOverrides, animatingCells);
 
-  // PASS 4: Render exit previews if provided
-  if (exitPreviews && exitPreviews.length > 0) {
+  // PASS 4: Render exit previews if enabled and provided
+  if (enableExitPreviews && exitPreviews && exitPreviews.length > 0) {
     for (let i = 0; i < exitPreviews.length; i++) {
       renderExitPreview(exitPreviews[i], builder, [offsetX, 0, offsetZ], cols, rows, store, tagFn, nodeToTemplateId, i);
     }
