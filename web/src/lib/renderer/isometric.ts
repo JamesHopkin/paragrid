@@ -83,7 +83,7 @@ export function buildIsometricScene(
     });
 
   // Define reusable objects
-  const squareSize = 0.9;
+  const squareSize = 1.0;
   builder.object('floor-square', {
     type: 'shape',
     vertices: [
@@ -162,8 +162,8 @@ export function buildIsometricScene(
   const cols = root.children[0]?.length || 0;
 
   // Create base floor
-  const baseWidth = cols - 0.1;
-  const baseHeight = rows - 0.1;
+  const baseWidth = cols;
+  const baseHeight = rows;
   builder.object('floor-base', {
     type: 'shape',
     vertices: [
@@ -249,27 +249,27 @@ export function renderIsometric(
  * Get floor colors for a grid based on its ID.
  * Returns { light, dark } for checkerboard pattern.
  * Main grid gets dark grey, others get distinct bright colors.
- * Dark colors are 25% brightness of light colors (same hue).
+ * Dark colors are 33% brightness of light colors (same hue).
  */
 function getFloorColors(gridId: string): { light: string; dark: string } {
   // Color palette per grid name
   const gridColors: Record<string, { light: string; dark: string }> = {
     'main': { light: '#3a3a3a', dark: '#0a0a0a' },     // Subdued grey
-    'inner': { light: '#3a5a7a', dark: '#0f171f' },    // Blue - 25% brightness
-    'a': { light: '#3a5a7a', dark: '#0f171f' },        // Blue - 25% brightness
-    'b': { light: '#6a3a6a', dark: '#1b0f1b' },        // Purple - 25% brightness
-    'c': { light: '#6a6a3a', dark: '#1b1b0f' },        // Olive - 25% brightness
-    'd': { light: '#7a3a3a', dark: '#1f0f0f' },        // Red - 25% brightness
-    'e': { light: '#3a7a5a', dark: '#0f1f17' },        // Teal - 25% brightness
-    'f': { light: '#7a5a3a', dark: '#1f170f' },        // Brown - 25% brightness
-    'first': { light: '#3a5a7a', dark: '#0f171f' },    // Blue - 25% brightness
-    'second': { light: '#6a3a6a', dark: '#1b0f1b' },   // Purple - 25% brightness
-    'third': { light: '#7a3a3a', dark: '#1f0f0f' },    // Red - 25% brightness
-    'fourth': { light: '#3a7a5a', dark: '#0f1f17' },   // Teal - 25% brightness
-    'fifth': { light: '#7a5a3a', dark: '#1f170f' },    // Brown - 25% brightness
+    'inner': { light: '#3a5a7a', dark: '#131e28' },    // Blue - 33% brightness
+    'a': { light: '#3a5a7a', dark: '#131e28' },        // Blue - 33% brightness
+    'b': { light: '#6a3a6a', dark: '#231323' },        // Purple - 33% brightness
+    'c': { light: '#6a6a3a', dark: '#232313' },        // Olive - 33% brightness
+    'd': { light: '#7a3a3a', dark: '#281313' },        // Red - 33% brightness
+    'e': { light: '#3a7a5a', dark: '#13281e' },        // Teal - 33% brightness
+    'f': { light: '#7a5a3a', dark: '#281e13' },        // Brown - 33% brightness
+    'first': { light: '#3a5a7a', dark: '#131e28' },    // Blue - 33% brightness
+    'second': { light: '#6a3a6a', dark: '#231323' },   // Purple - 33% brightness
+    'third': { light: '#7a3a3a', dark: '#281313' },    // Red - 33% brightness
+    'fourth': { light: '#3a7a5a', dark: '#13281e' },   // Teal - 33% brightness
+    'fifth': { light: '#7a5a3a', dark: '#281e13' },    // Brown - 33% brightness
   };
 
-  return gridColors[gridId] || { light: '#7a7a3a', dark: '#1f1f0f' };
+  return gridColors[gridId] || { light: '#7a7a3a', dark: '#282813' };
 }
 
 /**
@@ -470,8 +470,8 @@ function buildGridTemplate(
   const cols = node.children[0]?.length || 0;
 
   // Create and render base floor for this grid template
-  const baseWidth = cols - 0.1;
-  const baseHeight = rows - 0.1;
+  const baseWidth = cols;
+  const baseHeight = rows;
   const baseOffsetX = baseWidth / 2;
   const baseOffsetZ = -baseHeight / 2;
 
@@ -664,7 +664,7 @@ function renderExitPreview(
   if (isLight && cell.type !== 'ref') {
     // Render a scaled floor square for the exit preview
     // The floor should be centered at the origin of this group
-    const floorSize = scale * 0.9; // Match the squareSize used elsewhere
+    const floorSize = scale * 1.0; // Match the squareSize used elsewhere
     const floorOffsetX = floorSize / 2;
     const floorOffsetZ = -floorSize / 2;
 
