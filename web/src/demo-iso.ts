@@ -44,7 +44,6 @@ class IsometricDemo {
   private readonly renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
   private cellPositionOverrides: CellPositionOverrides | undefined = undefined; // For direction-aware animation
-  private animatingCells: Set<string> = new Set(); // Cell IDs currently animating
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
@@ -492,7 +491,6 @@ class IsometricDemo {
     this.animationSystem.removeClip('push-move');
     // Clear animation state
     this.cellPositionOverrides = undefined;
-    this.animatingCells.clear();
     // Force render to show the final state
     this.render(true);
   }
@@ -647,9 +645,6 @@ class IsometricDemo {
     // Remove any existing animation clip to avoid conflicts
     this.animationSystem.removeClip('push-move');
 
-    // Track all animating cells (for floor tile rendering)
-    this.animatingCells = new Set(movements.map(m => m.cellId));
-
     // Build cell position overrides for away-from-camera movements
     // These cells need hierarchy at OLD position for correct z-sorting
     if (awayFromCamera.length > 0) {
@@ -776,11 +771,10 @@ class IsometricDemo {
         // Remove animation clip so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
 
-        // Check if we need to rebuild (either position overrides or animating cells)
-        const needsRebuild = this.cellPositionOverrides !== undefined || this.animatingCells.size > 0;
+        // Check if we need to rebuild (position overrides)
+        const needsRebuild = this.cellPositionOverrides !== undefined;
 
         // Clear animation state
-        this.animatingCells.clear();
         if (this.cellPositionOverrides) {
           this.cellPositionOverrides = undefined;
         }
@@ -971,7 +965,6 @@ class IsometricDemo {
       store: this.store,
       tagFn: this.tagFn,
       cellPositionOverrides: this.cellPositionOverrides,
-      animatingCells: this.animatingCells,
       exitPreviews: exitPreviews,
       enableExitPreviews: this.enableExitPreviews
     });
@@ -1056,7 +1049,6 @@ class IsometricDemo {
           store: this.store,
           tagFn: this.tagFn,
           cellPositionOverrides: this.cellPositionOverrides,
-          animatingCells: this.animatingCells,
           exitPreviews: exitPreviews,
           enableExitPreviews: this.enableExitPreviews
         });
