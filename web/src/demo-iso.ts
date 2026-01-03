@@ -18,7 +18,6 @@ import { findPrimaryRef } from './lib/utils/immutable.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { computeExitTransformation, getEdgePosition, type ExitTransformation } from './lib/navigator/exit-transform.js';
 
 /**
  * Interactive demo class.
@@ -46,7 +45,6 @@ class IsometricDemo {
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
-  private readonly enableExitPreviews = false; // Enable exit preview rendering and calculation (default: false)
 
   constructor(
     store: GridStore,
@@ -689,84 +687,6 @@ class IsometricDemo {
     this.animationFrameId = requestAnimationFrame(animate);
   }
 
-  /**
-   * Compute exit previews for all four compass directions.
-   * Checks if it's possible to exit in each direction.
-   * Returns array of exit transformations (may be empty).
-   */
-  private computeExitPreviews(): ExitTransformation[] {
-    const playerPos = this.playerPosition;
-    if (!playerPos) return [];
-
-    const directions = [Direction.N, Direction.S, Direction.E, Direction.W];
-    const previews: ExitTransformation[] = [];
-
-    for (const direction of directions) {
-      // Get a position on the edge for this direction
-      const edgePos = getEdgePosition(this.store, playerPos.gridId, direction);
-      if (!edgePos) continue;
-
-      // Compute exit transformation
-      const result = computeExitTransformation(
-        this.store,
-        playerPos.gridId,
-        direction,
-        edgePos,
-        createRuleSet()
-      );
-
-      if (result) {
-        previews.push(result);
-
-        // For North and South, also preview cells horizontally adjacent to the exit cell in parent
-        if ((direction === Direction.N || direction === Direction.S) && result.targetGridId && result.currentRefPosition) {
-          const targetGrid = getGrid(this.store, result.targetGridId);
-          if (targetGrid) {
-            // Preview cell to the east of the exit cell
-            const eastCol = result.exitPosition.col + 1;
-            if (eastCol < targetGrid.cols) {
-              const eastPreview: ExitTransformation = {
-                targetGridId: result.targetGridId,
-                exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, eastCol),
-                scale: result.scale,
-                currentRefPosition: result.currentRefPosition,
-                direction: direction  // Inherit direction from main exit
-              };
-              previews.push(eastPreview);
-            }
-
-            // Preview cell to the west of the exit cell
-            const westCol = result.exitPosition.col - 1;
-            if (westCol >= 0) {
-              const westPreview: ExitTransformation = {
-                targetGridId: result.targetGridId,
-                exitPosition: new CellPosition(result.targetGridId, result.exitPosition.row, westCol),
-                scale: result.scale,
-                currentRefPosition: result.currentRefPosition,
-                direction: direction  // Inherit direction from main exit
-              };
-              previews.push(westPreview);
-            }
-          }
-        }
-      }
-    }
-
-    return previews;
-  }
-
-  /**
-   * Get layer configuration for rendering.
-   * Layers >= 200 should be 50% transparent.
-   */
-  private getLayerConfig(): (layer: number) => { opacity: number } {
-    return (layer: number) => {
-      if (layer >= 200) {
-        return { opacity: 0.5 };
-      }
-      return { opacity: 1.0 };
-    };
-  }
 
   /**
    * Determine which grid to render and camera scale adjustment.
@@ -851,18 +771,13 @@ class IsometricDemo {
     // Phase 1: Analyze grid to build CellTree
     this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
 
-    // Compute exit previews for all directions (only if enabled)
-    const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
-
     // Phase 2: Build scene from CellTree (without rendering)
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
       highlightPosition: playerPos,
       store: this.store,
-      tagFn: this.tagFn,
-      exitPreviews: exitPreviews,
-      enableExitPreviews: this.enableExitPreviews
+      tagFn: this.tagFn
     });
 
     this.currentScene = result.scene;
@@ -934,18 +849,13 @@ class IsometricDemo {
         // Phase 1: Analyze grid to build CellTree
         this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
 
-        // Compute exit previews for all directions (only if enabled)
-        const exitPreviews = this.enableExitPreviews ? this.computeExitPreviews() : [];
-
         // Phase 2: Build scene from CellTree (without rendering yet)
         const result = buildIsometricScene(this.currentCellTree, {
           width: this.renderWidth,
           height: this.renderHeight,
           highlightPosition: playerPos,
           store: this.store,
-          tagFn: this.tagFn,
-          exitPreviews: exitPreviews,
-          enableExitPreviews: this.enableExitPreviews
+          tagFn: this.tagFn
         });
 
         this.currentScene = result.scene;
@@ -1000,7 +910,7 @@ class IsometricDemo {
           this.renderHeight
         );
 
-        this.currentRenderer.render(screenSpace, { layers: this.getLayerConfig() });
+        this.currentRenderer.render(screenSpace);
       } else {
         // During animation: only update transform overrides and re-render
         const transformOverrides = this.animationSystem.evaluateTransforms();
@@ -1015,7 +925,7 @@ class IsometricDemo {
         );
 
         // Re-render using the SAME renderer instance (it clears and re-renders automatically)
-        this.currentRenderer.render(screenSpace, { layers: this.getLayerConfig() });
+        this.currentRenderer.render(screenSpace);
       }
     } catch (error) {
       console.error('Render error:', error);
