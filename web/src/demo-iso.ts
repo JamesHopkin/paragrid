@@ -17,9 +17,10 @@ import { analyze } from './lib/analyzer/index.js';
 import { findPrimaryRef } from './lib/utils/immutable.js';
 import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
-import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
+import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
 
+const CAMERA_ANIMATION_DURATION = 2; //0.3; // 300ms in seconds
 /**
  * Interactive demo class.
  */
@@ -36,6 +37,7 @@ class IsometricDemo {
   private currentCamera: any | null = null;
   private currentRenderer: Renderer | null = null;
   private animationSystem: AnimationSystem;
+  private cameraAnimationSystem: CameraAnimationSystem;
   private previousPlayerPosition: CellPosition | null = null;
   private animationFrameId: number | null = null;
   private lastFrameTime: number = 0;
@@ -46,13 +48,6 @@ class IsometricDemo {
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
-  private cameraAnimationState: {
-    isAnimating: boolean;
-    startTime: number;
-    duration: number;
-    startCamera: { center: [number, number, number]; viewWidth: number };
-    endCamera: { center: [number, number, number]; viewWidth: number };
-  } | null = null;
 
   constructor(
     store: GridStore,
@@ -66,6 +61,7 @@ class IsometricDemo {
     this.canvas = canvas;
     this.statusEl = statusEl;
     this.animationSystem = new AnimationSystem();
+    this.cameraAnimationSystem = new CameraAnimationSystem();
 
     // Store initial player position
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -513,8 +509,8 @@ class IsometricDemo {
    */
   private cancelCurrentAnimation(): void {
     this.animationSystem.stop();
+    this.cameraAnimationSystem.stop();
     this.isAnimating = false;
-    this.cameraAnimationState = null; // Cancel camera animation
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -700,35 +696,16 @@ class IsometricDemo {
       const deltaTime = (currentTime - this.lastFrameTime) / 1000; // Convert to seconds
       this.lastFrameTime = currentTime;
 
-      // Update cell animation system
+      // Update both animation systems
       this.animationSystem.update(deltaTime);
+      this.cameraAnimationSystem.update(deltaTime);
 
-      // Update camera animation if active
-      let cameraOverride: { center: [number, number, number]; viewWidth: number } | undefined = undefined;
-      if (this.cameraAnimationState?.isAnimating) {
-        const elapsed = currentTime - this.cameraAnimationState.startTime;
-        const progress = Math.min(elapsed / this.cameraAnimationState.duration, 1.0);
-        const easedProgress = Easing.easeInQuad(progress);
-
-        // Interpolate camera parameters
-        cameraOverride = this.interpolateCamera(
-          this.cameraAnimationState.startCamera,
-          this.cameraAnimationState.endCamera,
-          easedProgress
-        );
-
-        if (progress >= 1.0) {
-          // Camera animation complete
-          this.cameraAnimationState = null;
-        }
-      }
-
-      // Re-render with camera override if present
-      this.render(false, cameraOverride);
+      // Re-render (camera animation will be applied in render method)
+      this.render(false);
 
       // Continue if either animation is active
       const cellAnimating = this.animationSystem.getState().playing;
-      const cameraAnimating = this.cameraAnimationState?.isAnimating ?? false;
+      const cameraAnimating = this.cameraAnimationSystem.getState().playing;
 
       if (cellAnimating || cameraAnimating) {
         this.animationFrameId = requestAnimationFrame(animate);
@@ -815,73 +792,124 @@ class IsometricDemo {
       return { start: startCamera, end: endCamera };
     } else {
       // Exiting a referenced grid
-      // Start: Zoomed camera view of reference cell in parent grid
-      // End: Normal camera view of target grid
+      // Before exit, we were rendering the parent grid with camera zoomed to the child ref
+      // After exit, we'll be rendering the parent grid with camera zoomed to new position
+      // Animation should move the camera from old ref position to new ref position
 
-      const primaryRef = findPrimaryRef(this.store, oldPlayerPos.gridId);
-      if (!primaryRef) return null;
+      // Find where the OLD grid (child we're exiting from) is located in parent
+      const oldPrimaryRef = findPrimaryRef(this.store, oldPlayerPos.gridId);
+      if (!oldPrimaryRef) return null;
 
-      const [parentGridId, refRow, refCol] = primaryRef;
-      const parentGrid = getGrid(this.store, parentGridId);
-      if (!parentGrid) return null;
+      const [oldParentGridId, oldRefRow, oldRefCol] = oldPrimaryRef;
+      const oldParentGrid = getGrid(this.store, oldParentGridId);
+      if (!oldParentGrid) return null;
 
-      // Calculate world position of reference cell
-      const centerX = (parentGrid.cols - 1) / 2;
-      const centerZ = (parentGrid.rows - 1) / 2;
-      const refX = refCol - centerX;
-      const refZ = refRow - centerZ;
+      // Find where the NEW grid's reference is (the end focus point)
+      const newPrimaryRef = findPrimaryRef(this.store, newPlayerPos.gridId);
+      if (!newPrimaryRef) return null;
+
+      const [newParentGridId, newRefRow, newRefCol] = newPrimaryRef;
+      const newParentGrid = getGrid(this.store, newParentGridId);
+      if (!newParentGrid) return null;
+
+      // Calculate world position of NEW reference cell (where we're ending)
+      const newCenterX = (newParentGrid.cols - 1) / 2;
+      const newCenterZ = (newParentGrid.rows - 1) / 2;
+      const newRefX = newRefCol - newCenterX;
+      const newRefZ = newRefRow - newCenterZ;
+
+      // Calculate where the OLD reference appears within the NEW reference view
+      // When newParentGrid is rendered at [newRefX, newRefZ], it's scaled down
+      const newParentMaxDim = Math.max(newParentGrid.rows, newParentGrid.cols);
+
+      // The old reference is at [oldRefRow, oldRefCol] in the parent grid
+      // When the parent is scaled down by newParentMaxDim, this offset from center is:
+      const scaledOldRefX = (oldRefCol - newCenterX) / newParentMaxDim;
+      const scaledOldRefZ = (oldRefRow - newCenterZ) / newParentMaxDim;
+
+      // Add this offset to the new reference position to get where old ref appears
+      const startCenterX = newRefX + scaledOldRefX;
+      const startCenterZ = newRefZ + scaledOldRefZ;
+
+      // Start camera: zoomed in to show the old grid's contents at its position within the nested view
+      const oldGrid = getGrid(this.store, oldPlayerPos.gridId);
+      if (!oldGrid) return null;
+      const oldMaxDim = Math.max(oldGrid.rows, oldGrid.cols);
 
       const startCamera = {
-        center: [refX, 0, refZ] as [number, number, number],
+        center: [startCenterX, 0, startCenterZ] as [number, number, number],
+        viewWidth: 1.2 / (newParentMaxDim * oldMaxDim)  // Zoom in to show inner's content within nested main
+      };
+
+      const endCamera = {
+        center: [newRefX, 0, newRefZ] as [number, number, number],
         viewWidth: 1.2
       };
 
-      const newGrid = getGrid(this.store, newPlayerPos.gridId);
-      if (!newGrid) return null;
-
-      const newMaxDim = Math.max(newGrid.rows, newGrid.cols);
-      const newViewWidth = newMaxDim * 1.2;
-      const endCamera = {
-        center: [0, 0, 0] as [number, number, number],
-        viewWidth: newViewWidth
-      };
+      console.log('Exit camera animation:', {
+        from: `[${startCenterX}, 0, ${startCenterZ}]`,
+        to: `[${newRefX}, 0, ${newRefZ}]`,
+        startViewWidth: startCamera.viewWidth,
+        endViewWidth: endCamera.viewWidth,
+        oldGrid: oldPlayerPos.gridId,
+        newGrid: newPlayerPos.gridId,
+        sameParent: oldParentGridId === newParentGridId
+      });
 
       return { start: startCamera, end: endCamera };
     }
   }
 
   /**
-   * Interpolate between two camera states.
-   */
-  private interpolateCamera(
-    start: { center: [number, number, number]; viewWidth: number },
-    end: { center: [number, number, number]; viewWidth: number },
-    progress: number
-  ): { center: [number, number, number]; viewWidth: number } {
-    return {
-      center: [
-        start.center[0] + (end.center[0] - start.center[0]) * progress,
-        start.center[1] + (end.center[1] - start.center[1]) * progress,
-        start.center[2] + (end.center[2] - start.center[2]) * progress
-      ],
-      viewWidth: start.viewWidth + (end.viewWidth - start.viewWidth) * progress
-    };
-  }
-
-  /**
    * Start a camera animation with the given start and end states.
+   * Uses ts-poly's CameraAnimationSystem.
    */
   private startCameraAnimation(
     start: { center: [number, number, number]; viewWidth: number },
     end: { center: [number, number, number]; viewWidth: number }
   ): void {
-    this.cameraAnimationState = {
-      isAnimating: true,
-      startTime: performance.now(),
-      duration: 300, // Match push animation duration
-      startCamera: start,
-      endCamera: end
+    const duration = CAMERA_ANIMATION_DURATION;
+
+    // Convert viewWidth to rightEdge
+    const startRightEdge: [number, number, number] = [
+      start.center[0] + start.viewWidth / 2,
+      start.center[1],
+      start.center[2]
+    ];
+    const endRightEdge: [number, number, number] = [
+      end.center[0] + end.viewWidth / 2,
+      end.center[1],
+      end.center[2]
+    ];
+
+    // Create camera animation clip
+    const cameraClip: CameraAnimationClip = {
+      id: 'camera-zoom',
+      duration,
+      loop: false,
+      channels: [
+        {
+          target: 'center',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: start.center, easing: Easing.easeInQuad },
+            { time: duration, value: end.center }
+          ]
+        },
+        {
+          target: 'rightEdge',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startRightEdge, easing: Easing.easeInQuad },
+            { time: duration, value: endRightEdge }
+          ]
+        }
+      ]
     };
+
+    // Add and play the camera animation
+    this.cameraAnimationSystem.addClip(cameraClip);
+    this.cameraAnimationSystem.play('camera-zoom');
   }
 
   /**
@@ -889,8 +917,8 @@ class IsometricDemo {
    */
   private rebuildSceneForGridTransition(): void {
     this.animationSystem.stop();
+    this.cameraAnimationSystem.stop();
     this.isAnimating = false;
-    this.cameraAnimationState = null;
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
@@ -1179,8 +1207,7 @@ class IsometricDemo {
   }
 
   private render(
-    forceRebuild: boolean = false,
-    cameraOverride?: { center: [number, number, number]; viewWidth: number }
+    forceRebuild: boolean = false
   ): void {
     const playerPos = this.playerPosition;
 
@@ -1307,15 +1334,8 @@ class IsometricDemo {
           height: this.renderHeight
         });
 
-        // Use override camera if provided, otherwise use current camera
-        const activeCamera = cameraOverride ?
-          createParagridCamera(
-            cameraOverride.center,
-            cameraOverride.viewWidth,
-            this.renderWidth,
-            this.renderHeight
-          ) :
-          this.currentCamera;
+        // Apply camera animation if active
+        const activeCamera = this.cameraAnimationSystem.evaluateCamera(this.currentCamera);
 
         // Now render the scene once
         const screenSpace = project(
@@ -1330,15 +1350,8 @@ class IsometricDemo {
         // During animation: only update transform overrides and re-render
         const transformOverrides = this.animationSystem.evaluateTransforms();
 
-        // Use override camera if provided, otherwise use current camera
-        const activeCamera = cameraOverride ?
-          createParagridCamera(
-            cameraOverride.center,
-            cameraOverride.viewWidth,
-            this.renderWidth,
-            this.renderHeight
-          ) :
-          this.currentCamera;
+        // Apply camera animation if active
+        const activeCamera = this.cameraAnimationSystem.evaluateCamera(this.currentCamera);
 
         // Re-project with animation overrides
         const screenSpace = project(
@@ -1409,8 +1422,8 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main *inner _ _ _ 9|9 _ _ _ _ _ _ _|9 1 _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main *inner _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 1 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
@@ -1450,7 +1463,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.doubleExit;
+  const gridDefinition = GRIDS.swapEdited;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
