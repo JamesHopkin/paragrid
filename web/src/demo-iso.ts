@@ -15,6 +15,7 @@ import { findTaggedCell } from './lib/tagging/index.js';
 import type { TagFn } from './lib/tagging/types.js';
 import { analyze } from './lib/analyzer/index.js';
 import { findPrimaryRef } from './lib/utils/immutable.js';
+import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, Easing, type AnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
@@ -903,31 +904,118 @@ class IsometricDemo {
 
   /**
    * Determine which grid to render and camera scale adjustment.
-   * Returns parent grid if available, otherwise current grid.
+   * Returns highest ancestor from exit destinations if available,
+   * otherwise parent grid, otherwise current grid.
    */
   private getRenderGridInfo(playerPos: CellPosition): {
     gridId: string;
     grid: Grid;
     currentGridMaxDim: number;
     refPosition: { row: number; col: number } | null;
+    refPositionPath?: Array<{ gridId: string; row: number; col: number }>;
   } {
     const currentGrid = getGrid(this.store, playerPos.gridId);
     if (!currentGrid) {
       throw new Error(`Player grid ${playerPos.gridId} not found`);
     }
 
-    // Try to find parent grid
+    const currentMaxDim = Math.max(currentGrid.rows, currentGrid.cols);
+
+    // Step 1: Find immediate parent via primary ref
     const primaryRef = findPrimaryRef(this.store, playerPos.gridId);
+
+    // Step 2: NEW - Find highest ancestor from exit destinations
+    const highestAncestorId = findHighestAncestor(
+      this.store,
+      playerPos
+    );
 
     console.log('getRenderGridInfo:', {
       playerGridId: playerPos.gridId,
       primaryRef: primaryRef,
-      hasParent: !!primaryRef
+      hasParent: !!primaryRef,
+      highestAncestor: highestAncestorId
     });
 
-    const currentMaxDim = Math.max(currentGrid.rows, currentGrid.cols);
+    // Step 3: Choose which grid to render based on priority
+    let renderGridId: string;
+    let renderRefPosition: { row: number; col: number } | null = null;
 
-    if (!primaryRef) {
+    if (highestAncestorId) {
+      // Use highest ancestor if found (grandparent or higher)
+      renderGridId = highestAncestorId;
+
+      // Build path from render grid down to current grid
+      // This allows the camera to compute the correct nested world position
+      // Each entry shows where the next grid is located in the current grid
+      const path: Array<{ gridId: string; row: number; col: number }> = [];
+      let currentGridInPath = playerPos.gridId;
+
+      // Walk up from current grid to render grid, collecting positions
+      while (currentGridInPath !== renderGridId) {
+        const ref = findPrimaryRef(this.store, currentGridInPath);
+        if (!ref) break; // Shouldn't happen if highestAncestorId is valid
+
+        const [parentGridId, refRow, refCol] = ref;
+        // Prepend to path so it goes from render grid downward
+        // This entry shows where currentGridInPath is located in parentGridId
+        path.unshift({ gridId: parentGridId, row: refRow, col: refCol });
+        currentGridInPath = parentGridId;
+      }
+
+      // For backward compatibility, set refPosition to the first step (immediate parent in ancestor)
+      if (path.length >= 1) {
+        renderRefPosition = { row: path[0].row, col: path[0].col };
+      }
+
+      console.log('  -> Using highest ancestor:', {
+        ancestorGridId: renderGridId,
+        refPosition: renderRefPosition,
+        refPositionPath: path
+      });
+
+      const renderGrid = getGrid(this.store, renderGridId);
+      if (!renderGrid) {
+        console.log('  -> Render grid not found in store, fallback to current');
+        return {
+          gridId: playerPos.gridId,
+          grid: currentGrid,
+          currentGridMaxDim: currentMaxDim,
+          refPosition: null
+        };
+      }
+
+      return {
+        gridId: renderGridId,
+        grid: renderGrid,
+        currentGridMaxDim: currentMaxDim,
+        refPosition: renderRefPosition,
+        refPositionPath: path
+      };
+    } else if (primaryRef) {
+      // Fall back to immediate parent
+      const [parentGridId, refRow, refCol] = primaryRef;
+      const parentGrid = getGrid(this.store, parentGridId);
+
+      if (!parentGrid) {
+        // Parent not found - fallback to current grid
+        console.log('  -> Parent grid not found in store, fallback to current');
+        return {
+          gridId: playerPos.gridId,
+          grid: currentGrid,
+          currentGridMaxDim: currentMaxDim,
+          refPosition: null
+        };
+      }
+
+      renderGridId = parentGridId;
+      renderRefPosition = { row: refRow, col: refCol };
+
+      console.log('  -> Using immediate parent:', {
+        parentGridId,
+        refPosition: renderRefPosition
+      });
+    } else {
       // No parent - render current grid normally
       console.log('  -> No parent found, rendering current grid');
       return {
@@ -938,12 +1026,11 @@ class IsometricDemo {
       };
     }
 
-    const [parentGridId, refRow, refCol] = primaryRef;
-    const parentGrid = getGrid(this.store, parentGridId);
-
-    if (!parentGrid) {
-      // Parent not found - fallback to current grid
-      console.log('  -> Parent grid not found in store, fallback to current');
+    // Get the render grid
+    const renderGrid = getGrid(this.store, renderGridId);
+    if (!renderGrid) {
+      // Render grid not found - fallback to current grid
+      console.log('  -> Render grid not found in store, fallback to current');
       return {
         gridId: playerPos.gridId,
         grid: currentGrid,
@@ -952,21 +1039,21 @@ class IsometricDemo {
       };
     }
 
-    // Render parent grid, but keep the view width based on current grid
+    // Render ancestor/parent grid, but keep the view width based on current grid
     // This maintains the same zoom level as if we were rendering current grid alone
-    console.log('  -> Rendering parent grid:', {
-      parentGridId,
-      parentDims: `${parentGrid.rows}x${parentGrid.cols}`,
+    console.log('  -> Rendering ancestor/parent grid:', {
+      renderGridId,
+      renderDims: `${renderGrid.rows}x${renderGrid.cols}`,
       currentDims: `${currentGrid.rows}x${currentGrid.cols}`,
       currentGridMaxDim: currentMaxDim,
-      refPosition: { row: refRow, col: refCol }
+      refPosition: renderRefPosition
     });
 
     return {
-      gridId: parentGridId,
-      grid: parentGrid,
+      gridId: renderGridId,
+      grid: renderGrid,
       currentGridMaxDim: currentMaxDim,
-      refPosition: { row: refRow, col: refCol }
+      refPosition: renderRefPosition
     };
   }
 
@@ -979,7 +1066,7 @@ class IsometricDemo {
     if (!playerPos) return;
 
     // Get render grid info (current or parent)
-    const { gridId, grid, currentGridMaxDim, refPosition } = this.getRenderGridInfo(playerPos);
+    const { gridId, grid, currentGridMaxDim, refPosition, refPositionPath } = this.getRenderGridInfo(playerPos);
 
     // Phase 1: Analyze grid to build CellTree
     this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
@@ -996,29 +1083,80 @@ class IsometricDemo {
     this.currentScene = result.scene;
     this.currentCamera = result.camera;
 
-    // Adjust camera for parent grid rendering
+    // Adjust camera for parent/ancestor grid rendering
     if (refPosition) {
-      console.log('Adjusting camera (rebuildSceneData) for parent grid');
+      console.log('Adjusting camera (rebuildSceneData) for parent/ancestor grid');
 
-      // Calculate world position of reference cell (grid is centered at origin)
-      const centerX = (grid.cols - 1) / 2;
-      const centerZ = (grid.rows - 1) / 2;
-      const refX = refPosition.col - centerX;
-      const refZ = refPosition.row - centerZ;
+      let refX: number;
+      let refZ: number;
+      let viewWidth: number;
 
-      // View width: show approximately 1 parent cell (the reference cell)
-      // The reference cell is 1×1 in parent coordinates, so viewWidth ≈ 1.2
-      const viewWidth = 1.2;
+      if (refPositionPath && refPositionPath.length > 0) {
+        // Compute world position by walking through the hierarchy
+        let worldX = 0;
+        let worldZ = 0;
+        let scale = 1;
 
-      console.log('Camera adjustment:', {
-        refPosition,
-        worldCenter: [refX, 0, refZ],
-        currentGridMaxDim,
-        viewWidth,
-        viewport: [this.renderWidth, this.renderHeight]
-      });
+        // Walk through path, composing transforms
+        for (let i = 0; i < refPositionPath.length; i++) {
+          const step = refPositionPath[i];
+          const stepGrid = getGrid(this.store, step.gridId);
+          if (!stepGrid) continue;
 
-      // Create camera centered on reference cell
+          // Position in this grid's local coordinate system
+          const localCenterX = (stepGrid.cols - 1) / 2;
+          const localCenterZ = (stepGrid.rows - 1) / 2;
+          const localX = step.col - localCenterX;
+          const localZ = step.row - localCenterZ;
+
+          // Add to world position at current scale
+          worldX += localX * scale;
+          worldZ += localZ * scale;
+
+          // Get the child grid at this position to compute scale for next level
+          // For the last step, the child is the player's grid
+          const nextStepGridId = i < refPositionPath.length - 1
+            ? refPositionPath[i + 1].gridId
+            : playerPos.gridId;
+          const nextGrid = getGrid(this.store, nextStepGridId);
+          if (nextGrid) {
+            const nextGridMaxDim = Math.max(nextGrid.rows, nextGrid.cols);
+            scale /= nextGridMaxDim;
+          }
+        }
+
+        refX = worldX;
+        refZ = worldZ;
+
+        // View width: scale tells us how large the current grid appears in ancestor coordinates
+        viewWidth = currentGridMaxDim * scale * 1.2;
+
+        console.log('Camera adjustment (path-based):', {
+          refPositionPath,
+          worldCenter: [refX, 0, refZ],
+          pathLength: refPositionPath.length,
+          scale,
+          viewWidth
+        });
+      } else {
+        // Single-level: calculate world position of reference cell
+        const centerX = (grid.cols - 1) / 2;
+        const centerZ = (grid.rows - 1) / 2;
+        refX = refPosition.col - centerX;
+        refZ = refPosition.row - centerZ;
+
+        // View width: show approximately 1 parent cell (the reference cell)
+        viewWidth = 1.2;
+
+        console.log('Camera adjustment (single-level):', {
+          refPosition,
+          worldCenter: [refX, 0, refZ],
+          currentGridMaxDim,
+          viewWidth
+        });
+      }
+
+      // Create camera centered on computed world position
       this.currentCamera = createParagridCamera(
         [refX, 0, refZ],
         viewWidth,
@@ -1060,7 +1198,7 @@ class IsometricDemo {
         this.currentRenderer = null;
 
         // Get render grid info (current or parent)
-        const { gridId, grid, currentGridMaxDim, refPosition } = this.getRenderGridInfo(playerPos);
+        const { gridId, grid, currentGridMaxDim, refPosition, refPositionPath } = this.getRenderGridInfo(playerPos);
 
         // Phase 1: Analyze grid to build CellTree
         this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
@@ -1077,29 +1215,80 @@ class IsometricDemo {
         this.currentScene = result.scene;
         this.currentCamera = result.camera;
 
-        // Adjust camera for parent grid rendering
+        // Adjust camera for parent/ancestor grid rendering
         if (refPosition) {
-          console.log('Adjusting camera (render) for parent grid');
+          console.log('Adjusting camera (render) for parent/ancestor grid');
 
-          // Calculate world position of reference cell (grid is centered at origin)
-          const centerX = (grid.cols - 1) / 2;
-          const centerZ = (grid.rows - 1) / 2;
-          const refX = refPosition.col - centerX;
-          const refZ = refPosition.row - centerZ;
+          let refX: number;
+          let refZ: number;
+          let viewWidth: number;
 
-          // View width: show approximately 1 parent cell (the reference cell)
-          // The reference cell is 1×1 in parent coordinates, so viewWidth ≈ 1.2
-          const viewWidth = 1.2;
+          if (refPositionPath && refPositionPath.length > 0) {
+            // Compute world position by walking through the hierarchy
+            let worldX = 0;
+            let worldZ = 0;
+            let scale = 1;
 
-          console.log('Camera adjustment:', {
-            refPosition,
-            worldCenter: [refX, 0, refZ],
-            currentGridMaxDim,
-            viewWidth,
-            viewport: [this.renderWidth, this.renderHeight]
-          });
+            // Walk through path, composing transforms
+            for (let i = 0; i < refPositionPath.length; i++) {
+              const step = refPositionPath[i];
+              const stepGrid = getGrid(this.store, step.gridId);
+              if (!stepGrid) continue;
 
-          // Create camera centered on reference cell
+              // Position in this grid's local coordinate system
+              const localCenterX = (stepGrid.cols - 1) / 2;
+              const localCenterZ = (stepGrid.rows - 1) / 2;
+              const localX = step.col - localCenterX;
+              const localZ = step.row - localCenterZ;
+
+              // Add to world position at current scale
+              worldX += localX * scale;
+              worldZ += localZ * scale;
+
+              // Get the child grid at this position to compute scale for next level
+              // For the last step, the child is the player's grid
+              const nextStepGridId = i < refPositionPath.length - 1
+                ? refPositionPath[i + 1].gridId
+                : playerPos.gridId;
+              const nextGrid = getGrid(this.store, nextStepGridId);
+              if (nextGrid) {
+                const nextGridMaxDim = Math.max(nextGrid.rows, nextGrid.cols);
+                scale /= nextGridMaxDim;
+              }
+            }
+
+            refX = worldX;
+            refZ = worldZ;
+
+            // View width: scale tells us how large the current grid appears in ancestor coordinates
+            viewWidth = currentGridMaxDim * scale * 1.2;
+
+            console.log('Camera adjustment (path-based):', {
+              refPositionPath,
+              worldCenter: [refX, 0, refZ],
+              pathLength: refPositionPath.length,
+              scale,
+              viewWidth
+            });
+          } else {
+            // Single-level: calculate world position of reference cell
+            const centerX = (grid.cols - 1) / 2;
+            const centerZ = (grid.rows - 1) / 2;
+            refX = refPosition.col - centerX;
+            refZ = refPosition.row - centerZ;
+
+            // View width: show approximately 1 parent cell (the reference cell)
+            viewWidth = 1.2;
+
+            console.log('Camera adjustment (single-level):', {
+              refPosition,
+              worldCenter: [refX, 0, refZ],
+              currentGridMaxDim,
+              viewWidth
+            });
+          }
+
+          // Create camera centered on computed world position
           this.currentCamera = createParagridCamera(
             [refX, 0, refZ],
             viewWidth,
@@ -1190,6 +1379,12 @@ class IsometricDemo {
           <div class="status-line"><strong>Cell:</strong> Concrete(${cell.id})</div>
         `;
       }
+
+      // Show which grid is being rendered (visual root)
+      const renderInfo = this.getRenderGridInfo(playerPos);
+      statusHtml += `
+        <div class="status-line"><strong>Visual Root:</strong> ${renderInfo.gridId}</div>
+      `;
     }
 
     statusHtml += `
@@ -1219,9 +1414,9 @@ const GRIDS = {
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
-    main: '_ _ _|_ 2 _|_ a _',
-    a: '_ b _|_ _ _|_ _ _',
-    b: '_ 1 _|_ _ _|_ _ _' },
+    main: '_ _ _|_ 2 _|a _ _',
+    a: 'b _ _|_ 1 _|_ _ _',
+    b: '_ _ _|_ _ _|_ _ _' },
 
   exitEnter: {
     main: '_ _ 9|_ a b|1 _ _',
@@ -1255,7 +1450,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.swap;
+  const gridDefinition = GRIDS.doubleExit;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
