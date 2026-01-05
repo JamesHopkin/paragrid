@@ -21,7 +21,9 @@ import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing
 import type { CellNode } from './lib/analyzer/types.js';
 import { getScaleAndOffset } from './lib/camera/index.js';
 
-const CAMERA_ANIMATION_DURATION = 2; //0.3; // 300ms in seconds
+const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
+const RENDER_THRESHOLD = 1/64;
+
 /**
  * Interactive demo class.
  */
@@ -1258,7 +1260,7 @@ class IsometricDemo {
     const { gridId, grid, currentGridMaxDim, refPosition, refPositionPath } = this.getRenderGridInfo(playerPos);
 
     // Phase 1: Analyze grid to build CellTree
-    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
+    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, /*threshold = */RENDER_THRESHOLD);
 
     // Phase 2: Build scene from CellTree (without rendering)
     const result = buildIsometricScene(this.currentCellTree, {
@@ -1446,7 +1448,7 @@ class IsometricDemo {
         }
 
         // Phase 1: Analyze grid to build CellTree
-        this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
+        this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, /*threshold = */RENDER_THRESHOLD);
 
         // Phase 2: Build scene from CellTree (without rendering yet)
         const result = buildIsometricScene(this.currentCellTree, {
@@ -1650,8 +1652,8 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main *inner _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 1 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 1 9 9|9 _ *inner _ 9|9 _ main _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
@@ -1668,7 +1670,7 @@ const GRIDS = {
     main: '9 9 9 9 9 9 9|9 _ _ _ _ _ 9|9 _ a _ b _ 9|9 _ _ _ _ _ 9|' +
               '9 _ c _ 1 _ 9|9 _ _ _ _ _ 9|9 9 9 9 9 9 9',
     a: '_ 9 _|_ _ _|_ _ _',
-    b: '9 9 9 9 9|9 9 9 _ _' + '|9 9 9 9 9'.repeat(3),
+    b: '9 9 9 9|9 9 _ _|9 9 9 9|9 9 9 9',
     c: '9 ' + '_ '.repeat(10) + '9|' +
         '_ '.repeat(11) + '9|' + 
         ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
@@ -1691,7 +1693,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.tricky;
+  const gridDefinition = GRIDS.swapEdited;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 

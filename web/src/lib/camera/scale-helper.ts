@@ -8,7 +8,8 @@
  */
 
 import type { GridStore } from '../core/types.js';
-import { getGrid, isRef } from '../core/types.js';
+import { getGrid } from '../core/types.js';
+import { findPrimaryRef } from '../utils/immutable.js';
 
 /**
  * Result of scale and offset calculation.
@@ -84,13 +85,18 @@ export function getScaleAndOffset(
     const parentGridId = path[i];
     const childGridId = path[i + 1];
 
-    // Find the reference cell in the parent
-    const refPos = findRefPosition(store, parentGridId, childGridId);
-    if (refPos === null) {
-      return null; // Invalid path - child not referenced by parent
+    // Find the PRIMARY reference cell in the parent
+    const primaryRef = findPrimaryRef(store, childGridId);
+    if (!primaryRef) {
+      return null; // Invalid path - child has no primary reference
     }
 
-    const [refRow, refCol] = refPos;
+    const [actualParentId, refRow, refCol] = primaryRef;
+
+    // Verify the primary reference is in the expected parent
+    if (actualParentId !== parentGridId) {
+      return null; // Invalid path - child's primary ref is not in the expected parent
+    }
     const parentGrid = getGrid(store, parentGridId);
     const childGrid = getGrid(store, childGridId);
 
@@ -132,33 +138,3 @@ export function getScaleAndOffset(
   };
 }
 
-/**
- * Find the position (row, col) of a reference to a target grid within a parent grid.
- * Returns the first occurrence in row-major order.
- *
- * @param store - The grid store
- * @param parentGridId - Grid to search in
- * @param targetGridId - Grid being referenced
- * @returns [row, col] position or null if not found
- */
-function findRefPosition(
-  store: GridStore,
-  parentGridId: string,
-  targetGridId: string
-): [number, number] | null {
-  const parentGrid = getGrid(store, parentGridId);
-  if (!parentGrid) {
-    return null;
-  }
-
-  for (let row = 0; row < parentGrid.rows; row++) {
-    for (let col = 0; col < parentGrid.cols; col++) {
-      const cell = parentGrid.cells[row][col];
-      if (isRef(cell) && cell.gridId === targetGridId) {
-        return [row, col];
-      }
-    }
-  }
-
-  return null;
-}
