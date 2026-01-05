@@ -53,7 +53,7 @@ export interface ScaleAndOffset {
  */
 export function getScaleAndOffset(
   store: GridStore,
-  path: string[]
+  path: readonly string[]
 ): ScaleAndOffset | null {
   if (path.length === 0) {
     return null;
