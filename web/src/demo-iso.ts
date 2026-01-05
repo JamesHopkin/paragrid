@@ -105,6 +105,11 @@ class IsometricDemo {
         return;
       }
 
+      // Ignore player input keys if manual view input is focused
+      if (this.manualViewInputEl && document.activeElement === this.manualViewInputEl) {
+        return; // Let the input handle the key
+      }
+
       // Prevent default for WASD to avoid scrolling
       if (['w', 'a', 's', 'd', 'r'].includes(key)) {
         e.preventDefault();
@@ -1686,7 +1691,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.swapEdited;
+  const gridDefinition = GRIDS.tricky;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 
