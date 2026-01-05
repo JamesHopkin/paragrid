@@ -19,6 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
+import { getScaleAndOffset } from './lib/camera/index.js';
 
 const CAMERA_ANIMATION_DURATION = 2; //0.3; // 300ms in seconds
 /**
@@ -48,6 +49,9 @@ class IsometricDemo {
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
+  private manualViewPath: string[] | null = null; // Manual view path (grid names)
+  private manualViewInputEl: HTMLInputElement | null = null;
+  private manualViewStatusEl: HTMLElement | null = null;
 
   constructor(
     store: GridStore,
@@ -68,6 +72,7 @@ class IsometricDemo {
 
     this.setupKeyboardHandlers();
     this.setupExportButton();
+    this.setupManualViewControls();
     this.render();
   }
 
@@ -136,6 +141,113 @@ class IsometricDemo {
         this.exportSceneSVG();
       });
     }
+  }
+
+  private setupManualViewControls(): void {
+    this.manualViewInputEl = document.getElementById('manual-view-input') as HTMLInputElement;
+    this.manualViewStatusEl = document.getElementById('manual-view-status');
+
+    if (!this.manualViewInputEl) return;
+
+    // Listen for input changes
+    this.manualViewInputEl.addEventListener('input', () => {
+      this.updateManualView();
+    });
+
+    // Also listen for Enter key
+    this.manualViewInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        this.updateManualView();
+      }
+    });
+  }
+
+  private updateManualView(): void {
+    if (!this.manualViewInputEl || !this.manualViewStatusEl) return;
+
+    const input = this.manualViewInputEl.value.trim();
+
+    if (input === '') {
+      // Empty input - disable manual view
+      this.manualViewPath = null;
+      this.manualViewStatusEl.textContent = 'Enter grid path to override camera (empty = auto)';
+      this.manualViewStatusEl.className = 'manual-view-status';
+
+      // Force rebuild to revert to automatic camera
+      this.currentScene = null;
+      this.currentCellTree = null;
+      this.currentRenderer = null;
+      this.render(true);
+      return;
+    }
+
+    // Parse the input (e.g., "m.i" -> ["main", "inner"])
+    const parsed = this.parseManualViewInput(input);
+
+    if (parsed.success) {
+      this.manualViewPath = parsed.path;
+      this.manualViewStatusEl.textContent = `✓ View: ${parsed.path.join(' → ')}`;
+      this.manualViewStatusEl.className = 'manual-view-status active';
+
+      // Force rebuild with new manual view
+      this.currentScene = null;
+      this.currentCellTree = null;
+      this.currentRenderer = null;
+      this.render(true);
+    } else {
+      this.manualViewPath = null;
+      this.manualViewStatusEl.textContent = `✗ ${parsed.error}`;
+      this.manualViewStatusEl.className = 'manual-view-status error';
+    }
+  }
+
+  /**
+   * Parse manual view input format (e.g., "m.i" -> ["main", "inner"]).
+   * Letters are case-insensitive first letters of grid names.
+   */
+  private parseManualViewInput(input: string):
+    | { success: true; path: string[] }
+    | { success: false; error: string } {
+    const letters = input.toLowerCase().split('.');
+    const path: string[] = [];
+
+    // Get all grid IDs from store
+    const gridIds = Object.keys(this.store);
+
+    for (const letter of letters) {
+      if (letter.length === 0) {
+        return { success: false, error: 'Empty segment in path' };
+      }
+
+      // Find grid(s) starting with this letter (case-insensitive)
+      const matches = gridIds.filter(id =>
+        id.toLowerCase().startsWith(letter.toLowerCase())
+      );
+
+      if (matches.length === 0) {
+        return { success: false, error: `No grid found starting with '${letter}'` };
+      }
+
+      if (matches.length > 1) {
+        return {
+          success: false,
+          error: `Ambiguous: '${letter}' matches ${matches.join(', ')}`
+        };
+      }
+
+      path.push(matches[0]);
+    }
+
+    // Validate the path is valid (each grid references the next)
+    const scaleResult = getScaleAndOffset(this.store, path);
+    if (!scaleResult) {
+      return {
+        success: false,
+        error: 'Invalid path: grids don\'t reference each other correctly'
+      };
+    }
+
+    return { success: true, path };
   }
 
   private exportScene(): void {
@@ -1224,8 +1336,60 @@ class IsometricDemo {
         this.canvas.innerHTML = '';
         this.currentRenderer = null;
 
-        // Get render grid info (current or parent)
-        const { gridId, grid, currentGridMaxDim, refPosition, refPositionPath } = this.getRenderGridInfo(playerPos);
+        // Check if manual view is active
+        let gridId: string;
+        let grid: Grid;
+        let refX: number | null = null;
+        let refZ: number | null = null;
+        let viewWidth: number | null = null;
+        let refPosition: { row: number; col: number } | null = null;
+        let refPositionPath: Array<{ gridId: string; row: number; col: number }> | undefined;
+        let currentGridMaxDim: number | undefined;
+
+        if (this.manualViewPath) {
+          // Manual view mode - use the specified path
+          console.log('Using manual view path:', this.manualViewPath);
+
+          gridId = this.manualViewPath[0];
+          grid = getGrid(this.store, gridId)!;
+
+          if (!grid) {
+            throw new Error(`Manual view: Grid '${gridId}' not found`);
+          }
+
+          // Use camera helpers to calculate view
+          const scaleResult = getScaleAndOffset(this.store, this.manualViewPath);
+          if (!scaleResult) {
+            throw new Error(`Manual view: Invalid path ${this.manualViewPath.join(' → ')}`);
+          }
+
+          // Calculate camera center and view width
+          // The scale helper returns center and dimensions in a coordinate system where
+          // path[0] cells have width/height 1
+          // We need to convert this to world coordinates for the renderer
+
+          // Convert from scaleResult coordinates to world coordinates
+          // scaleResult uses [0, cols] x [0, rows] space with center at (cols/2, rows/2)
+          // World coordinates have grid center at (0, 0)
+          refX = scaleResult.centerX - grid.cols / 2;
+          refZ = scaleResult.centerY - grid.rows / 2;
+          viewWidth = scaleResult.width;
+
+          console.log('Manual view camera:', {
+            path: this.manualViewPath,
+            center: [refX, 0, refZ],
+            viewWidth,
+            scaleResult
+          });
+        } else {
+          // Automatic mode - use existing logic
+          const renderInfo = this.getRenderGridInfo(playerPos);
+          gridId = renderInfo.gridId;
+          grid = renderInfo.grid;
+          currentGridMaxDim = renderInfo.currentGridMaxDim;
+          refPosition = renderInfo.refPosition;
+          refPositionPath = renderInfo.refPositionPath;
+        }
 
         // Phase 1: Analyze grid to build CellTree
         this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows);
@@ -1242,13 +1406,23 @@ class IsometricDemo {
         this.currentScene = result.scene;
         this.currentCamera = result.camera;
 
-        // Adjust camera for parent/ancestor grid rendering
-        if (refPosition) {
+        // Adjust camera
+        if (this.manualViewPath && refX !== null && refZ !== null && viewWidth !== null) {
+          // Manual view mode - use pre-calculated camera
+          console.log('Using manual view camera');
+          this.currentCamera = createParagridCamera(
+            [refX, 0, refZ],
+            viewWidth,
+            this.renderWidth,
+            this.renderHeight
+          );
+        } else if (!this.manualViewPath && refPosition) {
+          // Automatic mode - adjust camera for parent/ancestor grid rendering
           console.log('Adjusting camera (render) for parent/ancestor grid');
 
-          let refX: number;
-          let refZ: number;
-          let viewWidth: number;
+          let autoRefX: number;
+          let autoRefZ: number;
+          let autoViewWidth: number;
 
           if (refPositionPath && refPositionPath.length > 0) {
             // Compute world position by walking through the hierarchy
@@ -1284,41 +1458,41 @@ class IsometricDemo {
               }
             }
 
-            refX = worldX;
-            refZ = worldZ;
+            autoRefX = worldX;
+            autoRefZ = worldZ;
 
             // View width: scale tells us how large the current grid appears in ancestor coordinates
-            viewWidth = currentGridMaxDim * scale * 1.2;
+            autoViewWidth = currentGridMaxDim! * scale * 1.2;
 
             console.log('Camera adjustment (path-based):', {
               refPositionPath,
-              worldCenter: [refX, 0, refZ],
+              worldCenter: [autoRefX, 0, autoRefZ],
               pathLength: refPositionPath.length,
               scale,
-              viewWidth
+              viewWidth: autoViewWidth
             });
           } else {
             // Single-level: calculate world position of reference cell
             const centerX = (grid.cols - 1) / 2;
             const centerZ = (grid.rows - 1) / 2;
-            refX = refPosition.col - centerX;
-            refZ = refPosition.row - centerZ;
+            autoRefX = refPosition.col - centerX;
+            autoRefZ = refPosition.row - centerZ;
 
             // View width: show approximately 1 parent cell (the reference cell)
-            viewWidth = 1.2;
+            autoViewWidth = 1.2;
 
             console.log('Camera adjustment (single-level):', {
               refPosition,
-              worldCenter: [refX, 0, refZ],
+              worldCenter: [autoRefX, 0, autoRefZ],
               currentGridMaxDim,
-              viewWidth
+              viewWidth: autoViewWidth
             });
           }
 
           // Create camera centered on computed world position
           this.currentCamera = createParagridCamera(
-            [refX, 0, refZ],
-            viewWidth,
+            [autoRefX, 0, autoRefZ],
+            autoViewWidth,
             this.renderWidth,
             this.renderHeight
           );
