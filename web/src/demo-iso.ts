@@ -19,7 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { getScaleAndOffset, getCellWorldPosition, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
@@ -466,6 +466,9 @@ class IsometricDemo {
     if (newPos) {
       this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
 
+      // Capture old view path before any updates
+      const oldViewPath = this.currentViewPath;
+
       // Check if we changed grids (enter/exit transitions)
       const changedGrids = playerPos.gridId !== newPos.gridId;
 
@@ -490,12 +493,20 @@ class IsometricDemo {
         }
 
         // Update current view
-        const oldViewPath = this.currentViewPath;
-        this.currentViewPath = viewUpdate.targetView;
+        const newViewPath = viewUpdate.targetView;
+        this.currentViewPath = newViewPath;
 
-        // Handle camera animation if provided
-        if (viewUpdate.animationStartView && oldViewPath) {
-          // Animate camera from animationStartView to targetView
+        // Convert push chain to movements using view paths
+        const movements = oldViewPath && newViewPath
+          ? this.chainToMovements(pushChain, oldViewPath, newViewPath)
+          : [];
+
+        // Handle camera and object animation
+        if (viewUpdate.animationStartView && oldViewPath && movements.length > 0) {
+          // Animate both camera and objects together
+          this.createEnterExitAnimation(movements, viewUpdate.animationStartView, viewUpdate.targetView);
+        } else if (viewUpdate.animationStartView && oldViewPath) {
+          // Only camera animation (no object movements)
           this.animateCameraTransition(viewUpdate.animationStartView, viewUpdate.targetView);
         } else {
           // No animation - rebuild immediately
@@ -515,10 +526,13 @@ class IsometricDemo {
       } else {
         // Same grid - update view and animate movements
         const viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
-        this.currentViewPath = viewUpdate.targetView;
+        const newViewPath = viewUpdate.targetView;
+        this.currentViewPath = newViewPath;
 
         // Convert push chain to movements and animate
-        const movements = this.chainToMovements(pushChain, playerPos.gridId);
+        const movements = oldViewPath && newViewPath
+          ? this.chainToMovements(pushChain, oldViewPath, newViewPath)
+          : [];
 
         if (movements.length > 0) {
           // Create animations for all movements
@@ -550,18 +564,28 @@ class IsometricDemo {
    * After rotation: pos0←Empty, pos1←A, pos2←B
    * Movements: A(pos0→pos1), B(pos1→pos2), Empty(pos2→pos0)
    *
-   * IMPORTANT: This function only creates animations for simple single-square movements
-   * within the same grid. Exit/enter transitions are NOT animated.
+   * This function handles ALL movements including enter/exit transitions by using
+   * world coordinates calculated from the appropriate view paths.
    *
-   * The transition metadata on each entry describes HOW we arrived at that position.
-   * To determine if a movement should be animated, we check the DESTINATION's transition.
+   * @param chain - Push chain with position and transition metadata
+   * @param previousViewPath - View path before the push (for calculating old positions)
+   * @param currentViewPath - View path after the push (for calculating new positions)
+   * @returns Array of animations with world coordinates
    */
-  private chainToMovements(chain: import('./lib/operations/push.js').PushChain, targetGridId: string): Array<{
+  private chainToMovements(
+    chain: import('./lib/operations/push.js').PushChain,
+    previousViewPath: ViewPath,
+    currentViewPath: ViewPath
+  ): Array<{
     cellId: string;
-    oldPos: CellPosition;
-    newPos: CellPosition;
+    oldPos: [number, number, number];
+    newPos: [number, number, number];
   }> {
-    const movements: Array<{ cellId: string; oldPos: CellPosition; newPos: CellPosition }> = [];
+    const movements: Array<{
+      cellId: string;
+      oldPos: [number, number, number];
+      newPos: [number, number, number];
+    }> = [];
 
     if (chain.length === 0) return movements;
 
@@ -570,37 +594,18 @@ class IsometricDemo {
     for (let i = 0; i < chain.length; i++) {
       const entry = chain[i];
       const cell = entry.cell;
-      const oldPos = entry.position;
-
-      // Only process entries in the target grid
-      if (oldPos.gridId !== targetGridId) continue;
-
-      // Find the next position in the FULL chain (with wraparound)
-      const nextIndex = (i + 1) % chain.length;
-      const nextEntry = chain[nextIndex];
-      const newPos = nextEntry.position;
-
-      // Only animate if BOTH source and destination are in the target grid
-      if (newPos.gridId !== targetGridId) {
-        console.log(`  Skipping animation for cell at ${oldPos}: destination ${newPos} is in different grid`);
-        continue;
-      }
+      const oldCellPos = entry.position;
 
       // Only animate non-empty cells
       if (cell.type === 'empty') continue;
 
+      // Find the next position in the FULL chain (with wraparound)
+      const nextIndex = (i + 1) % chain.length;
+      const nextEntry = chain[nextIndex];
+      const newCellPos = nextEntry.position;
+
       // Skip if cell didn't actually move (same position)
-      if (oldPos.equals(newPos)) continue;
-
-      // Check the DESTINATION's transition to see what kind of movement this is
-      // Skip animations for enter/exit transitions - we only animate simple moves
-      if (nextEntry.transition === 'enter' || nextEntry.transition === 'exit') {
-        console.log(`  Skipping animation for cell at ${oldPos} -> ${newPos}: destination transition is ${nextEntry.transition}`);
-        continue;
-      }
-
-      // Only animate single-square movements
-      if (!this.isSingleSquareMovement(oldPos, newPos)) continue;
+      if (oldCellPos.equals(newCellPos)) continue;
 
       // Generate cell ID for animation
       // Must match the ID generation in isometric.ts renderGridDirect
@@ -616,7 +621,53 @@ class IsometricDemo {
         continue; // Unknown cell type
       }
 
-      movements.push({ cellId, oldPos, newPos });
+      // Determine if this is a within-grid movement or enter/exit transition
+      const isWithinGrid = oldCellPos.gridId === newCellPos.gridId &&
+                          entry.transition !== 'enter' &&
+                          entry.transition !== 'exit' &&
+                          nextEntry.transition !== 'enter' &&
+                          nextEntry.transition !== 'exit';
+
+      let oldPos: [number, number, number];
+      let newPos: [number, number, number];
+
+      if (isWithinGrid) {
+        // Within-grid movement: use simple grid coordinate offsets (legacy behavior)
+        // These are relative positions in grid space where each cell = 1 unit
+        oldPos = [oldCellPos.col, 0, oldCellPos.row];
+        newPos = [newCellPos.col, 0, newCellPos.row];
+        console.log(`  ${cellId}: [${oldPos[0]}, ${oldPos[2]}] -> [${newPos[0]}, ${newPos[2]}] (within-grid)`);
+      } else {
+        // Enter/exit transition: use world coordinate transformations
+        let oldWorldPos = getCellWorldPosition(this.store, previousViewPath, oldCellPos);
+        let newWorldPos = getCellWorldPosition(this.store, currentViewPath, newCellPos);
+
+        // If either position can't be calculated, try using current view for both
+        // (fallback for edge cases)
+        if (!oldWorldPos) {
+          oldWorldPos = getCellWorldPosition(this.store, currentViewPath, oldCellPos);
+        }
+        if (!newWorldPos) {
+          newWorldPos = getCellWorldPosition(this.store, previousViewPath, newCellPos);
+        }
+
+        if (!oldWorldPos || !newWorldPos) {
+          console.log(`  [WARN] Skipping enter/exit animation for ${cellId}: could not calculate world positions`);
+          console.log(`    Previous view: ${previousViewPath.join(' -> ')}, Current view: ${currentViewPath.join(' -> ')}`);
+          console.log(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+          continue;
+        }
+
+        oldPos = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
+        newPos = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
+        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, transition: ${nextEntry.transition})`);
+      }
+
+      movements.push({
+        cellId,
+        oldPos,
+        newPos
+      });
     }
 
     return movements;
@@ -739,8 +790,9 @@ class IsometricDemo {
       cancelAnimationFrame(this.animationFrameId);
       this.animationFrameId = null;
     }
-    // Remove animation clip to clear transform overrides
+    // Remove animation clips to clear transform overrides
     this.animationSystem.removeClip('push-move');
+    this.animationSystem.removeClip('enter-exit-move');
     // Force render to show the final state
     this.render(true);
   }
@@ -861,12 +913,12 @@ class IsometricDemo {
   }
 
   /**
-   * Create animations for multiple cells that moved one square.
+   * Create animations for multiple cells that moved (world coordinates).
    */
   private createMultipleMovementAnimations(movements: Array<{
     cellId: string;
-    oldPos: CellPosition;
-    newPos: CellPosition;
+    oldPos: [number, number, number];
+    newPos: [number, number, number];
   }>): void {
     if (movements.length === 0) return;
 
@@ -887,14 +939,15 @@ class IsometricDemo {
     }> = [];
 
     for (const movement of movements) {
+      // Calculate offset from new position to old position (in world space)
       const relativeOffset: [number, number, number] = [
-        movement.oldPos.col - movement.newPos.col,
-        0,
-        movement.oldPos.row - movement.newPos.row
+        movement.oldPos[0] - movement.newPos[0],
+        movement.oldPos[1] - movement.newPos[1],
+        movement.oldPos[2] - movement.newPos[2]
       ];
       const targetPos: [number, number, number] = [0, 0, 0];
 
-      console.log(`  ${movement.cellId}: [${relativeOffset}] -> [${targetPos}]`);
+      console.log(`  ${movement.cellId}: [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] -> [${targetPos}]`);
 
       animations.push({
         nodeId: movement.cellId,
@@ -963,12 +1016,186 @@ class IsometricDemo {
         this.animationFrameId = null;
         this.isAnimating = false;
 
-        // Remove animation clip so transform overrides are cleared
+        // Remove animation clips so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
+        this.animationSystem.removeClip('enter-exit-move');
       }
     };
 
     this.animationFrameId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Create combined animation for enter/exit transitions.
+   * Animates both the camera (zoom) and objects (position) simultaneously.
+   */
+  private createEnterExitAnimation(
+    movements: Array<{
+      cellId: string;
+      oldPos: [number, number, number];
+      newPos: [number, number, number];
+    }>,
+    startViewPath: ViewPath,
+    endViewPath: ViewPath
+  ): void {
+    const duration = CAMERA_ANIMATION_DURATION; // Use same duration as camera (0.3s)
+
+    // Calculate camera parameters for both views
+    const startCameraParams = this.calculateCameraForView(startViewPath);
+    const endCameraParams = this.calculateCameraForView(endViewPath);
+
+    if (!startCameraParams || !endCameraParams) {
+      console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
+      this.currentScene = null;
+      this.currentCellTree = null;
+      this.currentRenderer = null;
+      this.render(true);
+      return;
+    }
+
+    // Stop any existing animations
+    this.animationSystem.stop();
+    this.cameraAnimationSystem.stop();
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Remove old animation clips
+    this.animationSystem.removeClip('push-move');
+    this.animationSystem.removeClip('enter-exit-move');
+
+    // Rebuild scene at END view (target)
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+
+    // Build scene at target view
+    const playerPos = this.playerPosition;
+    if (!playerPos) return;
+
+    const gridId = endViewPath[0];
+    const grid = getGrid(this.store, gridId);
+    if (!grid) return;
+
+    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, RENDER_THRESHOLD);
+    const result = buildIsometricScene(this.currentCellTree, {
+      width: this.renderWidth,
+      height: this.renderHeight,
+      highlightPosition: playerPos,
+      store: this.store,
+      tagFn: this.tagFn
+    });
+    this.currentScene = result.scene;
+
+    // Create END camera
+    const endCamera = createParagridCamera(
+      endCameraParams.position,
+      endCameraParams.viewWidth,
+      this.renderWidth,
+      this.renderHeight
+    );
+    this.currentCamera = endCamera;
+
+    // 1. Create camera animation
+    const startCenter = startCameraParams.position;
+    const startRightEdge: [number, number, number] = [
+      startCenter[0] + startCameraParams.viewWidth / 2,
+      startCenter[1],
+      startCenter[2]
+    ];
+    const endCenter = endCameraParams.position;
+    const endRightEdge: [number, number, number] = [
+      endCenter[0] + endCameraParams.viewWidth / 2,
+      endCenter[1],
+      endCenter[2]
+    ];
+
+    const cameraClip: CameraAnimationClip = {
+      id: 'camera-transition',
+      duration,
+      loop: false,
+      channels: [
+        {
+          target: 'center',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startCenter, easing: Easing.easeInOutQuad },
+            { time: duration, value: endCenter }
+          ]
+        },
+        {
+          target: 'rightEdge',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startRightEdge, easing: Easing.easeInOutQuad },
+            { time: duration, value: endRightEdge }
+          ]
+        }
+      ]
+    };
+
+    // 2. Create object animations
+    const animations: Array<{
+      nodeId: string;
+      channels: Array<{
+        target: 'position' | 'rotation' | 'scale';
+        interpolation: 'linear';
+        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
+      }>;
+    }> = [];
+
+    for (const movement of movements) {
+      // Calculate offset from new position to old position (in world space)
+      const relativeOffset: [number, number, number] = [
+        movement.oldPos[0] - movement.newPos[0],
+        movement.oldPos[1] - movement.newPos[1],
+        movement.oldPos[2] - movement.newPos[2]
+      ];
+
+      console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]`);
+
+      animations.push({
+        nodeId: movement.cellId,
+        channels: [{
+          target: 'position',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: relativeOffset, easing: Easing.easeInOutQuad },
+            { time: duration, value: [0, 0, 0] }
+          ]
+        }]
+      });
+    }
+
+    const objectClip: AnimationClip = {
+      id: 'enter-exit-move',
+      duration,
+      loop: false,
+      animations
+    };
+
+    // Create renderer if needed
+    if (!this.currentRenderer) {
+      this.canvas.innerHTML = '';
+      this.currentRenderer = new Renderer({
+        target: this.canvas,
+        backend: 'svg',
+        width: this.renderWidth,
+        height: this.renderHeight
+      });
+    }
+
+    // 3. Add and play both animations
+    this.cameraAnimationSystem.addClip(cameraClip);
+    this.cameraAnimationSystem.play('camera-transition');
+
+    this.animationSystem.addClip(objectClip);
+    this.animationSystem.play('enter-exit-move');
+
+    // 4. Start animation loop
+    this.isAnimating = true;
+    this.startAnimationLoop();
   }
 
   /**
@@ -1430,7 +1657,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // inner: [9, _, 9]          <- gap at top middle
   //        [9, _, 9]
   //        [9, 9, 9]
-  const gridDefinition = GRIDS.doubleExit;
+  const gridDefinition = GRIDS.swap;
       // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
       // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
 

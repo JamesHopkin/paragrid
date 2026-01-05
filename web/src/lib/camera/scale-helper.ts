@@ -138,3 +138,81 @@ export function getScaleAndOffset(
   };
 }
 
+/**
+ * Get world coordinates for a cell in a specific view.
+ *
+ * World coordinates are in a space where:
+ * - The root grid (path[0]) is centered at (0, 0)
+ * - Cells in the root grid have width/height = 1
+ *
+ * @param store - Grid store
+ * @param viewPath - Hierarchy path to the grid (e.g., ['main', 'inner'])
+ * @param cellPosition - The cell position
+ * @returns World coordinates { x, y, z } or null if invalid
+ *
+ * @example
+ * ```typescript
+ * // Get world position of cell at (1, 2) in the 'inner' grid
+ * // when viewing ['main', 'inner']
+ * const pos = getCellWorldPosition(store, ['main', 'inner'], new CellPosition('inner', 1, 2));
+ * // pos.x, pos.z are in world space where main grid cells have size 1
+ * ```
+ */
+export function getCellWorldPosition(
+  store: GridStore,
+  viewPath: readonly string[],
+  cellPosition: import('../core/position.js').CellPosition
+): { x: number; y: number; z: number } | null {
+  if (viewPath.length === 0) {
+    return null;
+  }
+
+  // Ensure the cell is in one of the grids in the view path
+  if (!viewPath.includes(cellPosition.gridId)) {
+    return null;
+  }
+
+  // Find which grid in the path contains this cell
+  const gridIndex = viewPath.indexOf(cellPosition.gridId);
+  const pathToGrid = viewPath.slice(0, gridIndex + 1);
+
+  // Get grid's position and scale in the hierarchy
+  const scaleResult = getScaleAndOffset(store, pathToGrid);
+  if (!scaleResult) return null;
+
+  const grid = getGrid(store, cellPosition.gridId);
+  if (!grid) return null;
+
+  // Calculate cell dimensions within this view
+  const cellWidth = scaleResult.width / grid.cols;
+  const cellHeight = scaleResult.height / grid.rows;
+
+  // scaleResult gives us center in coordinate system where path[0] cells have width 1
+  // We need to convert to world coordinates where path[0] is centered at (0, 0)
+  const rootGrid = getGrid(store, viewPath[0]);
+  if (!rootGrid) return null;
+
+  // Calculate cell center in grid-local coordinates
+  // Cell (row, col) center is at (col + 0.5, row + 0.5) in cell units
+  const cellCenterLocalX = (cellPosition.col + 0.5) * cellWidth;
+  const cellCenterLocalZ = (cellPosition.row + 0.5) * cellHeight;
+
+  // Grid's top-left corner in coordinate system
+  const gridTopLeftX = scaleResult.centerX - scaleResult.width / 2;
+  const gridTopLeftZ = scaleResult.centerY - scaleResult.height / 2;
+
+  // Cell center in coordinate system where path[0] cells have width 1
+  const cellCenterX = gridTopLeftX + cellCenterLocalX;
+  const cellCenterZ = gridTopLeftZ + cellCenterLocalZ;
+
+  // Convert to world coordinates (center path[0] at origin)
+  const worldX = cellCenterX - rootGrid.cols / 2;
+  const worldZ = cellCenterZ - rootGrid.rows / 2;
+
+  return {
+    x: worldX,
+    y: 0, // Always 0 for isometric ground plane
+    z: worldZ
+  };
+}
+

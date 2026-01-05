@@ -13,6 +13,7 @@ export { HierarchyHelper } from './hierarchy-helper.js';
 
 export {
   getScaleAndOffset,
+  getCellWorldPosition,
   type ScaleAndOffset,
 } from './scale-helper.js';
 
