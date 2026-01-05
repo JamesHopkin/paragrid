@@ -114,48 +114,28 @@ export function buildIsometricScene(
   builder.object('concrete-cube', cube(0.8));
   builder.object('player-octahedron', octahedron(0.8));
 
-  // Septagonal prism for 'stop' tagged cells
+  // Half-height box for 'stop' tagged cells (broader than regular cubes)
+
   const halfHeight = 0.3;
-  const radius = 0.25;
-  const numSides = 7;
-
-  // Generate vertices for bottom and top septagon
-  const bottomVerts: [number, number, number][] = [];
-  const topVerts: [number, number, number][] = [];
-
-  for (let i = 0; i < numSides; i++) {
-    const angle = (i * 2 * Math.PI) / numSides; // Rotated so flat edge faces forward
-    const x = radius * Math.cos(angle);
-    const z = radius * Math.sin(angle);
-    bottomVerts.push([x, 0, z]);
-    topVerts.push([x, halfHeight, z]);
-  }
-
-  // Build faces for septagonal prism
-  const septagonFaces: { vertices: [number, number, number][] }[] = [];
-
-  // Bottom face (viewed from below, counter-clockwise winding)
-  septagonFaces.push({ vertices: [...bottomVerts] });
-
-  // Top face (viewed from above, counter-clockwise winding)
-  septagonFaces.push({ vertices: [...topVerts].reverse() });
-
-  // Side faces (counter-clockwise winding when viewed from outside)
-  for (let i = 0; i < numSides; i++) {
-    const next = (i + 1) % numSides;
-    septagonFaces.push({
-      vertices: [
-        bottomVerts[i],
-        topVerts[i],
-        topVerts[next],
-        bottomVerts[next]
-      ]
-    });
-  }
+  const boxSize = 0.9;
+  const half = boxSize / 2;
 
   builder.object('stop-box', {
     type: 'solid',
-    faces: septagonFaces
+    faces: [
+      // Bottom
+      { vertices: [[-half, 0, -half], [half, 0, -half], [half, 0, half], [-half, 0, half]] },
+      // Top
+      { vertices: [[-half, halfHeight, -half], [-half, halfHeight, half], [half, halfHeight, half], [half, halfHeight, -half]] },
+      // Front
+      { vertices: [[half, 0, half], [half, halfHeight, half], [-half, halfHeight, half], [-half, 0, half]] },
+      // Back
+      { vertices: [[-half, 0, -half], [-half, halfHeight, -half], [half, halfHeight, -half], [half, 0, -half]] },
+      // Left
+      { vertices: [[-half, 0, half], [-half, halfHeight, half], [-half, halfHeight, -half], [-half, 0, -half]] },
+      // Right
+      { vertices: [[half, 0, -half], [half, halfHeight, -half], [half, halfHeight, half], [half, 0, half]] }
+    ]
   });
 
   // PASS 1: Collect all unique NestedNode instances by object identity
@@ -413,13 +393,13 @@ function renderGridDirect(
         if (hasStop) {
           objectType = 'stop-box';
           yPos = 0; // Bottom touching the floor
-          color = '#4a3a5a'; // Purple-ish dark grey
+          color = '#f0a0a0'; // pink-ish
         }
 
         if (hasPlayer) {
           objectType = 'player-octahedron';
           yPos = 0.8 / Math.sqrt(2); // Octahedron's bottom is at -size/sqrt(2)
-          // Keep the cell's normal color
+          color = '#F4E04D'; // Lemon yellow
         }
 
         // Don't add ID to instance - the parent group already has the content-based ID
@@ -559,13 +539,13 @@ function buildGridTemplate(
         if (hasStop) {
           objectType = 'stop-box';
           yPos = 0; // Bottom touching the floor
-          color = '#4a3a5a'; // Purple-ish dark grey
+          color = '#f0a0a0'; // pink-ish
         }
 
         if (hasPlayer) {
           objectType = 'player-octahedron';
           yPos = 0.8 / Math.sqrt(2); // Octahedron's bottom is at -size/sqrt(2)
-          // Keep the cell's normal color
+          color = '#F4E04D'; // Lemon yellow
         }
 
         // Create content group with ID (matching root grid structure)
