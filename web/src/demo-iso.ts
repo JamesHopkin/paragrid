@@ -17,10 +17,10 @@ import { analyze } from './lib/analyzer/index.js';
 import { findPrimaryRef } from './lib/utils/immutable.js';
 import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
-import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
+import { sceneToJSON, type Scene, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
 import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
-import { chainToMovements, type Movement } from './lib/animations/index.js';
+import { chainToMovements, ParagridAnimator, type Movement } from './lib/animations/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
@@ -40,12 +40,8 @@ class IsometricDemo {
   private currentCellTree: CellNode | null = null;
   private currentCamera: any | null = null;
   private currentRenderer: Renderer | null = null;
-  private animationSystem: AnimationSystem;
-  private cameraAnimationSystem: CameraAnimationSystem;
+  private animator: ParagridAnimator;
   private previousPlayerPosition: CellPosition | null = null;
-  private animationFrameId: number | null = null;
-  private lastFrameTime: number = 0;
-  private isAnimating: boolean = false;
   private readonly renderWidth = 800;
   private readonly renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
@@ -74,8 +70,10 @@ class IsometricDemo {
     this.tagFn = tagFn;
     this.canvas = canvas;
     this.statusEl = statusEl;
-    this.animationSystem = new AnimationSystem();
-    this.cameraAnimationSystem = new CameraAnimationSystem();
+    this.animator = new ParagridAnimator({
+      movementDuration: 0.3,
+      cameraDuration: CAMERA_ANIMATION_DURATION
+    });
 
     // Initialize hierarchy helper and camera controller
     this.hierarchyHelper = new HierarchyHelper(this.store);
@@ -400,7 +398,7 @@ class IsometricDemo {
 
   private attemptPush(direction: Direction): void {
     // Handle input during animation based on allowRapidInput setting
-    if (this.isAnimating) {
+    if (this.animator.isAnimating()) {
       if (this.allowRapidInput) {
         // Cancel current animation and proceed with new input
         this.cancelCurrentAnimation();
@@ -511,13 +509,7 @@ class IsometricDemo {
           this.animateCameraTransition(viewUpdate.animationStartView, viewUpdate.targetView);
         } else {
           // No animation - rebuild immediately
-          this.animationSystem.stop();
-          this.cameraAnimationSystem.stop();
-          this.isAnimating = false;
-          if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-            this.animationFrameId = null;
-          }
+          this.animator.stop();
           // Clear everything to force complete rebuild with new view
           this.currentScene = null;
           this.currentCellTree = null;
@@ -560,16 +552,9 @@ class IsometricDemo {
    * Cancel any currently running animation.
    */
   private cancelCurrentAnimation(): void {
-    this.animationSystem.stop();
-    this.cameraAnimationSystem.stop();
-    this.isAnimating = false;
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    this.animator.stop();
     // Remove animation clips to clear transform overrides
-    this.animationSystem.removeClip('push-move');
-    this.animationSystem.removeClip('enter-exit-move');
+    this.animator.clear();
     // Force render to show the final state
     this.render(true);
   }
@@ -678,63 +663,11 @@ class IsometricDemo {
   private createMultipleMovementAnimations(movements: Movement[]): void {
     if (movements.length === 0) return;
 
-    const duration = 0.3; // 300ms animation
-
-    // Remove any existing animation clip to avoid conflicts
-    this.animationSystem.removeClip('push-move');
-
-    // Build animations for all movements
-    // Hierarchy is at NEW position, animate FROM old position (negative offset)
-    const animations: Array<{
-      nodeId: string;
-      channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
-      }>;
-    }> = [];
-
-    for (const movement of movements) {
-      // Calculate offset from new position to old position (in world space)
-      const relativeOffset: [number, number, number] = [
-        movement.oldPos[0] - movement.newPos[0],
-        movement.oldPos[1] - movement.newPos[1],
-        movement.oldPos[2] - movement.newPos[2]
-      ];
-      const targetPos: [number, number, number] = [0, 0, 0];
-
-      console.log(`  ${movement.cellId}: [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] -> [${targetPos}]`);
-
-      animations.push({
-        nodeId: movement.cellId,
-        channels: [{
-          target: 'position',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: relativeOffset, easing: Easing.easeInQuad },
-            { time: duration, value: targetPos }
-          ]
-        }]
-      });
-    }
-
-    // Create animation clip
-    const animationClip: AnimationClip = {
-      id: 'push-move',
-      duration,
-      loop: false,
-      animations
-    };
-
     // Rebuild scene data
     this.rebuildSceneData();
 
-    // Add and play the animation
-    this.animationSystem.addClip(animationClip);
-    this.animationSystem.play('push-move');
-
-    // Set animation flag
-    this.isAnimating = true;
+    // Create and play animation using animator
+    this.animator.animateMovements(movements);
 
     // Start the animation loop
     this.startAnimationLoop();
@@ -744,41 +677,10 @@ class IsometricDemo {
    * Start the animation loop using requestAnimationFrame
    */
   private startAnimationLoop(): void {
-    if (this.animationFrameId !== null) {
-      return; // Already running
-    }
-
-    this.lastFrameTime = performance.now();
-
-    const animate = (currentTime: number): void => {
-      const deltaTime = (currentTime - this.lastFrameTime) / 1000; // Convert to seconds
-      this.lastFrameTime = currentTime;
-
-      // Update both animation systems
-      this.animationSystem.update(deltaTime);
-      this.cameraAnimationSystem.update(deltaTime);
-
-      // Re-render (camera animation will be applied in render method)
+    this.animator.start(() => {
+      // Re-render each frame (camera animation will be applied in render method)
       this.render(false);
-
-      // Continue if either animation is active
-      const cellAnimating = this.animationSystem.getState().playing;
-      const cameraAnimating = this.cameraAnimationSystem.getState().playing;
-
-      if (cellAnimating || cameraAnimating) {
-        this.animationFrameId = requestAnimationFrame(animate);
-      } else {
-        // All animations complete - clean up and render final state
-        this.animationFrameId = null;
-        this.isAnimating = false;
-
-        // Remove animation clips so transform overrides are cleared
-        this.animationSystem.removeClip('push-move');
-        this.animationSystem.removeClip('enter-exit-move');
-      }
-    };
-
-    this.animationFrameId = requestAnimationFrame(animate);
+    });
   }
 
   /**
@@ -791,8 +693,6 @@ class IsometricDemo {
     startViewPath: ViewPath,
     endViewPath: ViewPath
   ): void {
-    const duration = CAMERA_ANIMATION_DURATION; // Use same duration as camera (0.3s)
-
     // Calculate camera parameters for both views
     const startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
     const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
@@ -807,16 +707,7 @@ class IsometricDemo {
     }
 
     // Stop any existing animations
-    this.animationSystem.stop();
-    this.cameraAnimationSystem.stop();
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
-
-    // Remove old animation clips
-    this.animationSystem.removeClip('push-move');
-    this.animationSystem.removeClip('enter-exit-move');
+    this.animator.stop();
 
     // Rebuild scene at END view (target)
     this.currentScene = null;
@@ -850,114 +741,6 @@ class IsometricDemo {
     );
     this.currentCamera = endCamera;
 
-    // 1. Create camera animation
-    const startCenter = startCameraParams.position;
-    const startRightEdge: [number, number, number] = [
-      startCenter[0] + startCameraParams.viewWidth / 2,
-      startCenter[1],
-      startCenter[2]
-    ];
-    const endCenter = endCameraParams.position;
-    const endRightEdge: [number, number, number] = [
-      endCenter[0] + endCameraParams.viewWidth / 2,
-      endCenter[1],
-      endCenter[2]
-    ];
-
-    const cameraClip: CameraAnimationClip = {
-      id: 'camera-transition',
-      duration,
-      loop: false,
-      channels: [
-        {
-          target: 'center',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startCenter, easing: Easing.easeInOutQuad },
-            { time: duration, value: endCenter }
-          ]
-        },
-        {
-          target: 'rightEdge',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startRightEdge, easing: Easing.easeInOutQuad },
-            { time: duration, value: endRightEdge }
-          ]
-        }
-      ]
-    };
-
-    // 2. Create object animations
-    // Calculate scale ratio: how much larger/smaller objects appear in start view vs end view
-    // When entering (zoom in): startViewWidth > endViewWidth, so scale > 1 (objects start larger)
-    // When exiting (zoom out): startViewWidth < endViewWidth, so scale < 1 (objects start smaller)
-    const scaleRatio = startCameraParams.viewWidth / endCameraParams.viewWidth;
-    const startScale: [number, number, number] = [scaleRatio, scaleRatio, scaleRatio];
-    const endScale: [number, number, number] = [1, 1, 1];
-
-    console.log(`  Scale animation: ${scaleRatio.toFixed(3)}x -> 1.0x (${startViewPath.join('→')} to ${endViewPath.join('→')})`);
-
-    const animations: Array<{
-      nodeId: string;
-      channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
-      }>;
-    }> = [];
-
-    for (const movement of movements) {
-      // Calculate offset from new position to old position (in world space)
-      const relativeOffset: [number, number, number] = [
-        movement.oldPos[0] - movement.newPos[0],
-        movement.oldPos[1] - movement.newPos[1],
-        movement.oldPos[2] - movement.newPos[2]
-      ];
-
-      console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]${movement.isEnterExit ? ' (with scale)' : ''}`);
-
-      // Build channels: always position, optionally scale
-      const channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
-      }> = [
-        {
-          target: 'position',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: relativeOffset, easing: Easing.easeInOutQuad },
-            { time: duration, value: [0, 0, 0] }
-          ]
-        }
-      ];
-
-      // Only add scale animation for objects that are actually entering/exiting
-      if (movement.isEnterExit) {
-        channels.push({
-          target: 'scale',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startScale, easing: Easing.easeInOutQuad },
-            { time: duration, value: endScale }
-          ]
-        });
-      }
-
-      animations.push({
-        nodeId: movement.cellId,
-        channels
-      });
-    }
-
-    const objectClip: AnimationClip = {
-      id: 'enter-exit-move',
-      duration,
-      loop: false,
-      animations
-    };
-
     // Create renderer if needed
     if (!this.currentRenderer) {
       this.canvas.innerHTML = '';
@@ -969,15 +752,10 @@ class IsometricDemo {
       });
     }
 
-    // 3. Add and play both animations
-    this.cameraAnimationSystem.addClip(cameraClip);
-    this.cameraAnimationSystem.play('camera-transition');
+    // Create and play combined enter/exit animation using animator
+    this.animator.animateEnterExit(movements, startCameraParams, endCameraParams);
 
-    this.animationSystem.addClip(objectClip);
-    this.animationSystem.play('enter-exit-move');
-
-    // 4. Start animation loop
-    this.isAnimating = true;
+    // Start animation loop
     this.startAnimationLoop();
   }
 
@@ -999,12 +777,7 @@ class IsometricDemo {
     }
 
     // Stop any existing animations
-    this.animationSystem.stop();
-    this.cameraAnimationSystem.stop();
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-      this.animationFrameId = null;
-    }
+    this.animator.stop();
 
     // Rebuild scene with END view (target)
     this.currentScene = null;
@@ -1039,45 +812,6 @@ class IsometricDemo {
     );
     this.currentCamera = endCamera;
 
-    // Calculate center and rightEdge for both start and end cameras
-    const startCenter = startCameraParams.position;
-    const startRightEdge: [number, number, number] = [
-      startCenter[0] + startCameraParams.viewWidth / 2,
-      startCenter[1],
-      startCenter[2]
-    ];
-    const endCenter = endCameraParams.position;
-    const endRightEdge: [number, number, number] = [
-      endCenter[0] + endCameraParams.viewWidth / 2,
-      endCenter[1],
-      endCenter[2]
-    ];
-
-    // Create camera animation with channels
-    const cameraClip: CameraAnimationClip = {
-      id: 'camera-transition',
-      duration: CAMERA_ANIMATION_DURATION,
-      loop: false,
-      channels: [
-        {
-          target: 'center',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startCenter, easing: Easing.easeInOutQuad },
-            { time: CAMERA_ANIMATION_DURATION, value: endCenter }
-          ]
-        },
-        {
-          target: 'rightEdge',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startRightEdge, easing: Easing.easeInOutQuad },
-            { time: CAMERA_ANIMATION_DURATION, value: endRightEdge }
-          ]
-        }
-      ]
-    };
-
     // Create renderer if needed
     if (!this.currentRenderer) {
       this.canvas.innerHTML = '';
@@ -1089,12 +823,10 @@ class IsometricDemo {
       });
     }
 
-    // Add and play the camera animation
-    this.cameraAnimationSystem.addClip(cameraClip);
-    this.cameraAnimationSystem.play('camera-transition');
+    // Create and play camera animation using animator
+    this.animator.animateCameraTransition(startCameraParams, endCameraParams);
 
-    // Set animation flag and start loop
-    this.isAnimating = true;
+    // Start animation loop
     this.startAnimationLoop();
   }
 
@@ -1263,7 +995,7 @@ class IsometricDemo {
         });
 
         // Apply camera animation if active
-        const activeCamera = this.cameraAnimationSystem.evaluateCamera(this.currentCamera);
+        const activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Now render the scene once
         const screenSpace = project(
@@ -1276,10 +1008,10 @@ class IsometricDemo {
         this.currentRenderer.render(screenSpace);
       } else {
         // During animation: only update transform overrides and re-render
-        const transformOverrides = this.animationSystem.evaluateTransforms();
+        const transformOverrides = this.animator.evaluateTransforms();
 
         // Apply camera animation if active
-        const activeCamera = this.cameraAnimationSystem.evaluateCamera(this.currentCamera);
+        const activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Re-project with animation overrides
         const screenSpace = project(
