@@ -580,11 +580,13 @@ class IsometricDemo {
     cellId: string;
     oldPos: [number, number, number];
     newPos: [number, number, number];
+    isEnterExit: boolean;
   }> {
     const movements: Array<{
       cellId: string;
       oldPos: [number, number, number];
       newPos: [number, number, number];
+      isEnterExit: boolean;
     }> = [];
 
     if (chain.length === 0) return movements;
@@ -622,9 +624,8 @@ class IsometricDemo {
       }
 
       // Determine if this is a within-grid movement or enter/exit transition
+      // We only care about the DESTINATION transition (nextEntry), not how we got to the old position
       const isWithinGrid = oldCellPos.gridId === newCellPos.gridId &&
-                          entry.transition !== 'enter' &&
-                          entry.transition !== 'exit' &&
                           nextEntry.transition !== 'enter' &&
                           nextEntry.transition !== 'exit';
 
@@ -666,7 +667,8 @@ class IsometricDemo {
       movements.push({
         cellId,
         oldPos,
-        newPos
+        newPos,
+        isEnterExit: !isWithinGrid
       });
     }
 
@@ -919,6 +921,7 @@ class IsometricDemo {
     cellId: string;
     oldPos: [number, number, number];
     newPos: [number, number, number];
+    isEnterExit: boolean;
   }>): void {
     if (movements.length === 0) return;
 
@@ -1028,12 +1031,14 @@ class IsometricDemo {
   /**
    * Create combined animation for enter/exit transitions.
    * Animates both the camera (zoom) and objects (position) simultaneously.
+   * Only applies scale animation to objects that are actually entering/exiting.
    */
   private createEnterExitAnimation(
     movements: Array<{
       cellId: string;
       oldPos: [number, number, number];
       newPos: [number, number, number];
+      isEnterExit: boolean;
     }>,
     startViewPath: ViewPath,
     endViewPath: ViewPath
@@ -1136,6 +1141,15 @@ class IsometricDemo {
     };
 
     // 2. Create object animations
+    // Calculate scale ratio: how much larger/smaller objects appear in start view vs end view
+    // When entering (zoom in): startViewWidth > endViewWidth, so scale > 1 (objects start larger)
+    // When exiting (zoom out): startViewWidth < endViewWidth, so scale < 1 (objects start smaller)
+    const scaleRatio = startCameraParams.viewWidth / endCameraParams.viewWidth;
+    const startScale: [number, number, number] = [scaleRatio, scaleRatio, scaleRatio];
+    const endScale: [number, number, number] = [1, 1, 1];
+
+    console.log(`  Scale animation: ${scaleRatio.toFixed(3)}x -> 1.0x (${startViewPath.join('→')} to ${endViewPath.join('→')})`);
+
     const animations: Array<{
       nodeId: string;
       channels: Array<{
@@ -1153,18 +1167,39 @@ class IsometricDemo {
         movement.oldPos[2] - movement.newPos[2]
       ];
 
-      console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]`);
+      console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]${movement.isEnterExit ? ' (with scale)' : ''}`);
 
-      animations.push({
-        nodeId: movement.cellId,
-        channels: [{
+      // Build channels: always position, optionally scale
+      const channels: Array<{
+        target: 'position' | 'rotation' | 'scale';
+        interpolation: 'linear';
+        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: any }>;
+      }> = [
+        {
           target: 'position',
           interpolation: 'linear',
           keyFrames: [
             { time: 0, value: relativeOffset, easing: Easing.easeInOutQuad },
             { time: duration, value: [0, 0, 0] }
           ]
-        }]
+        }
+      ];
+
+      // Only add scale animation for objects that are actually entering/exiting
+      if (movement.isEnterExit) {
+        channels.push({
+          target: 'scale',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startScale, easing: Easing.easeInOutQuad },
+            { time: duration, value: endScale }
+          ]
+        });
+      }
+
+      animations.push({
+        nodeId: movement.cellId,
+        channels
       });
     }
 
