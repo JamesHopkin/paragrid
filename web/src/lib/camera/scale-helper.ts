@@ -106,16 +106,22 @@ export function getScaleAndOffset(
     const newWidth = cellWidth;
     const newHeight = cellHeight;
 
-    // Calculate the center of the reference cell in current coords
+    // Calculate the center of the reference cell in local coords (where current grid starts at 0,0)
     // Cell (row, col) spans from (col*cellWidth, row*cellHeight) to ((col+1)*cellWidth, (row+1)*cellHeight)
     const refCellCenterX = cellWidth * refCol + cellWidth / 2;
     const refCellCenterY = cellHeight * refRow + cellHeight / 2;
 
     // Update for next iteration
+    // The current grid actually starts at (centerX - currentWidth/2, centerY - currentHeight/2)
+    // So convert local position to absolute position by adding the grid's top-left corner
+    // This is equivalent to: centerX + (refCellCenterX - currentWidth/2)
+    const newCenterX = centerX + (refCellCenterX - currentWidth / 2);
+    const newCenterY = centerY + (refCellCenterY - currentHeight / 2);
+
     currentWidth = newWidth;
     currentHeight = newHeight;
-    centerX = refCellCenterX;
-    centerY = refCellCenterY;
+    centerX = newCenterX;
+    centerY = newCenterY;
   }
 
   return {
