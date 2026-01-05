@@ -52,6 +52,9 @@ class IsometricDemo {
   private manualViewPath: string[] | null = null; // Manual view path (grid names)
   private manualViewInputEl: HTMLInputElement | null = null;
   private manualViewStatusEl: HTMLElement | null = null;
+  private zoomSliderEl: HTMLInputElement | null = null;
+  private zoomValueEl: HTMLElement | null = null;
+  private zoomMultiplier: number = 1.0; // Exponential zoom multiplier (2^sliderValue)
 
   constructor(
     store: GridStore,
@@ -146,6 +149,8 @@ class IsometricDemo {
   private setupManualViewControls(): void {
     this.manualViewInputEl = document.getElementById('manual-view-input') as HTMLInputElement;
     this.manualViewStatusEl = document.getElementById('manual-view-status');
+    this.zoomSliderEl = document.getElementById('zoom-slider') as HTMLInputElement;
+    this.zoomValueEl = document.getElementById('zoom-value');
 
     if (!this.manualViewInputEl) return;
 
@@ -160,6 +165,19 @@ class IsometricDemo {
         this.updateManualView();
       }
     });
+
+    // Setup zoom slider
+    if (this.zoomSliderEl) {
+      this.zoomSliderEl.addEventListener('input', () => {
+        this.updateZoom();
+      });
+
+      // Double-click to reset zoom to 1x
+      this.zoomSliderEl.addEventListener('dblclick', () => {
+        this.zoomSliderEl!.value = '0';
+        this.updateZoom();
+      });
+    }
   }
 
   private updateManualView(): void {
@@ -248,6 +266,32 @@ class IsometricDemo {
     }
 
     return { success: true, path };
+  }
+
+  /**
+   * Update zoom multiplier based on slider value.
+   * Slider range: -3 to 3 (maps to 1/8x to 8x exponentially)
+   */
+  private updateZoom(): void {
+    if (!this.zoomSliderEl || !this.zoomValueEl) return;
+
+    const sliderValue = parseFloat(this.zoomSliderEl.value);
+    // Convert slider value to exponential scale: 2^sliderValue
+    // slider = -3 → 2^-3 = 1/8 = 0.125
+    // slider = 0 → 2^0 = 1
+    // slider = 3 → 2^3 = 8
+    this.zoomMultiplier = Math.pow(2, sliderValue);
+
+    // Update display
+    this.zoomValueEl.textContent = `${this.zoomMultiplier.toFixed(2)}×`;
+
+    // Force re-render if manual view is active
+    if (this.manualViewPath) {
+      this.currentScene = null;
+      this.currentCellTree = null;
+      this.currentRenderer = null;
+      this.render(true);
+    }
   }
 
   private exportScene(): void {
@@ -1373,7 +1417,12 @@ class IsometricDemo {
           // World coordinates have grid center at (0, 0)
           refX = scaleResult.centerX - grid.cols / 2;
           refZ = scaleResult.centerY - grid.rows / 2;
-          viewWidth = scaleResult.width;
+
+          // Calculate diagonal size of the focused grid
+          const diagonal = Math.sqrt(scaleResult.width ** 2 + scaleResult.height ** 2);
+
+          // Apply zoom multiplier
+          viewWidth = diagonal * this.zoomMultiplier;
 
           console.log('Manual view camera:', {
             path: this.manualViewPath,

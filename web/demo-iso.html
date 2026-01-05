@@ -158,6 +158,23 @@
       .manual-view-status.error {
         color: #ff5252;
       }
+
+      .zoom-control {
+        margin-top: 1rem;
+      }
+
+      .zoom-slider {
+        width: 100%;
+        margin-top: 0.5rem;
+      }
+
+      .zoom-value {
+        display: inline-block;
+        min-width: 4rem;
+        text-align: right;
+        color: #4fc3f7;
+        font-family: monospace;
+      }
     </style>
   </head>
   <body>
@@ -183,6 +200,18 @@
               />
               <div id="manual-view-status" class="manual-view-status">
                 Enter grid path to override camera (empty = auto)
+              </div>
+              <div class="zoom-control">
+                <strong>Zoom: <span id="zoom-value" class="zoom-value">1.0×</span></strong>
+                <input
+                  type="range"
+                  id="zoom-slider"
+                  class="zoom-slider"
+                  min="-3"
+                  max="3"
+                  step="0.1"
+                  value="0"
+                />
               </div>
             </div>
           </div>
