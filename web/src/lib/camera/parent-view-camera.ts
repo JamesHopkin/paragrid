@@ -9,25 +9,24 @@
  * - Falls back to immediate parent grid (via primary reference)
  * - Falls back to current grid if no parent exists
  *
- * This matches the existing camera behavior from demo-iso.ts.
+ * Uses a HierarchyHelper to query grid relationships without direct access
+ * to the GridStore.
  */
 
-import type { GridStore } from '../core/types.js';
 import type { CameraController, ViewUpdate, ViewPath } from './camera-protocol.js';
-import { getAncestorChain, getParent } from './hierarchy-helper.js';
-import { findPrimaryRef } from '../utils/immutable.js';
-import { findHighestAncestor } from '../utils/hierarchy.js';
-import { CellPosition } from '../core/position.js';
+import type { HierarchyHelper } from './hierarchy-helper.js';
 
 /**
  * Default camera controller that shows parent/ancestor grids.
  */
 export class ParentViewCameraController implements CameraController {
+  constructor(private helper: HierarchyHelper) {}
+
   /**
    * Get initial view - uses ancestor chain to show context.
    */
-  getInitialView(store: GridStore, playerGridId: string): ViewUpdate {
-    const viewPath = this.buildViewPath(store, playerGridId);
+  getInitialView(playerGridId: string): ViewUpdate {
+    const viewPath = this.buildViewPath(playerGridId);
     return {
       targetView: viewPath,
     };
@@ -37,12 +36,8 @@ export class ParentViewCameraController implements CameraController {
    * Handle player entering a grid (moving into a reference cell).
    * Typically shows the parent grid zoomed to the entered reference.
    */
-  onPlayerEnter(
-    store: GridStore,
-    fromGridId: string,
-    toGridId: string
-  ): ViewUpdate {
-    const viewPath = this.buildViewPath(store, toGridId);
+  onPlayerEnter(fromGridId: string, toGridId: string): ViewUpdate {
+    const viewPath = this.buildViewPath(toGridId);
     return {
       targetView: viewPath,
       // Animation start view could be the old view, but we'll let the demo
@@ -54,12 +49,8 @@ export class ParentViewCameraController implements CameraController {
    * Handle player exiting a grid (moving out of a reference cell).
    * Shows the parent of the new grid.
    */
-  onPlayerExit(
-    store: GridStore,
-    fromGridId: string,
-    toGridId: string
-  ): ViewUpdate {
-    const viewPath = this.buildViewPath(store, toGridId);
+  onPlayerExit(fromGridId: string, toGridId: string): ViewUpdate {
+    const viewPath = this.buildViewPath(toGridId);
     return {
       targetView: viewPath,
       // Animation start view could be computed from the old grid's position
@@ -71,8 +62,8 @@ export class ParentViewCameraController implements CameraController {
    * Handle player moving within the same grid.
    * Typically keeps the same view.
    */
-  onPlayerMove(store: GridStore, gridId: string): ViewUpdate {
-    const viewPath = this.buildViewPath(store, gridId);
+  onPlayerMove(gridId: string): ViewUpdate {
+    const viewPath = this.buildViewPath(gridId);
     return {
       targetView: viewPath,
     };
@@ -83,32 +74,28 @@ export class ParentViewCameraController implements CameraController {
    * Attempts to show parent/ancestor grid for context.
    *
    * Priority:
-   * 1. Highest ancestor from exit destinations (via findHighestAncestor)
+   * 1. Highest ancestor from exit destinations (via getExitDestinations)
    * 2. Immediate parent grid
    * 3. Current grid (if no parent exists)
    */
-  private buildViewPath(store: GridStore, playerGridId: string): ViewPath {
+  private buildViewPath(playerGridId: string): ViewPath {
     // Try to find highest ancestor via exit destinations
-    // Note: findHighestAncestor requires a CellPosition, but we only have gridId
-    // We'll need to pass a position (0, 0) as a placeholder since the function
-    // uses it to check exit destinations
-    const dummyPosition = new CellPosition(playerGridId, 0, 0);
-    const highestAncestorId = findHighestAncestor(store, dummyPosition);
+    const highestAncestorId = this.findHighestExitAncestor(playerGridId);
 
     if (highestAncestorId) {
       // Build path from highest ancestor down to player grid
-      return this.buildPathToGrid(store, highestAncestorId, playerGridId);
+      return this.buildPathToGrid(highestAncestorId, playerGridId);
     }
 
     // Fall back to immediate parent
-    const parentId = getParent(store, playerGridId);
+    const parentId = this.helper.getParent(playerGridId);
     if (parentId) {
       // Build path from parent down to player grid
-      return this.buildPathToGrid(store, parentId, playerGridId);
+      return this.buildPathToGrid(parentId, playerGridId);
     }
 
     // Fall back to current grid - build path from root
-    const ancestorChain = getAncestorChain(store, playerGridId);
+    const ancestorChain = this.helper.getAncestorChain(playerGridId);
     if (ancestorChain) {
       // Reverse to get root-to-player order
       return ancestorChain.slice().reverse();
@@ -119,20 +106,53 @@ export class ParentViewCameraController implements CameraController {
   }
 
   /**
+   * Find highest ancestor reachable via exits.
+   * Returns null if no exits lead to ancestors above immediate parent.
+   */
+  private findHighestExitAncestor(gridId: string): string | null {
+    // Get ancestor chain
+    const ancestorChain = this.helper.getAncestorChain(gridId);
+    if (!ancestorChain || ancestorChain.length <= 1) {
+      return null; // No ancestors or cycle
+    }
+
+    // Get exit destinations
+    const exits = this.helper.getExitDestinations(gridId);
+    const ancestorSet = new Set(ancestorChain);
+
+    // Find highest ancestor among exit destinations
+    let highestAncestor: string | null = null;
+    let highestIndex = -1;
+
+    for (const destination of exits.values()) {
+      if (destination && ancestorSet.has(destination)) {
+        const index = ancestorChain.indexOf(destination);
+        if (index > highestIndex) {
+          highestIndex = index;
+          highestAncestor = destination;
+        }
+      }
+    }
+
+    // Only return if we found a grandparent or higher
+    if (highestIndex > 1) {
+      return highestAncestor;
+    }
+
+    return null;
+  }
+
+  /**
    * Build a path from ancestor grid down to target grid.
    * Assumes ancestorGridId is actually an ancestor of targetGridId.
    */
-  private buildPathToGrid(
-    store: GridStore,
-    ancestorGridId: string,
-    targetGridId: string
-  ): ViewPath {
+  private buildPathToGrid(ancestorGridId: string, targetGridId: string): ViewPath {
     if (ancestorGridId === targetGridId) {
       return [targetGridId];
     }
 
     // Get path from target up to root
-    const upwardPath = getAncestorChain(store, targetGridId);
+    const upwardPath = this.helper.getAncestorChain(targetGridId);
     if (!upwardPath) {
       // Cycle detected or invalid - fall back to just target
       return [targetGridId];

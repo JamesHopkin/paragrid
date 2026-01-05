@@ -5,10 +5,11 @@
  * the player's current position. Views are represented as paths through the
  * grid hierarchy (array of grid IDs from root to target).
  *
+ * Camera controllers use a HierarchyHelper to query the grid hierarchy
+ * without direct access to the GridStore.
+ *
  * See docs/game-camera-proposal.md for design details.
  */
-
-import type { GridStore } from '../core/types.js';
 
 /**
  * A view is represented by a path of grid names from root to target.
@@ -48,52 +49,43 @@ export interface ViewUpdate {
  * Implementations determine which view path to display based on player position
  * and grid transitions. The view provider protocol cleanly separates camera
  * logic from rendering logic.
+ *
+ * Camera controllers are constructed with a HierarchyHelper and use it to
+ * query the grid hierarchy. The GridStore is not passed to methods.
  */
 export interface CameraController {
   /**
    * Get initial view when the game starts.
    *
-   * @param store - The grid store
    * @param playerGridId - The grid containing the player
    * @returns Initial view update
    */
-  getInitialView(store: GridStore, playerGridId: string): ViewUpdate;
+  getInitialView(playerGridId: string): ViewUpdate;
 
   /**
    * Get view update when player enters a new grid (through a reference cell).
    *
-   * @param store - The grid store
    * @param fromGridId - Grid the player is leaving
    * @param toGridId - Grid the player is entering
    * @returns View update, potentially with animation start view
    */
-  onPlayerEnter(
-    store: GridStore,
-    fromGridId: string,
-    toGridId: string
-  ): ViewUpdate;
+  onPlayerEnter(fromGridId: string, toGridId: string): ViewUpdate;
 
   /**
    * Get view update when player exits a grid (moving out of a reference cell).
    *
-   * @param store - The grid store
    * @param fromGridId - Grid the player is leaving
    * @param toGridId - Grid the player is entering
    * @returns View update, potentially with animation start view
    */
-  onPlayerExit(
-    store: GridStore,
-    fromGridId: string,
-    toGridId: string
-  ): ViewUpdate;
+  onPlayerExit(fromGridId: string, toGridId: string): ViewUpdate;
 
   /**
    * Get view update when player moves within the same grid (no enter/exit).
    * Most camera controllers will keep the same view for within-grid movement.
    *
-   * @param store - The grid store
    * @param gridId - Grid the player is moving within
    * @returns View update (typically unchanged from previous view)
    */
-  onPlayerMove(store: GridStore, gridId: string): ViewUpdate;
+  onPlayerMove(gridId: string): ViewUpdate;
 }

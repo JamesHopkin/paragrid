@@ -19,7 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, ParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { getScaleAndOffset, HierarchyHelper, ParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
@@ -57,6 +57,7 @@ class IsometricDemo {
   private zoomSliderEl: HTMLInputElement | null = null;
   private zoomValueEl: HTMLElement | null = null;
   private zoomMultiplier: number = 1.0; // Exponential zoom multiplier (2^sliderValue)
+  private hierarchyHelper: HierarchyHelper; // Hierarchy helper for camera
   private cameraController: CameraController; // Camera protocol implementation
   private currentViewPath: ViewPath | null = null; // Current automatic view path
 
@@ -74,8 +75,9 @@ class IsometricDemo {
     this.animationSystem = new AnimationSystem();
     this.cameraAnimationSystem = new CameraAnimationSystem();
 
-    // Initialize camera controller
-    this.cameraController = new ParentViewCameraController();
+    // Initialize hierarchy helper and camera controller
+    this.hierarchyHelper = new HierarchyHelper(this.store);
+    this.cameraController = new ParentViewCameraController(this.hierarchyHelper);
 
     // Store initial player position
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -83,7 +85,7 @@ class IsometricDemo {
     // Get initial view from camera controller
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const initialView = this.cameraController.getInitialView(this.store, playerPos.gridId);
+      const initialView = this.cameraController.getInitialView(playerPos.gridId);
       this.currentViewPath = initialView.targetView;
     }
 
@@ -405,6 +407,7 @@ class IsometricDemo {
 
     // Update store and get push chain
     this.store = result.store;
+    this.hierarchyHelper.setStore(this.store); // Update helper with new store
     const pushChain = result.chain;
 
     // DEBUG: Log the full push chain
@@ -433,19 +436,17 @@ class IsometricDemo {
         let viewUpdate;
         if (transition?.type === 'enter') {
           viewUpdate = this.cameraController.onPlayerEnter(
-            this.store,
             playerPos.gridId,
             newPos.gridId
           );
         } else if (transition?.type === 'exit') {
           viewUpdate = this.cameraController.onPlayerExit(
-            this.store,
             playerPos.gridId,
             newPos.gridId
           );
         } else {
           // Fallback - treat as move
-          viewUpdate = this.cameraController.onPlayerMove(this.store, newPos.gridId);
+          viewUpdate = this.cameraController.onPlayerMove(newPos.gridId);
         }
 
         // Update current view
@@ -468,7 +469,7 @@ class IsometricDemo {
         this.render(true);
       } else {
         // Same grid - update view and animate movements
-        const viewUpdate = this.cameraController.onPlayerMove(this.store, playerPos.gridId);
+        const viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
         this.currentViewPath = viewUpdate.targetView;
 
         // Convert push chain to movements and animate
@@ -701,13 +702,14 @@ class IsometricDemo {
 
   private reset(): void {
     this.store = this.originalStore;
+    this.hierarchyHelper.setStore(this.store); // Update helper with reset store
     this.statusMessage = 'Grid reset to original state';
     this.previousPlayerPosition = this.playerPosition ?? null;
 
     // Update camera view
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const view = this.cameraController.getInitialView(this.store, playerPos.gridId);
+      const view = this.cameraController.getInitialView(playerPos.gridId);
       this.currentViewPath = view.targetView;
     }
 
@@ -734,6 +736,7 @@ class IsometricDemo {
     // Pop previous state from undo stack
     const previousState = this.undoStack.pop()!;
     this.store = previousState;
+    this.hierarchyHelper.setStore(this.store); // Update helper with previous store
 
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -741,7 +744,7 @@ class IsometricDemo {
     // Update camera view for new player position
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const view = this.cameraController.getInitialView(this.store, playerPos.gridId);
+      const view = this.cameraController.getInitialView(playerPos.gridId);
       this.currentViewPath = view.targetView;
     }
 
@@ -774,6 +777,7 @@ class IsometricDemo {
     // Pop state from redo stack
     const nextState = this.redoStack.pop()!;
     this.store = nextState;
+    this.hierarchyHelper.setStore(this.store); // Update helper with next store
 
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -781,7 +785,7 @@ class IsometricDemo {
     // Update camera view for new player position
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const view = this.cameraController.getInitialView(this.store, playerPos.gridId);
+      const view = this.cameraController.getInitialView(playerPos.gridId);
       this.currentViewPath = view.targetView;
     }
 

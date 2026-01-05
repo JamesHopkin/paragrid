@@ -9,13 +9,7 @@
  * See docs/game-camera-proposal.md for design details.
  */
 
-export {
-  getParent,
-  getDirectlyContainedReferences,
-  findDirectlyContainedReference,
-  getPathToAncestor,
-  getAncestorChain,
-} from './hierarchy-helper.js';
+export { HierarchyHelper } from './hierarchy-helper.js';
 
 export {
   getScaleAndOffset,
