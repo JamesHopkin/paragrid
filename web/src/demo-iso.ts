@@ -8,7 +8,7 @@ import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
 import { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
-import { push, type PushResult } from './lib/operations/push.js';
+import { push, type PushResult, detectGridTransition } from './lib/operations/push.js';
 import { createRuleSet } from './lib/operations/rules.js';
 import type { PushFailure } from './lib/operations/failure.js';
 import { findTaggedCell } from './lib/tagging/index.js';
@@ -19,7 +19,8 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, getCellWorldPosition, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { chainToMovements, type Movement } from './lib/animations/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
@@ -474,7 +475,7 @@ class IsometricDemo {
 
       if (changedGrids) {
         // Grid transition - update view using camera controller
-        const transition = this.detectGridTransition(pushChain, playerPos.gridId, newPos.gridId);
+        const transition = detectGridTransition(pushChain, playerPos.gridId, newPos.gridId);
 
         let viewUpdate;
         if (transition?.type === 'enter') {
@@ -498,7 +499,7 @@ class IsometricDemo {
 
         // Convert push chain to movements using view paths
         const movements = oldViewPath && newViewPath
-          ? this.chainToMovements(pushChain, oldViewPath, newViewPath)
+          ? chainToMovements(this.store, pushChain, oldViewPath, newViewPath)
           : [];
 
         // Handle camera and object animation
@@ -531,7 +532,7 @@ class IsometricDemo {
 
         // Convert push chain to movements and animate
         const movements = oldViewPath && newViewPath
-          ? this.chainToMovements(pushChain, oldViewPath, newViewPath)
+          ? chainToMovements(this.store, pushChain, oldViewPath, newViewPath)
           : [];
 
         if (movements.length > 0) {
@@ -553,232 +554,6 @@ class IsometricDemo {
 
   private isPushFailure(result: PushResult | PushFailure): result is PushFailure {
     return 'reason' in result && 'position' in result;
-  }
-
-  /**
-   * Convert a push chain to movement animations.
-   * The chain represents positions and their cells BEFORE the push.
-   * After a push, cells rotate forward: each cell moves to the next position in the chain.
-   *
-   * Example: [(pos0, A), (pos1, B), (pos2, Empty)]
-   * After rotation: pos0←Empty, pos1←A, pos2←B
-   * Movements: A(pos0→pos1), B(pos1→pos2), Empty(pos2→pos0)
-   *
-   * This function handles ALL movements including enter/exit transitions by using
-   * world coordinates calculated from the appropriate view paths.
-   *
-   * @param chain - Push chain with position and transition metadata
-   * @param previousViewPath - View path before the push (for calculating old positions)
-   * @param currentViewPath - View path after the push (for calculating new positions)
-   * @returns Array of animations with world coordinates
-   */
-  private chainToMovements(
-    chain: import('./lib/operations/push.js').PushChain,
-    previousViewPath: ViewPath,
-    currentViewPath: ViewPath
-  ): Array<{
-    cellId: string;
-    oldPos: [number, number, number];
-    newPos: [number, number, number];
-    isEnterExit: boolean;
-  }> {
-    const movements: Array<{
-      cellId: string;
-      oldPos: [number, number, number];
-      newPos: [number, number, number];
-      isEnterExit: boolean;
-    }> = [];
-
-    if (chain.length === 0) return movements;
-
-    // For each cell in the chain, determine its movement
-    // Cell at position[i] moves to position[i+1] (with wraparound in the FULL chain)
-    for (let i = 0; i < chain.length; i++) {
-      const entry = chain[i];
-      const cell = entry.cell;
-      const oldCellPos = entry.position;
-
-      // Only animate non-empty cells
-      if (cell.type === 'empty') continue;
-
-      // Find the next position in the FULL chain (with wraparound)
-      const nextIndex = (i + 1) % chain.length;
-      const nextEntry = chain[nextIndex];
-      const newCellPos = nextEntry.position;
-
-      // Skip if cell didn't actually move (same position)
-      if (oldCellPos.equals(newCellPos)) continue;
-
-      // Generate cell ID for animation
-      // Must match the ID generation in isometric.ts renderGridDirect
-      let cellId: string;
-      if (isConcrete(cell)) {
-        cellId = `concrete-${cell.id}`;
-      } else if (cell.type === 'ref') {
-        const primarySuffix = cell.isPrimary === true ? 'primary' :
-                              cell.isPrimary === false ? 'secondary' :
-                              'auto';
-        cellId = `ref-${cell.gridId}-${primarySuffix}`;
-      } else {
-        continue; // Unknown cell type
-      }
-
-      // Determine if this is a within-grid movement or enter/exit transition
-      // We only care about the DESTINATION transition (nextEntry), not how we got to the old position
-      const isWithinGrid = oldCellPos.gridId === newCellPos.gridId &&
-                          nextEntry.transition !== 'enter' &&
-                          nextEntry.transition !== 'exit';
-
-      let oldPos: [number, number, number];
-      let newPos: [number, number, number];
-
-      if (isWithinGrid) {
-        // Within-grid movement: use simple grid coordinate offsets (legacy behavior)
-        // These are relative positions in grid space where each cell = 1 unit
-        oldPos = [oldCellPos.col, 0, oldCellPos.row];
-        newPos = [newCellPos.col, 0, newCellPos.row];
-        console.log(`  ${cellId}: [${oldPos[0]}, ${oldPos[2]}] -> [${newPos[0]}, ${newPos[2]}] (within-grid)`);
-      } else {
-        // Enter/exit transition: use world coordinate transformations
-        let oldWorldPos = getCellWorldPosition(this.store, previousViewPath, oldCellPos);
-        let newWorldPos = getCellWorldPosition(this.store, currentViewPath, newCellPos);
-
-        // If either position can't be calculated, try using current view for both
-        // (fallback for edge cases)
-        if (!oldWorldPos) {
-          oldWorldPos = getCellWorldPosition(this.store, currentViewPath, oldCellPos);
-        }
-        if (!newWorldPos) {
-          newWorldPos = getCellWorldPosition(this.store, previousViewPath, newCellPos);
-        }
-
-        if (!oldWorldPos || !newWorldPos) {
-          console.log(`  [WARN] Skipping enter/exit animation for ${cellId}: could not calculate world positions`);
-          console.log(`    Previous view: ${previousViewPath.join(' -> ')}, Current view: ${currentViewPath.join(' -> ')}`);
-          console.log(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
-          continue;
-        }
-
-        oldPos = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
-        newPos = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
-        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, transition: ${nextEntry.transition})`);
-      }
-
-      movements.push({
-        cellId,
-        oldPos,
-        newPos,
-        isEnterExit: !isWithinGrid
-      });
-    }
-
-    return movements;
-  }
-
-  /**
-   * Snapshot all concrete and reference cell positions in a grid.
-   * Returns array of {cell, position} for tracking.
-   */
-  private snapshotCellPositions(gridId: string): Array<{ cell: Cell; position: CellPosition }> {
-    const snapshot: Array<{ cell: Cell; position: CellPosition }> = [];
-    const grid = getGrid(this.store, gridId);
-    if (!grid) return snapshot;
-
-    for (let row = 0; row < grid.rows; row++) {
-      for (let col = 0; col < grid.cols; col++) {
-        const cell = grid.cells[row]?.[col];
-        if (cell && (isConcrete(cell) || cell.type === 'ref')) {
-          snapshot.push({
-            cell,
-            position: new CellPosition(gridId, row, col)
-          });
-        }
-      }
-    }
-
-    return snapshot;
-  }
-
-  /**
-   * Detect which cells moved one square within the same grid.
-   * Returns an array of {cellId, oldPos, newPos} for cells that moved exactly one square.
-   */
-  private detectMovements(gridId: string, oldSnapshot: Array<{ cell: Cell; position: CellPosition }>): Array<{
-    cellId: string;
-    oldPos: CellPosition;
-    newPos: CellPosition;
-  }> {
-    const movements: Array<{ cellId: string; oldPos: CellPosition; newPos: CellPosition }> = [];
-    const grid = getGrid(this.store, gridId);
-    if (!grid) return movements;
-
-    // Check all cells in the new state
-    for (let row = 0; row < grid.rows; row++) {
-      for (let col = 0; col < grid.cols; col++) {
-        const newCell = grid.cells[row]?.[col];
-        if (!newCell) continue;
-
-        const newPos = new CellPosition(gridId, row, col);
-
-        // Find matching cell in old snapshot
-        let oldPos: CellPosition | null = null;
-        let cellKey: string | null = null;
-
-        if (isConcrete(newCell)) {
-          // For concrete cells, match by ID
-          // First check if there's an exact position match (cell didn't move)
-          const matches = oldSnapshot.filter(s => isConcrete(s.cell) && s.cell.id === newCell.id);
-          const exactMatch = matches.find(m => m.position.row === newPos.row && m.position.col === newPos.col);
-
-          if (exactMatch) {
-            // Cell didn't move - don't animate
-            continue;
-          }
-
-          // No exact match - find the cell that moved here (one square away)
-          for (const match of matches) {
-            if (this.isSingleSquareMovement(match.position, newPos)) {
-              oldPos = match.position;
-              cellKey = `concrete-${newCell.id}`;
-              break;
-            }
-          }
-        } else if (newCell.type === 'ref') {
-          // For reference cells, match by gridId AND isPrimary
-          // This ensures we distinguish between multiple refs to the same grid
-          const matches = oldSnapshot.filter(s =>
-            s.cell.type === 'ref' &&
-            s.cell.gridId === newCell.gridId &&
-            s.cell.isPrimary === newCell.isPrimary
-          );
-          const exactMatch = matches.find(m => m.position.row === newPos.row && m.position.col === newPos.col);
-
-          if (exactMatch) {
-            // Cell didn't move - don't animate
-            continue;
-          }
-
-          // No exact match - find one that moved one square
-          for (const match of matches) {
-            if (this.isSingleSquareMovement(match.position, newPos)) {
-              oldPos = match.position;
-              const primarySuffix = newCell.isPrimary === true ? 'primary' :
-                                    newCell.isPrimary === false ? 'secondary' :
-                                    'auto';
-              cellKey = `ref-${newCell.gridId}-${primarySuffix}`;
-              break;
-            }
-          }
-        }
-
-        // If we found a match, add it to movements
-        if (oldPos && cellKey) {
-          movements.push({ cellId: cellKey, oldPos, newPos });
-        }
-      }
-    }
-
-    return movements;
   }
 
   /**
@@ -898,31 +673,9 @@ class IsometricDemo {
   }
 
   /**
-   * Check if movement is exactly one square within the same grid
-   */
-  private isSingleSquareMovement(oldPos: CellPosition, newPos: CellPosition): boolean {
-    // Must be in the same grid
-    if (oldPos.gridId !== newPos.gridId) {
-      return false;
-    }
-
-    // Calculate the movement distance
-    const rowDiff = Math.abs(newPos.row - oldPos.row);
-    const colDiff = Math.abs(newPos.col - oldPos.col);
-
-    // Must move exactly one square in one direction only
-    return (rowDiff === 1 && colDiff === 0) || (rowDiff === 0 && colDiff === 1);
-  }
-
-  /**
    * Create animations for multiple cells that moved (world coordinates).
    */
-  private createMultipleMovementAnimations(movements: Array<{
-    cellId: string;
-    oldPos: [number, number, number];
-    newPos: [number, number, number];
-    isEnterExit: boolean;
-  }>): void {
+  private createMultipleMovementAnimations(movements: Movement[]): void {
     if (movements.length === 0) return;
 
     const duration = 0.3; // 300ms animation
@@ -1034,20 +787,15 @@ class IsometricDemo {
    * Only applies scale animation to objects that are actually entering/exiting.
    */
   private createEnterExitAnimation(
-    movements: Array<{
-      cellId: string;
-      oldPos: [number, number, number];
-      newPos: [number, number, number];
-      isEnterExit: boolean;
-    }>,
+    movements: Movement[],
     startViewPath: ViewPath,
     endViewPath: ViewPath
   ): void {
     const duration = CAMERA_ANIMATION_DURATION; // Use same duration as camera (0.3s)
 
     // Calculate camera parameters for both views
-    const startCameraParams = this.calculateCameraForView(startViewPath);
-    const endCameraParams = this.calculateCameraForView(endViewPath);
+    const startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
+    const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
 
     if (!startCameraParams || !endCameraParams) {
       console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
@@ -1238,8 +986,8 @@ class IsometricDemo {
    */
   private animateCameraTransition(startViewPath: ViewPath, endViewPath: ViewPath): void {
     // Calculate camera parameters for both views
-    const startCameraParams = this.calculateCameraForView(startViewPath);
-    const endCameraParams = this.calculateCameraForView(endViewPath);
+    const startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
+    const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
 
     if (!startCameraParams || !endCameraParams) {
       console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
@@ -1348,53 +1096,6 @@ class IsometricDemo {
     // Set animation flag and start loop
     this.isAnimating = true;
     this.startAnimationLoop();
-  }
-
-  /**
-   * Calculate camera parameters for a given view path.
-   * Returns camera position and viewWidth.
-   */
-  private calculateCameraForView(viewPath: ViewPath): { position: [number, number, number]; viewWidth: number } | null {
-    const gridId = viewPath[0];
-    const grid = getGrid(this.store, gridId);
-    if (!grid) return null;
-
-    const scaleResult = getScaleAndOffset(this.store, viewPath);
-    if (!scaleResult) return null;
-
-    // Convert to world coordinates
-    const refX = scaleResult.centerX - grid.cols / 2;
-    const refZ = scaleResult.centerY - grid.rows / 2;
-    const diagonal = Math.sqrt(scaleResult.width ** 2 + scaleResult.height ** 2);
-    const viewWidth = diagonal * this.zoomMultiplier;
-
-    return {
-      position: [refX, 0, refZ],
-      viewWidth
-    };
-  }
-
-  /**
-   * Detect if a push chain contains a grid transition (enter or exit).
-   */
-  private detectGridTransition(
-    chain: ReadonlyArray<{ readonly position: CellPosition; readonly transition: 'enter' | 'exit' | 'move' | null }>,
-    oldGridId: string,
-    newGridId: string
-  ): { type: 'enter' | 'exit'; refGridId: string } | null {
-    // Check if grid changed
-    if (oldGridId === newGridId) return null;
-
-    // Scan chain for 'enter' or 'exit' transition
-    for (const entry of chain) {
-      if (entry.transition === 'enter') {
-        return { type: 'enter', refGridId: entry.position.gridId };
-      }
-      if (entry.transition === 'exit') {
-        return { type: 'exit', refGridId: oldGridId };
-      }
-    }
-    return null;
   }
 
   /**

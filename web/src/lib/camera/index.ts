@@ -14,7 +14,9 @@ export { HierarchyHelper } from './hierarchy-helper.js';
 export {
   getScaleAndOffset,
   getCellWorldPosition,
+  calculateCameraForView,
   type ScaleAndOffset,
+  type CameraParams,
 } from './scale-helper.js';
 
 export {

@@ -445,3 +445,32 @@ export function push(
     details: 'All backtracking attempts exhausted',
   };
 }
+
+/**
+ * Detect if a push chain contains a grid transition (enter or exit).
+ * Useful for camera controllers to determine how to update the view.
+ *
+ * @param chain - Push chain to analyze
+ * @param oldGridId - Grid ID before the push
+ * @param newGridId - Grid ID after the push
+ * @returns Transition info if a grid change occurred, null otherwise
+ */
+export function detectGridTransition(
+  chain: PushChain,
+  oldGridId: string,
+  newGridId: string
+): { type: 'enter' | 'exit'; refGridId: string } | null {
+  // Check if grid changed
+  if (oldGridId === newGridId) return null;
+
+  // Scan chain for 'enter' or 'exit' transition
+  for (const entry of chain) {
+    if (entry.transition === 'enter') {
+      return { type: 'enter', refGridId: entry.position.gridId };
+    }
+    if (entry.transition === 'exit') {
+      return { type: 'exit', refGridId: oldGridId };
+    }
+  }
+  return null;
+}

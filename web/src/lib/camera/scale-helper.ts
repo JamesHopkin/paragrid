@@ -216,3 +216,59 @@ export function getCellWorldPosition(
   };
 }
 
+/**
+ * Result of camera calculation for a view path.
+ */
+export interface CameraParams {
+  /** Camera position in world coordinates [x, y, z] */
+  readonly position: [number, number, number];
+  /** View width (horizontal span that camera can see) */
+  readonly viewWidth: number;
+}
+
+/**
+ * Calculate camera parameters for a given view path.
+ * Returns camera position and viewWidth suitable for rendering.
+ *
+ * @param store - Grid store
+ * @param viewPath - Hierarchy path to focus on
+ * @param zoomMultiplier - Optional zoom factor (default 1.0). Values > 1 zoom out, < 1 zoom in.
+ * @returns Camera parameters or null if path is invalid
+ *
+ * @example
+ * ```typescript
+ * // Calculate camera to view 'inner' grid within 'main'
+ * const camera = calculateCameraForView(store, ['main', 'inner']);
+ * // Use camera.position and camera.viewWidth to set up the renderer
+ * ```
+ */
+export function calculateCameraForView(
+  store: GridStore,
+  viewPath: readonly string[],
+  zoomMultiplier: number = 1.0
+): CameraParams | null {
+  if (viewPath.length === 0) return null;
+
+  const gridId = viewPath[0];
+  const grid = getGrid(store, gridId);
+  if (!grid) return null;
+
+  const scaleResult = getScaleAndOffset(store, viewPath);
+  if (!scaleResult) return null;
+
+  // Convert to world coordinates (where root grid is centered at origin)
+  const refX = scaleResult.centerX - grid.cols / 2;
+  const refZ = scaleResult.centerY - grid.rows / 2;
+
+  // Calculate diagonal size of the focused grid
+  const diagonal = Math.sqrt(scaleResult.width ** 2 + scaleResult.height ** 2);
+
+  // Apply zoom multiplier
+  const viewWidth = diagonal * zoomMultiplier;
+
+  return {
+    position: [refX, 0, refZ],
+    viewWidth
+  };
+}
+
