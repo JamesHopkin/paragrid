@@ -91,7 +91,11 @@ export function buildIsometricScene(
 
   // Setup background and lighting
   builder
-    .background({ type: 'solid', color: '#20a0e0' })
+    .background({
+      type: 'gradient',
+      bottomColor: '#00352D',  // Dark racing green
+      topColor: '#3A7B6F'      // Lighter bluish-green
+    })
     .light({
       direction: [1, 2, 1],
       color: '#ffffff',
