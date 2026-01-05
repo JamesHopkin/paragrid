@@ -19,7 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, AnimationSystem, CameraAnimationSystem, Easing, type AnimationClip, type CameraAnimationClip, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, HierarchyHelper, ParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { getScaleAndOffset, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
@@ -60,6 +60,7 @@ class IsometricDemo {
   private hierarchyHelper: HierarchyHelper; // Hierarchy helper for camera
   private cameraController: CameraController; // Camera protocol implementation
   private currentViewPath: ViewPath | null = null; // Current automatic view path
+  private cameraControllerSelectEl: HTMLSelectElement | null = null; // Camera controller dropdown
 
   constructor(
     store: GridStore,
@@ -77,7 +78,7 @@ class IsometricDemo {
 
     // Initialize hierarchy helper and camera controller
     this.hierarchyHelper = new HierarchyHelper(this.store);
-    this.cameraController = new ParentViewCameraController(this.hierarchyHelper);
+    this.cameraController = new AnimatedParentViewCameraController(this.hierarchyHelper);
 
     // Store initial player position
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -172,6 +173,14 @@ class IsometricDemo {
     this.manualViewStatusEl = document.getElementById('manual-view-status');
     this.zoomSliderEl = document.getElementById('zoom-slider') as HTMLInputElement;
     this.zoomValueEl = document.getElementById('zoom-value');
+    this.cameraControllerSelectEl = document.getElementById('camera-controller-select') as HTMLSelectElement;
+
+    // Setup camera controller selector
+    if (this.cameraControllerSelectEl) {
+      this.cameraControllerSelectEl.addEventListener('change', () => {
+        this.switchCameraController();
+      });
+    }
 
     if (!this.manualViewInputEl) return;
 
@@ -315,6 +324,37 @@ class IsometricDemo {
     }
   }
 
+  /**
+   * Switch between camera controller implementations.
+   */
+  private switchCameraController(): void {
+    if (!this.cameraControllerSelectEl) return;
+
+    const selectedValue = this.cameraControllerSelectEl.value;
+
+    // Create new camera controller based on selection
+    if (selectedValue === 'animated') {
+      this.cameraController = new AnimatedParentViewCameraController(this.hierarchyHelper);
+      console.log('Switched to Animated Parent View Camera');
+    } else {
+      this.cameraController = new ParentViewCameraController(this.hierarchyHelper);
+      console.log('Switched to Parent View Camera');
+    }
+
+    // Update current view to match new controller
+    const playerPos = this.playerPosition;
+    if (playerPos) {
+      const view = this.cameraController.getInitialView(playerPos.gridId);
+      this.currentViewPath = view.targetView;
+    }
+
+    // Force rebuild with new controller
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+    this.render(true);
+  }
+
   private exportScene(): void {
     if (!this.currentScene) {
       console.warn('No scene available to export');
@@ -453,20 +493,25 @@ class IsometricDemo {
         const oldViewPath = this.currentViewPath;
         this.currentViewPath = viewUpdate.targetView;
 
-        // For now, rebuild immediately without animation
-        // TODO: Handle animationStartView for smooth transitions
-        this.animationSystem.stop();
-        this.cameraAnimationSystem.stop();
-        this.isAnimating = false;
-        if (this.animationFrameId !== null) {
-          cancelAnimationFrame(this.animationFrameId);
-          this.animationFrameId = null;
+        // Handle camera animation if provided
+        if (viewUpdate.animationStartView && oldViewPath) {
+          // Animate camera from animationStartView to targetView
+          this.animateCameraTransition(viewUpdate.animationStartView, viewUpdate.targetView);
+        } else {
+          // No animation - rebuild immediately
+          this.animationSystem.stop();
+          this.cameraAnimationSystem.stop();
+          this.isAnimating = false;
+          if (this.animationFrameId !== null) {
+            cancelAnimationFrame(this.animationFrameId);
+            this.animationFrameId = null;
+          }
+          // Clear everything to force complete rebuild with new view
+          this.currentScene = null;
+          this.currentCellTree = null;
+          this.currentRenderer = null;
+          this.render(true);
         }
-        // Clear everything to force complete rebuild with new view
-        this.currentScene = null;
-        this.currentCellTree = null;
-        this.currentRenderer = null;
-        this.render(true);
       } else {
         // Same grid - update view and animate movements
         const viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
@@ -924,6 +969,147 @@ class IsometricDemo {
     };
 
     this.animationFrameId = requestAnimationFrame(animate);
+  }
+
+  /**
+   * Animate camera transition between two view paths.
+   */
+  private animateCameraTransition(startViewPath: ViewPath, endViewPath: ViewPath): void {
+    // Calculate camera parameters for both views
+    const startCameraParams = this.calculateCameraForView(startViewPath);
+    const endCameraParams = this.calculateCameraForView(endViewPath);
+
+    if (!startCameraParams || !endCameraParams) {
+      console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
+      this.currentScene = null;
+      this.currentCellTree = null;
+      this.currentRenderer = null;
+      this.render(true);
+      return;
+    }
+
+    // Stop any existing animations
+    this.animationSystem.stop();
+    this.cameraAnimationSystem.stop();
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Rebuild scene with END view (target)
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+
+    // Set up the scene at the target view
+    const playerPos = this.playerPosition;
+    if (!playerPos) return;
+
+    const gridId = endViewPath[0];
+    const grid = getGrid(this.store, gridId);
+    if (!grid) return;
+
+    // Build scene at target view
+    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, RENDER_THRESHOLD);
+    const result = buildIsometricScene(this.currentCellTree, {
+      width: this.renderWidth,
+      height: this.renderHeight,
+      highlightPosition: playerPos,
+      store: this.store,
+      tagFn: this.tagFn
+    });
+    this.currentScene = result.scene;
+
+    // Create END camera
+    const endCamera = createParagridCamera(
+      endCameraParams.position,
+      endCameraParams.viewWidth,
+      this.renderWidth,
+      this.renderHeight
+    );
+    this.currentCamera = endCamera;
+
+    // Calculate center and rightEdge for both start and end cameras
+    const startCenter = startCameraParams.position;
+    const startRightEdge: [number, number, number] = [
+      startCenter[0] + startCameraParams.viewWidth / 2,
+      startCenter[1],
+      startCenter[2]
+    ];
+    const endCenter = endCameraParams.position;
+    const endRightEdge: [number, number, number] = [
+      endCenter[0] + endCameraParams.viewWidth / 2,
+      endCenter[1],
+      endCenter[2]
+    ];
+
+    // Create camera animation with channels
+    const cameraClip: CameraAnimationClip = {
+      id: 'camera-transition',
+      duration: CAMERA_ANIMATION_DURATION,
+      loop: false,
+      channels: [
+        {
+          target: 'center',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startCenter, easing: Easing.easeInOutQuad },
+            { time: CAMERA_ANIMATION_DURATION, value: endCenter }
+          ]
+        },
+        {
+          target: 'rightEdge',
+          interpolation: 'linear',
+          keyFrames: [
+            { time: 0, value: startRightEdge, easing: Easing.easeInOutQuad },
+            { time: CAMERA_ANIMATION_DURATION, value: endRightEdge }
+          ]
+        }
+      ]
+    };
+
+    // Create renderer if needed
+    if (!this.currentRenderer) {
+      this.canvas.innerHTML = '';
+      this.currentRenderer = new Renderer({
+        target: this.canvas,
+        backend: 'svg',
+        width: this.renderWidth,
+        height: this.renderHeight
+      });
+    }
+
+    // Add and play the camera animation
+    this.cameraAnimationSystem.addClip(cameraClip);
+    this.cameraAnimationSystem.play('camera-transition');
+
+    // Set animation flag and start loop
+    this.isAnimating = true;
+    this.startAnimationLoop();
+  }
+
+  /**
+   * Calculate camera parameters for a given view path.
+   * Returns camera position and viewWidth.
+   */
+  private calculateCameraForView(viewPath: ViewPath): { position: [number, number, number]; viewWidth: number } | null {
+    const gridId = viewPath[0];
+    const grid = getGrid(this.store, gridId);
+    if (!grid) return null;
+
+    const scaleResult = getScaleAndOffset(this.store, viewPath);
+    if (!scaleResult) return null;
+
+    // Convert to world coordinates
+    const refX = scaleResult.centerX - grid.cols / 2;
+    const refZ = scaleResult.centerY - grid.rows / 2;
+    const diagonal = Math.sqrt(scaleResult.width ** 2 + scaleResult.height ** 2);
+    const viewWidth = diagonal * this.zoomMultiplier;
+
+    return {
+      position: [refX, 0, refZ],
+      viewWidth
+    };
   }
 
   /**

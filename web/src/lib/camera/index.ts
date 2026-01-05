@@ -25,3 +25,7 @@ export {
 export {
   ParentViewCameraController,
 } from './parent-view-camera.js';
+
+export {
+  AnimatedParentViewCameraController,
+} from './animated-parent-view-camera.js';
