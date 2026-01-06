@@ -236,14 +236,16 @@ def parse_grids(definitions: dict[str, str]) -> GridStore:
 class EmptyNode:
     """Analyzed explicitly empty cell."""
 
-    pass
+    focus_depth: int | None = None
+    focus_offset: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
 class CutoffNode:
     """Cell below recursion threshold (had more content)."""
 
-    pass
+    focus_depth: int | None = None
+    focus_offset: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -252,6 +254,8 @@ class ConcreteNode:
 
     id: str
     grid_id: str  # Which grid this cell belongs to
+    focus_depth: int | None = None
+    focus_offset: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +264,8 @@ class NestedNode:
 
     grid_id: str
     children: tuple[tuple[CellNode, ...], ...]
+    focus_depth: int | None = None
+    focus_offset: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -270,6 +276,8 @@ class RefNode:
     ref_target: str  # The grid being referenced
     is_primary: bool  # Whether this is the primary reference
     content: "CellNode"  # The analyzed content of the referenced grid
+    focus_depth: int | None = None
+    focus_offset: tuple[int, int] | None = None
 
 
 CellNode = EmptyNode | CutoffNode | ConcreteNode | NestedNode | RefNode
@@ -287,6 +295,9 @@ def analyze(
     height: Fraction,
     threshold: Fraction = Fraction(1, 10),
     primary_refs: set[str] | None = None,
+    focus_path: list[str] | None = None,
+    current_path: list[str] | None = None,
+    parent_ref_pos: tuple[int, int] | None = None,
 ) -> CellNode:
     """
     Build a CellTree by DFS traversal with rational dimensions.
@@ -299,26 +310,90 @@ def analyze(
         height: The height to render this grid at
         threshold: Minimum dimension before cutoff
         primary_refs: Set to track which grids have been referenced (for primary detection)
+        focus_path: Optional path to the focused grid (list of grid IDs)
+        current_path: Current path during traversal (list of grid IDs)
+        parent_ref_pos: Position of the ref cell in the parent grid (for depth -1 offset)
     """
     if primary_refs is None:
         primary_refs = set()
 
+    # Initialize current path if not provided
+    if current_path is None:
+        current_path = [grid_id]
+    else:
+        current_path = current_path + [grid_id]
+
+    # Helper function to find ref position for depth -1 offset computation
+    def find_focus_ref_position() -> tuple[int, int] | None:
+        """Find the position of the ref cell that leads toward the focused grid."""
+        if focus_path is None or current_path is None:
+            return None
+        if len(current_path) >= len(focus_path):
+            return None
+        if focus_path[: len(current_path)] != current_path:
+            return None
+        # We're an ancestor - find the ref to the next grid in focus_path
+        next_grid_id = focus_path[len(current_path)]
+        for r, row in enumerate(grid.cells):
+            for c, cell in enumerate(row):
+                if isinstance(cell, Ref) and cell.grid_id == next_grid_id:
+                    return (c, r)
+        return None
+
+    # Helper function to compute focus metadata
+    def compute_focus_metadata(
+        row: int, col: int
+    ) -> tuple[int | None, tuple[int, int] | None]:
+        """Compute focus_depth and focus_offset for a cell at (row, col)."""
+        if focus_path is None:
+            return None, None
+
+        # Compare current_path to focus_path
+        if current_path == focus_path:
+            # Depth 0: inside focused grid
+            return 0, (col, row)
+        elif len(current_path) < len(focus_path):
+            # Check if current_path is a prefix of focus_path
+            if focus_path[: len(current_path)] == current_path:
+                # We're an ancestor (negative depth)
+                depth = -(len(focus_path) - len(current_path))
+                if depth == -1:
+                    # Depth -1: offset relative to ref position in current grid
+                    ref_pos = find_focus_ref_position()
+                    if ref_pos is not None:
+                        ref_col, ref_row = ref_pos
+                        return depth, (col - ref_col, row - ref_row)
+                return depth, None
+        elif len(current_path) > len(focus_path):
+            # Check if focus_path is a prefix of current_path
+            if current_path[: len(focus_path)] == focus_path:
+                # We're a descendant (positive depth)
+                depth = len(current_path) - len(focus_path)
+                return depth, None
+
+        # Paths diverged
+        return None, None
+
     if width < threshold or height < threshold:
-        return CutoffNode()
+        depth, offset = compute_focus_metadata(0, 0)
+        return CutoffNode(depth, offset)
 
     grid = store[grid_id]
     cell_width = width / grid.cols
     cell_height = height / grid.rows
 
     rows: list[tuple[CellNode, ...]] = []
-    for row in grid.cells:
+    for r, row in enumerate(grid.cells):
         cols: list[CellNode] = []
-        for cell in row:
+        for c, cell in enumerate(row):
+            # Compute focus metadata for this cell
+            depth, offset = compute_focus_metadata(r, c)
+
             match cell:
                 case Empty():
-                    cols.append(EmptyNode())
+                    cols.append(EmptyNode(depth, offset))
                 case Concrete(id=cell_id):
-                    cols.append(ConcreteNode(cell_id, grid_id))
+                    cols.append(ConcreteNode(cell_id, grid_id, depth, offset))
                 case Ref(grid_id=ref_id, is_primary=explicit_primary):
                     # Check if this is the primary reference
                     if explicit_primary is True:
@@ -335,15 +410,47 @@ def analyze(
                             primary_refs.add(ref_id)
 
                     # Analyze the referenced grid
-                    content = analyze(store, ref_id, cell_width, cell_height, threshold, primary_refs)
+                    content = analyze(
+                        store,
+                        ref_id,
+                        cell_width,
+                        cell_height,
+                        threshold,
+                        primary_refs,
+                        focus_path,
+                        current_path,
+                        (c, r),  # Pass ref position for depth -1 offset
+                    )
 
                     # Wrap in RefNode
-                    cols.append(RefNode(grid_id, ref_id, is_primary, content))
+                    cols.append(RefNode(grid_id, ref_id, is_primary, content, depth, offset))
                 case _:
                     raise ValueError(f"Unknown cell type: {cell}")
         rows.append(tuple(cols))
 
-    return NestedNode(grid_id, tuple(rows))
+    # Compute focus metadata for the NestedNode itself
+    # NestedNode represents the entire grid
+    if focus_path is None:
+        depth = None
+        offset = None
+    elif current_path == focus_path:
+        # Depth 0: the focused grid itself gets origin offset
+        depth = 0
+        offset = (0, 0)
+    elif len(current_path) < len(focus_path) and focus_path[: len(current_path)] == current_path:
+        # Ancestor: negative depth, no offset
+        depth = -(len(focus_path) - len(current_path))
+        offset = None
+    elif len(current_path) > len(focus_path) and current_path[: len(focus_path)] == focus_path:
+        # Descendant: positive depth, no offset
+        depth = len(current_path) - len(focus_path)
+        offset = None
+    else:
+        # Paths diverged
+        depth = None
+        offset = None
+
+    return NestedNode(grid_id, tuple(rows), depth, offset)
 
 
 # =============================================================================

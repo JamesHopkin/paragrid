@@ -1922,3 +1922,211 @@ class TestPull:
         # Rotation: [Empty, 0, 1, ..., 9] -> [0, 1, 2, ..., 9, Empty]
         # First element (0) moves to first, maintaining order
         assert result["main"].cells[0][0] == Concrete("0")
+
+
+# =============================================================================
+# Test Focus Metadata
+# =============================================================================
+
+
+class TestFocusMetadata:
+    """Tests for focus metadata (focus_depth and focus_offset)."""
+
+    def test_no_focus_path(self) -> None:
+        """Test that without focus_path, all metadata is None."""
+        store = parse_grids({"main": "1 2|3 4"})
+        tree = analyze(store, "main", Fraction(10), Fraction(10))
+
+        # Should be a NestedNode with no focus metadata
+        assert isinstance(tree, NestedNode)
+        assert tree.focus_depth is None
+        assert tree.focus_offset is None
+
+        # Check children have no metadata
+        for row in tree.children:
+            for node in row:
+                assert node.focus_depth is None
+                assert node.focus_offset is None
+
+    def test_depth_zero_focused_grid(self) -> None:
+        """Test depth 0 for cells inside the focused grid."""
+        store = parse_grids({"main": "1 2|3 4"})
+        tree = analyze(store, "main", Fraction(10), Fraction(10), focus_path=["main"])
+
+        assert isinstance(tree, NestedNode)
+        assert tree.focus_depth == 0
+        assert tree.focus_offset == (0, 0)
+
+        # Check all cells have depth 0 and correct offsets
+        # Row 0
+        assert tree.children[0][0].focus_depth == 0
+        assert tree.children[0][0].focus_offset == (0, 0)
+        assert tree.children[0][1].focus_depth == 0
+        assert tree.children[0][1].focus_offset == (1, 0)
+        # Row 1
+        assert tree.children[1][0].focus_depth == 0
+        assert tree.children[1][0].focus_offset == (0, 1)
+        assert tree.children[1][1].focus_depth == 0
+        assert tree.children[1][1].focus_offset == (1, 1)
+
+    def test_depth_negative_one_parent(self) -> None:
+        """Test depth -1 for the parent grid of the focused grid."""
+        store = parse_grids({"main": "A 2|3 4", "A": "7 8"})
+        # Focus on grid "A"
+        tree = analyze(store, "main", Fraction(10), Fraction(10), focus_path=["main", "A"])
+
+        assert isinstance(tree, NestedNode)
+        # "main" is the parent of "A", so depth should be -1
+        assert tree.focus_depth == -1
+        assert tree.focus_offset is None
+
+        # The ref at (0,0) should have depth -1 with offset (0,0)
+        ref_node = tree.children[0][0]
+        assert isinstance(ref_node, RefNode)
+        assert ref_node.focus_depth == -1
+        assert ref_node.focus_offset == (0, 0)
+
+        # The content of the ref (grid "A") should have depth 0
+        assert isinstance(ref_node.content, NestedNode)
+        assert ref_node.content.focus_depth == 0
+        assert ref_node.content.focus_offset == (0, 0)
+
+        # Cells inside "A" should have depth 0 with offsets
+        a_cells = ref_node.content.children[0]
+        assert a_cells[0].focus_depth == 0
+        assert a_cells[0].focus_offset == (0, 0)
+        assert a_cells[1].focus_depth == 0
+        assert a_cells[1].focus_offset == (1, 0)
+
+        # Other cells in "main" should have depth -1 with offsets relative to ref at (0,0)
+        # Cell at (1,0) in "main"
+        assert tree.children[0][1].focus_depth == -1
+        assert tree.children[0][1].focus_offset == (1, 0)
+        # Cell at (0,1) in "main"
+        assert tree.children[1][0].focus_depth == -1
+        assert tree.children[1][0].focus_offset == (0, 1)
+        # Cell at (1,1) in "main"
+        assert tree.children[1][1].focus_depth == -1
+        assert tree.children[1][1].focus_offset == (1, 1)
+
+    def test_depth_positive_descendant(self) -> None:
+        """Test positive depth for descendant grids."""
+        store = parse_grids({"main": "A 2", "A": "B 3", "B": "4 5"})
+        # Focus on grid "main"
+        tree = analyze(store, "main", Fraction(10), Fraction(10), focus_path=["main"])
+
+        assert isinstance(tree, NestedNode)
+        assert tree.focus_depth == 0
+
+        # Grid "A" is a child, so depth +1
+        ref_a = tree.children[0][0]
+        assert isinstance(ref_a, RefNode)
+        assert ref_a.focus_depth == 0
+        assert ref_a.focus_offset == (0, 0)
+
+        a_content = ref_a.content
+        assert isinstance(a_content, NestedNode)
+        assert a_content.focus_depth == 1
+        assert a_content.focus_offset is None
+
+        # Grid "B" is a grandchild, so depth +2
+        ref_b = a_content.children[0][0]
+        assert isinstance(ref_b, RefNode)
+        assert ref_b.focus_depth == 1
+        assert ref_b.focus_offset is None
+
+        b_content = ref_b.content
+        assert isinstance(b_content, NestedNode)
+        assert b_content.focus_depth == 2
+        assert b_content.focus_offset is None
+
+    def test_multiple_depth_levels(self) -> None:
+        """Test focus at middle level of deep hierarchy."""
+        store = parse_grids({
+            "root": "A",
+            "A": "B",
+            "B": "C",
+            "C": "1 2"
+        })
+        # Focus on grid "B"
+        tree = analyze(
+            store, "root", Fraction(10), Fraction(10),
+            focus_path=["root", "A", "B"]
+        )
+
+        # "root" is depth -2
+        assert isinstance(tree, NestedNode)
+        assert tree.focus_depth == -2
+        assert tree.focus_offset is None
+
+        # "A" is depth -1
+        ref_a = tree.children[0][0]
+        assert isinstance(ref_a, RefNode)
+        a_content = ref_a.content
+        assert isinstance(a_content, NestedNode)
+        assert a_content.focus_depth == -1
+        assert a_content.focus_offset is None
+
+        # "B" is depth 0
+        ref_b = a_content.children[0][0]
+        assert isinstance(ref_b, RefNode)
+        b_content = ref_b.content
+        assert isinstance(b_content, NestedNode)
+        assert b_content.focus_depth == 0
+        assert b_content.focus_offset == (0, 0)
+
+        # "C" is depth +1
+        ref_c = b_content.children[0][0]
+        assert isinstance(ref_c, RefNode)
+        c_content = ref_c.content
+        assert isinstance(c_content, NestedNode)
+        assert c_content.focus_depth == 1
+        assert c_content.focus_offset is None
+
+    def test_path_divergence(self) -> None:
+        """Test that diverging paths result in None metadata."""
+        store = parse_grids({
+            "main": "A B",
+            "A": "1 2",
+            "B": "3 4"
+        })
+        # Focus on grid "A"
+        tree = analyze(
+            store, "main", Fraction(10), Fraction(10),
+            focus_path=["main", "A"]
+        )
+
+        assert isinstance(tree, NestedNode)
+        # "main" is depth -1 (parent of focus)
+        assert tree.focus_depth == -1
+
+        # Grid "A" should have depth 0
+        ref_a = tree.children[0][0]
+        assert isinstance(ref_a, RefNode)
+        a_content = ref_a.content
+        assert isinstance(a_content, NestedNode)
+        assert a_content.focus_depth == 0
+
+        # Grid "B" is on a different branch - should have None
+        ref_b = tree.children[0][1]
+        assert isinstance(ref_b, RefNode)
+        b_content = ref_b.content
+        assert isinstance(b_content, NestedNode)
+        # Path ["main", "B"] diverges from ["main", "A"]
+        assert b_content.focus_depth is None
+        assert b_content.focus_offset is None
+
+    def test_cutoff_with_focus(self) -> None:
+        """Test that CutoffNode receives focus metadata."""
+        store = parse_grids({"main": "A", "A": "1 2"})
+        # Use a large threshold to force cutoff
+        tree = analyze(
+            store, "main", Fraction(1), Fraction(1),
+            threshold=Fraction(5),
+            focus_path=["main"]
+        )
+
+        # Should cutoff at main level since dimensions are below threshold
+        assert isinstance(tree, CutoffNode)
+        assert tree.focus_depth == 0
+        assert tree.focus_offset == (0, 0)
