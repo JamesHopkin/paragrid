@@ -24,12 +24,21 @@ export interface Movement {
   /** Whether this movement crosses grid boundaries (enter/exit transition) */
   isEnterExit: boolean;
   /**
-   * Scale ratio for enter/exit transitions (oldCellSize / newCellSize).
+   * Visual scale ratio for the scale animation (oldCellSize / newCellSize).
+   * Represents the visual size change the object undergoes during enter/exit.
    * Only present when isEnterExit is true.
-   * - Value > 1: moving to smaller cells (zoom in, start large)
-   * - Value < 1: moving to larger cells (zoom out, start small)
+   * - Value > 1: moving to smaller cells (object shrinks visually)
+   * - Value < 1: moving to larger cells (object grows visually)
    */
-  scaleRatio?: number;
+  visualScaleRatio?: number;
+  /**
+   * Parent scale compensation for translation offset (rootCellSize / destCellSize).
+   * Used to compensate for cumulative parent template scaling in the scene hierarchy.
+   * The destination object is nested inside scaled templates, so animation offsets
+   * must be scaled up by this amount to achieve the correct visual movement.
+   * Only present when isEnterExit is true.
+   */
+  parentScaleCompensation?: number;
 }
 
 /**
@@ -107,39 +116,65 @@ export function chainToMovements(
                         nextEntry.transition === 'enter' ||
                         nextEntry.transition === 'exit';
 
-    // Get view paths for the old and new positions using the hierarchy
-    const oldViewPath = getViewPathForGrid(oldCellPos.gridId);
-    const newViewPath = getViewPathForGrid(newCellPos.gridId);
+    let oldPos: [number, number, number];
+    let newPos: [number, number, number];
+    let oldViewPath: string[] | null = null;
+    let newViewPath: string[] | null = null;
 
-    if (!oldViewPath || !newViewPath) {
-      console.warn(`  [WARN] Skipping animation for ${cellId}: could not determine view paths`);
-      console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
-      continue;
-    }
-
-    // Calculate world positions using the hierarchy-determined view paths
-    const oldWorldPos = getCellWorldPosition(store, oldViewPath, oldCellPos);
-    const newWorldPos = getCellWorldPosition(store, newViewPath, newCellPos);
-
-    if (!oldWorldPos || !newWorldPos) {
-      console.warn(`  [WARN] Skipping animation for ${cellId}: could not calculate world positions`);
-      console.warn(`    Old path: ${oldViewPath.join(' → ')}, New path: ${newViewPath.join(' → ')}`);
-      console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
-      continue;
-    }
-
-    const oldPos: [number, number, number] = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
-    const newPos: [number, number, number] = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
-
-    // Calculate scale ratio for enter/exit movements
-    let scaleRatio: number | undefined;
     if (isEnterExit) {
-      const ratio = getRelativeScale(store, oldViewPath, newViewPath);
-      if (ratio !== null) {
-        scaleRatio = ratio;
-        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, scale: ${scaleRatio.toFixed(3)}x, transition: ${nextEntry.transition})`);
+      // For enter/exit movements, use world coordinates
+      oldViewPath = getViewPathForGrid(oldCellPos.gridId);
+      newViewPath = getViewPathForGrid(newCellPos.gridId);
+
+      if (!oldViewPath || !newViewPath) {
+        console.warn(`  [WARN] Skipping animation for ${cellId}: could not determine view paths`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+        continue;
+      }
+
+      // Calculate world positions using the hierarchy-determined view paths
+      const oldWorldPos = getCellWorldPosition(store, oldViewPath, oldCellPos);
+      const newWorldPos = getCellWorldPosition(store, newViewPath, newCellPos);
+
+      if (!oldWorldPos || !newWorldPos) {
+        console.warn(`  [WARN] Skipping animation for ${cellId}: could not calculate world positions`);
+        console.warn(`    Old path: ${oldViewPath.join(' → ')}, New path: ${newViewPath.join(' → ')}`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+        continue;
+      }
+
+      oldPos = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
+      newPos = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
+    } else {
+      // For in-grid movements, use grid-local coordinates
+      // Cell centers are at (col + 0.5, row + 0.5) in grid-local space
+      // where each cell is 1x1 units
+      oldPos = [oldCellPos.col + 0.5, 0, oldCellPos.row + 0.5];
+      newPos = [newCellPos.col + 0.5, 0, newCellPos.row + 0.5];
+    }
+
+    // Calculate scale values for enter/exit movements
+    let visualScaleRatio: number | undefined;
+    let parentScaleCompensation: number | undefined;
+
+    if (isEnterExit) {
+      // Visual scale for the scale animation (old -> new)
+      const visualScale = getRelativeScale(store, oldViewPath, newViewPath);
+      if (visualScale !== null) {
+        visualScaleRatio = visualScale;
+      }
+
+      // Parent scale compensation for translation offset (root -> new)
+      const rootViewPath = [newViewPath[0]]; // Just the root grid
+      const parentCompensation = getRelativeScale(store, rootViewPath, newViewPath);
+      if (parentCompensation !== null) {
+        parentScaleCompensation = parentCompensation;
+      }
+
+      if (visualScaleRatio !== undefined && parentScaleCompensation !== undefined) {
+        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, visualScale: ${visualScaleRatio.toFixed(3)}x, parentCompensation: ${parentScaleCompensation.toFixed(3)}x, transition: ${nextEntry.transition})`);
       } else {
-        console.warn(`  ${cellId}: Could not calculate scale ratio for enter/exit transition`);
+        console.warn(`  ${cellId}: Could not calculate scale values for enter/exit transition`);
         console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, no scale, transition: ${nextEntry.transition})`);
       }
     } else {
@@ -151,7 +186,8 @@ export function chainToMovements(
       oldPos,
       newPos,
       isEnterExit,
-      scaleRatio
+      visualScaleRatio,
+      parentScaleCompensation
     });
   }
 
