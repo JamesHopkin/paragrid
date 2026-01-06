@@ -499,12 +499,9 @@ class IsometricDemo {
         const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
 
         // Handle camera and object animation
-        if (viewUpdate.animationStartView && oldViewPath && movements.length > 0) {
-          // Animate both camera and objects together
-          this.createEnterExitAnimation(movements, viewUpdate.animationStartView, viewUpdate.targetView);
-        } else if (viewUpdate.animationStartView && oldViewPath) {
-          // Only camera animation (no object movements)
-          this.animateCameraTransition(viewUpdate.animationStartView, viewUpdate.targetView);
+        if (viewUpdate.animationStartView && oldViewPath) {
+          // Animate camera with optional object movements
+          this.createAnimationWithCamera(movements, viewUpdate.animationStartView, viewUpdate.targetView);
         } else {
           // No animation - rebuild immediately
           this.animator.stop();
@@ -680,11 +677,11 @@ class IsometricDemo {
   }
 
   /**
-   * Create combined animation for enter/exit transitions.
+   * Create animation with camera transition and optional object movements.
    * Animates both the camera (zoom) and objects (position) simultaneously.
-   * Only applies scale animation to objects that are actually entering/exiting.
+   * Pass empty movements array for camera-only animation.
    */
-  private createEnterExitAnimation(
+  private createAnimationWithCamera(
     movements: Movement[],
     startViewPath: ViewPath,
     endViewPath: ViewPath
@@ -758,79 +755,6 @@ class IsometricDemo {
     this.startAnimationLoop();
   }
 
-  /**
-   * Animate camera transition between two view paths (camera-only, no object movements).
-   */
-  private animateCameraTransition(startViewPath: ViewPath, endViewPath: ViewPath): void {
-    // Calculate camera parameters for both views
-    const startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
-    const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
-
-    if (!startCameraParams || !endCameraParams) {
-      console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
-      this.currentScene = null;
-      this.currentCellTree = null;
-      this.currentRenderer = null;
-      this.render(true);
-      return;
-    }
-
-    // Stop any existing animations
-    this.animator.stop();
-
-    // Rebuild scene with END view (target)
-    this.currentScene = null;
-    this.currentCellTree = null;
-    this.currentRenderer = null;
-
-    // Set up the scene at the target view
-    const playerPos = this.playerPosition;
-    if (!playerPos) return;
-
-    const gridId = endViewPath[0];
-    const grid = getGrid(this.store, gridId);
-    if (!grid) return;
-
-    // Build scene at target view
-    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, RENDER_THRESHOLD);
-    const result = buildIsometricScene(this.currentCellTree, {
-      width: this.renderWidth,
-      height: this.renderHeight,
-      highlightPosition: playerPos,
-      store: this.store,
-      tagFn: this.tagFn
-    });
-    this.currentScene = result.scene;
-
-    // Create END camera
-    const endCamera = createParagridCamera(
-      endCameraParams.position,
-      endCameraParams.viewWidth,
-      this.renderWidth,
-      this.renderHeight
-    );
-    this.currentCamera = endCamera;
-
-    // Create renderer if needed
-    if (!this.currentRenderer) {
-      this.canvas.innerHTML = '';
-      this.currentRenderer = new Renderer({
-        target: this.canvas,
-        backend: 'svg',
-        width: this.renderWidth,
-        height: this.renderHeight
-      });
-    }
-
-    // Create and play camera-only animation using unified animator method (no object movements)
-    this.animator.animate([], {
-      start: startCameraParams,
-      end: endCameraParams
-    });
-
-    // Start animation loop
-    this.startAnimationLoop();
-  }
 
   /**
    * Rebuild scene data (analyze + build scene) without rendering.
