@@ -17,9 +17,9 @@ import { buildViewPath } from './parent-view-camera.js';
 
 
 // may need to generalise but handle this first
-function isSelfReference(fromPath: ViewPath, toPath: ViewPath) {
+function isFromSelfReference(fromPath: ViewPath, toPath: ViewPath) {
   return fromPath.length == 2 && toPath.length == 2 &&
-    [fromPath[1], toPath[0], toPath[1]].every(s => s === fromPath[0]);
+    fromPath[0] === fromPath[1] && fromPath[0] ===  toPath[0];
 }
 
 /**
@@ -48,8 +48,8 @@ export class AnimatedParentViewCameraController implements CameraController {
     const fromViewPath = buildViewPath(this.helper, fromGridId);
 
     return {
-      targetView: isSelfReference(fromViewPath, toViewPath)
-        ? [toViewPath[0], ...toViewPath] : toViewPath,
+      targetView: isFromSelfReference(fromViewPath, toViewPath)
+        ? [fromViewPath[0], ...toViewPath] : toViewPath,
       animationStartView: buildViewPath(this.helper, fromGridId),
     };
   }
@@ -64,7 +64,7 @@ export class AnimatedParentViewCameraController implements CameraController {
 
     return {
       targetView: toViewPath,
-      animationStartView: isSelfReference(fromViewPath, toViewPath)
+      animationStartView: isFromSelfReference(toViewPath, fromViewPath)
         ? [fromViewPath[0], ...fromViewPath] : fromViewPath,
     };
   }

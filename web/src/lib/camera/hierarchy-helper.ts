@@ -198,7 +198,7 @@ export class HierarchyHelper {
     while (true) {
       // Cycle detection
       if (visited.has(currentId)) {
-        return null; // Cycle detected
+        return chain; // Cycle detected
       }
 
       visited.add(currentId);
@@ -223,7 +223,12 @@ export class HierarchyHelper {
    * for understanding which grids are reachable via exits, which can inform
    * camera decisions about what to render.
    *
-   * The function uses position (0, 0) as a representative point for exit simulation.
+   * Uses edge-appropriate positions for each direction:
+   * - North: top edge (row 0, middle column)
+   * - South: bottom edge (last row, middle column)
+   * - East: right edge (middle row, last column)
+   * - West: left edge (middle row, column 0)
+   *
    * Returns null for directions where exit is blocked or fails.
    *
    * @param gridId - The grid to check exits from
@@ -240,13 +245,26 @@ export class HierarchyHelper {
    */
   getExitDestinations(gridId: string): Map<Direction, string | null> {
     const destinations = new Map<Direction, string | null>();
+    const grid = getGrid(this.store, gridId);
 
-    // Use position (0, 0) as a representative point
-    const position = new CellPosition(gridId, 0, 0);
+    if (!grid) {
+      // Grid doesn't exist, return empty map
+      return destinations;
+    }
 
-    // Simulate exits in all four cardinal directions
-    const directions = [Direction.N, Direction.S, Direction.E, Direction.W];
-    for (const direction of directions) {
+    const middleRow = Math.floor(grid.rows / 2);
+    const middleCol = Math.floor(grid.cols / 2);
+
+    // Use edge-appropriate positions for each direction
+    const positions = new Map<Direction, CellPosition>([
+      [Direction.N, new CellPosition(gridId, 0, middleCol)],           // Top edge
+      [Direction.S, new CellPosition(gridId, grid.rows - 1, middleCol)], // Bottom edge
+      [Direction.E, new CellPosition(gridId, middleRow, grid.cols - 1)], // Right edge
+      [Direction.W, new CellPosition(gridId, middleRow, 0)]              // Left edge
+    ]);
+
+    // Simulate exits from appropriate edge positions
+    for (const [direction, position] of positions) {
       const destination = simulateExitDestination(this.store, position, direction);
       destinations.set(direction, destination);
     }
