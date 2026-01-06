@@ -132,20 +132,39 @@ export class ParagridAnimator {
 
       for (const movement of movements) {
         // Calculate offset from new position to old position (in world space)
-        const relativeOffset: [number, number, number] = [
+        let relativeOffset: [number, number, number] = [
           movement.oldPos[0] - movement.newPos[0],
           movement.oldPos[1] - movement.newPos[1],
           movement.oldPos[2] - movement.newPos[2]
         ];
 
-        // Determine if this movement needs scale animation
-        // Scale animation requires: enter/exit + valid scale ratio
-        const needsScale = movement.isEnterExit && movement.scaleRatio !== undefined;
+        // Determine if this movement has enter/exit animations
+        const hasVisualScale = movement.isEnterExit && movement.visualScaleRatio !== undefined;
+        const hasParentCompensation = movement.isEnterExit && movement.parentScaleCompensation !== undefined;
 
-        if (needsScale) {
-          console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0] (with scale ${movement.scaleRatio!.toFixed(3)}x)`);
-        } else {
-          console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]`);
+        // CRITICAL: Compensate for parent template scaling
+        // When an object is inside a scaled template (e.g., grid 'b' inside 'a' inside 'main'),
+        // any animation offsets are scaled by all parent transforms. We use parentScaleCompensation
+        // (which is rootCellSize / destCellSize) to counteract this cumulative scaling.
+        // Example: parentScaleCompensation=9.0 means cumulative parent scale=1/9, so offset needs to be 9× larger.
+        if (hasParentCompensation) {
+          relativeOffset = [
+            relativeOffset[0] * movement.parentScaleCompensation!,
+            relativeOffset[1] * movement.parentScaleCompensation!,
+            relativeOffset[2] * movement.parentScaleCompensation!
+          ];
+        }
+
+        console.log(`  Animation setup for ${movement.cellId}:`);
+        console.log(`    oldPos (world): [${movement.oldPos[0].toFixed(3)}, ${movement.oldPos[1].toFixed(3)}, ${movement.oldPos[2].toFixed(3)}]`);
+        console.log(`    newPos (world): [${movement.newPos[0].toFixed(3)}, ${movement.newPos[1].toFixed(3)}, ${movement.newPos[2].toFixed(3)}]`);
+        const offsetLabel = hasParentCompensation ? 'relativeOffset (compensated)' : 'relativeOffset';
+        console.log(`    ${offsetLabel}: [${relativeOffset[0].toFixed(3)}, ${relativeOffset[1].toFixed(3)}, ${relativeOffset[2].toFixed(3)}]`);
+        if (hasVisualScale) {
+          console.log(`    visualScaleRatio: ${movement.visualScaleRatio!.toFixed(3)}x`);
+        }
+        if (hasParentCompensation) {
+          console.log(`    parentScaleCompensation: ${movement.parentScaleCompensation!.toFixed(3)}x`);
         }
 
         // Build channels: always position, optionally scale
@@ -165,11 +184,12 @@ export class ParagridAnimator {
         ];
 
         // Add scale animation for objects crossing grid boundaries
-        if (needsScale) {
+        // Uses visualScaleRatio (oldCellSize / newCellSize) for the visual size change
+        if (hasVisualScale) {
           const startScale: [number, number, number] = [
-            movement.scaleRatio!,
-            movement.scaleRatio!,
-            movement.scaleRatio!
+            movement.visualScaleRatio!,
+            movement.visualScaleRatio!,
+            movement.visualScaleRatio!
           ];
           const endScale: [number, number, number] = [1, 1, 1];
 
@@ -208,66 +228,6 @@ export class ParagridAnimator {
     }
 
     return clipIds;
-  }
-
-  /**
-   * Create and play movement animations from an array of movements.
-   * Returns the clip ID.
-   *
-   * @param movements - Array of movement data (from chainToMovements)
-   * @returns Animation clip ID
-   */
-  animateMovements(movements: Movement[]): string {
-    const clipId = 'push-move';
-    const duration = this.config.movementDuration;
-
-    // Remove any existing movement animation
-    this.animationSystem.removeClip(clipId);
-
-    const animations: Array<{
-      nodeId: string;
-      channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: EasingFunction }>;
-      }>;
-    }> = [];
-
-    for (const movement of movements) {
-      // Calculate offset from new position to old position (in world space)
-      const relativeOffset: [number, number, number] = [
-        movement.oldPos[0] - movement.newPos[0],
-        movement.oldPos[1] - movement.newPos[1],
-        movement.oldPos[2] - movement.newPos[2]
-      ];
-      const targetPos: [number, number, number] = [0, 0, 0];
-
-      console.log(`  ${movement.cellId}: [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] -> [${targetPos}]`);
-
-      animations.push({
-        nodeId: movement.cellId,
-        channels: [{
-          target: 'position',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: relativeOffset, easing: this.config.movementEasing },
-            { time: duration, value: targetPos }
-          ]
-        }]
-      });
-    }
-
-    const clip: AnimationClip = {
-      id: clipId,
-      duration,
-      loop: false,
-      animations
-    };
-
-    this.animationSystem.addClip(clip);
-    this.animationSystem.play(clipId);
-
-    return clipId;
   }
 
   /**
@@ -323,104 +283,6 @@ export class ParagridAnimator {
     this.cameraAnimationSystem.play(clipId);
 
     return clipId;
-  }
-
-  /**
-   * Create and play combined enter/exit animation with both objects and camera.
-   * Objects crossing grid boundaries get scale animation, others only get position.
-   * Returns array of clip IDs [objectClipId, cameraClipId].
-   *
-   * @param movements - Array of movement data
-   * @param startParams - Starting camera parameters
-   * @param endParams - Ending camera parameters
-   * @returns Array of animation clip IDs [objects, camera]
-   */
-  animateEnterExit(movements: Movement[], startParams: CameraParams, endParams: CameraParams): [string, string] {
-    const objectClipId = 'enter-exit-move';
-    const cameraClipId = 'camera-transition';
-    const duration = this.config.cameraDuration; // Use camera duration for synchronized animation
-
-    // Remove any existing animations
-    this.animationSystem.removeClip('push-move');
-    this.animationSystem.removeClip(objectClipId);
-
-    // Calculate scale ratio for enter/exit objects
-    // When entering (zoom in): startViewWidth > endViewWidth, so scale > 1 (objects start larger)
-    // When exiting (zoom out): startViewWidth < endViewWidth, so scale < 1 (objects start smaller)
-    const scaleRatio = startParams.viewWidth / endParams.viewWidth;
-    const startScale: [number, number, number] = [scaleRatio, scaleRatio, scaleRatio];
-    const endScale: [number, number, number] = [1, 1, 1];
-
-    console.log(`  Scale animation: ${scaleRatio.toFixed(3)}x -> 1.0x`);
-
-    const animations: Array<{
-      nodeId: string;
-      channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: EasingFunction }>;
-      }>;
-    }> = [];
-
-    for (const movement of movements) {
-      // Calculate offset from new position to old position (in world space)
-      const relativeOffset: [number, number, number] = [
-        movement.oldPos[0] - movement.newPos[0],
-        movement.oldPos[1] - movement.newPos[1],
-        movement.oldPos[2] - movement.newPos[2]
-      ];
-
-      console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]${movement.isEnterExit ? ' (with scale)' : ''}`);
-
-      // Build channels: always position, optionally scale
-      const channels: Array<{
-        target: 'position' | 'rotation' | 'scale';
-        interpolation: 'linear';
-        keyFrames: Array<{ time: number; value: [number, number, number]; easing?: EasingFunction }>;
-      }> = [
-        {
-          target: 'position',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: relativeOffset, easing: this.config.cameraEasing },
-            { time: duration, value: [0, 0, 0] }
-          ]
-        }
-      ];
-
-      // Only add scale animation for objects that are actually entering/exiting
-      if (movement.isEnterExit) {
-        channels.push({
-          target: 'scale',
-          interpolation: 'linear',
-          keyFrames: [
-            { time: 0, value: startScale, easing: this.config.cameraEasing },
-            { time: duration, value: endScale }
-          ]
-        });
-      }
-
-      animations.push({
-        nodeId: movement.cellId,
-        channels
-      });
-    }
-
-    const objectClip: AnimationClip = {
-      id: objectClipId,
-      duration,
-      loop: false,
-      animations
-    };
-
-    // Add and play object animation
-    this.animationSystem.addClip(objectClip);
-    this.animationSystem.play(objectClipId);
-
-    // Add and play camera animation
-    this.animateCameraTransition(startParams, endParams);
-
-    return [objectClipId, cameraClipId];
   }
 
   /**
