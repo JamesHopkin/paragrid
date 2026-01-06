@@ -272,3 +272,57 @@ export function calculateCameraForView(
   };
 }
 
+/**
+ * Calculate the relative scale between cells in two grids.
+ *
+ * Returns the ratio: oldGridCellSize / newGridCellSize
+ * - If moving to a smaller grid (zooming in): ratio > 1 (e.g., 3.0 means old cells are 3x larger)
+ * - If moving to a larger grid (zooming out): ratio < 1 (e.g., 0.5 means old cells are half size)
+ *
+ * Both grids must share the same root in their view paths.
+ *
+ * @param store - Grid store
+ * @param oldViewPath - View path to the source grid
+ * @param newViewPath - View path to the destination grid
+ * @returns Scale ratio or null if paths are invalid or don't share a root
+ *
+ * @example
+ * ```typescript
+ * // If 'inner' cells are 1/3 size of 'main' cells:
+ * const ratio = getRelativeScale(store, ['main'], ['main', 'inner']);
+ * // ratio === 3.0 (main cells are 3x larger than inner cells)
+ * ```
+ */
+export function getRelativeScale(
+  store: GridStore,
+  oldViewPath: readonly string[],
+  newViewPath: readonly string[]
+): number | null {
+  if (oldViewPath.length === 0 || newViewPath.length === 0) return null;
+
+  // Grids must share the same root
+  if (oldViewPath[0] !== newViewPath[0]) return null;
+
+  const rootGridId = oldViewPath[0];
+  const oldGridId = oldViewPath[oldViewPath.length - 1];
+  const newGridId = newViewPath[newViewPath.length - 1];
+
+  // Get grids
+  const oldGrid = getGrid(store, oldGridId);
+  const newGrid = getGrid(store, newGridId);
+  if (!oldGrid || !newGrid) return null;
+
+  // Get scale and offset for both grids
+  const oldScale = getScaleAndOffset(store, oldViewPath);
+  const newScale = getScaleAndOffset(store, newViewPath);
+  if (!oldScale || !newScale) return null;
+
+  // Calculate cell sizes in root coordinates
+  // Cell width in root coordinates = grid width in root coords / number of columns
+  const oldCellWidth = oldScale.width / oldGrid.cols;
+  const newCellWidth = newScale.width / newGrid.cols;
+
+  // Return the ratio: how many times larger are old cells compared to new cells
+  return oldCellWidth / newCellWidth;
+}
+

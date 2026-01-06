@@ -662,8 +662,8 @@ class IsometricDemo {
     // Rebuild scene data
     this.rebuildSceneData();
 
-    // Create and play animation using animator
-    this.animator.animateMovements(movements);
+    // Create and play animation using animator (no camera transition)
+    this.animator.animate(movements);
 
     // Start the animation loop
     this.startAnimationLoop();
@@ -748,15 +748,18 @@ class IsometricDemo {
       });
     }
 
-    // Create and play combined enter/exit animation using animator
-    this.animator.animateEnterExit(movements, startCameraParams, endCameraParams);
+    // Create and play combined animation using unified animator method
+    this.animator.animate(movements, {
+      start: startCameraParams,
+      end: endCameraParams
+    });
 
     // Start animation loop
     this.startAnimationLoop();
   }
 
   /**
-   * Animate camera transition between two view paths.
+   * Animate camera transition between two view paths (camera-only, no object movements).
    */
   private animateCameraTransition(startViewPath: ViewPath, endViewPath: ViewPath): void {
     // Calculate camera parameters for both views
@@ -819,8 +822,11 @@ class IsometricDemo {
       });
     }
 
-    // Create and play camera animation using animator
-    this.animator.animateCameraTransition(startCameraParams, endCameraParams);
+    // Create and play camera-only animation using unified animator method (no object movements)
+    this.animator.animate([], {
+      start: startCameraParams,
+      end: endCameraParams
+    });
 
     // Start animation loop
     this.startAnimationLoop();
@@ -1112,34 +1118,7 @@ const GRIDS = {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  // Test 4x4 with self-reference and inner reference
-  // main:  [9, 9, 9, 9]
-  //        [9, 1, main, 9]    <- player and self-reference
-  //        [9, *inner, 2, 9]  <- inner reference
-  //        [9, 9, 9, 9]
-  //
-  // inner: [9, _, 9]          <- gap at top middle
-  //        [9, _, 9]
-  //        [9, 9, 9]
-  const gridDefinition = GRIDS.doubleExit;
-      // main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-      // inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
-
-      // main: '_ _ 9|_ a b|1 _ _',
-      // a: '_ b|_ _', b: '2 _|_ _'
- 
-     // main: "9 9 9|1 _ main|_ _ _"
-  
-// main: '9 9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ _ 9|9 _ *first _ _ _ third _ 9|9 _ _ _ _ _ _ _ 9|' +
-//                         '9 _ 1 _ second _ _ _ 9|9 _ _ _ _ _ _ _ 9|9 _ fourth _ _ _ ~first _ 9|' +
-//                         '9 _ _ _ _ _ _ _ 9|9 9 9 9 9 9 9 9 9',
-// first: '_ _ _|_ 2 _|_ _ _',
-// second: '_ _ _|_ 3 _|_ _ _',
-// third: '_ _ _|_ 4 _|_ _ _',
-// fourth: '_ _ _|_ 5 _|_ _ _'
-
-
-  const store = parseGrids(gridDefinition);
+  const store = parseGrids(GRIDS.doubleExit);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {

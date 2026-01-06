@@ -85,6 +85,132 @@ export class ParagridAnimator {
   }
 
   /**
+   * Unified animation method - creates animations for all movements and optional camera transition.
+   *
+   * This is the primary API for creating animations. It handles:
+   * - Position animations for ALL objects
+   * - Scale animations ONLY for objects with isEnterExit=true
+   * - Optional camera zoom/pan animation
+   *
+   * @param movements - Array of movement data (from chainToMovements)
+   * @param cameraTransition - Optional camera transition parameters
+   * @returns Array of clip IDs created [objectClipId?, cameraClipId?]
+   *
+   * @example
+   * ```typescript
+   * // Simple within-grid push (no camera change)
+   * animator.animate(movements);
+   *
+   * // Enter/exit transition (with camera zoom)
+   * animator.animate(movements, { start: startParams, end: endParams });
+   * ```
+   */
+  animate(
+    movements: Movement[],
+    cameraTransition?: { start: CameraParams; end: CameraParams }
+  ): string[] {
+    const clipIds: string[] = [];
+
+    // Create object animations if we have movements
+    if (movements.length > 0) {
+      const objectClipId = cameraTransition ? 'enter-exit-move' : 'push-move';
+      const duration = cameraTransition ? this.config.cameraDuration : this.config.movementDuration;
+      const easing = cameraTransition ? this.config.cameraEasing : this.config.movementEasing;
+
+      // Remove any existing movement animations
+      this.animationSystem.removeClip('push-move');
+      this.animationSystem.removeClip('enter-exit-move');
+
+      const animations: Array<{
+        nodeId: string;
+        channels: Array<{
+          target: 'position' | 'rotation' | 'scale';
+          interpolation: 'linear';
+          keyFrames: Array<{ time: number; value: [number, number, number]; easing?: EasingFunction }>;
+        }>;
+      }> = [];
+
+      for (const movement of movements) {
+        // Calculate offset from new position to old position (in world space)
+        const relativeOffset: [number, number, number] = [
+          movement.oldPos[0] - movement.newPos[0],
+          movement.oldPos[1] - movement.newPos[1],
+          movement.oldPos[2] - movement.newPos[2]
+        ];
+
+        // Determine if this movement needs scale animation
+        // Scale animation requires: enter/exit + valid scale ratio
+        const needsScale = movement.isEnterExit && movement.scaleRatio !== undefined;
+
+        if (needsScale) {
+          console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0] (with scale ${movement.scaleRatio!.toFixed(3)}x)`);
+        } else {
+          console.log(`  Animation: ${movement.cellId} from offset [${relativeOffset[0].toFixed(2)}, ${relativeOffset[2].toFixed(2)}] to [0, 0]`);
+        }
+
+        // Build channels: always position, optionally scale
+        const channels: Array<{
+          target: 'position' | 'rotation' | 'scale';
+          interpolation: 'linear';
+          keyFrames: Array<{ time: number; value: [number, number, number]; easing?: EasingFunction }>;
+        }> = [
+          {
+            target: 'position',
+            interpolation: 'linear',
+            keyFrames: [
+              { time: 0, value: relativeOffset, easing },
+              { time: duration, value: [0, 0, 0] }
+            ]
+          }
+        ];
+
+        // Add scale animation for objects crossing grid boundaries
+        if (needsScale) {
+          const startScale: [number, number, number] = [
+            movement.scaleRatio!,
+            movement.scaleRatio!,
+            movement.scaleRatio!
+          ];
+          const endScale: [number, number, number] = [1, 1, 1];
+
+          channels.push({
+            target: 'scale',
+            interpolation: 'linear',
+            keyFrames: [
+              { time: 0, value: startScale, easing },
+              { time: duration, value: endScale }
+            ]
+          });
+        }
+
+        animations.push({
+          nodeId: movement.cellId,
+          channels
+        });
+      }
+
+      const objectClip: AnimationClip = {
+        id: objectClipId,
+        duration,
+        loop: false,
+        animations
+      };
+
+      this.animationSystem.addClip(objectClip);
+      this.animationSystem.play(objectClipId);
+      clipIds.push(objectClipId);
+    }
+
+    // Create camera animation if transitioning
+    if (cameraTransition) {
+      const cameraClipId = this.animateCameraTransition(cameraTransition.start, cameraTransition.end);
+      clipIds.push(cameraClipId);
+    }
+
+    return clipIds;
+  }
+
+  /**
    * Create and play movement animations from an array of movements.
    * Returns the clip ID.
    *

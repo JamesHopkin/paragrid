@@ -8,7 +8,7 @@
 import type { GridStore } from '../core/types.js';
 import { isConcrete } from '../core/types.js';
 import type { PushChain } from '../operations/push.js';
-import { getCellWorldPosition } from '../camera/scale-helper.js';
+import { getCellWorldPosition, getRelativeScale } from '../camera/scale-helper.js';
 import type { HierarchyHelper } from '../camera/hierarchy-helper.js';
 
 /**
@@ -23,6 +23,13 @@ export interface Movement {
   newPos: [number, number, number];
   /** Whether this movement crosses grid boundaries (enter/exit transition) */
   isEnterExit: boolean;
+  /**
+   * Scale ratio for enter/exit transitions (oldCellSize / newCellSize).
+   * Only present when isEnterExit is true.
+   * - Value > 1: moving to smaller cells (zoom in, start large)
+   * - Value < 1: moving to larger cells (zoom out, start small)
+   */
+  scaleRatio?: number;
 }
 
 /**
@@ -124,13 +131,27 @@ export function chainToMovements(
     const oldPos: [number, number, number] = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
     const newPos: [number, number, number] = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
 
-    console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] ${isEnterExit ? `(enter/exit, transition: ${nextEntry.transition})` : '(within-grid)'}`);
+    // Calculate scale ratio for enter/exit movements
+    let scaleRatio: number | undefined;
+    if (isEnterExit) {
+      const ratio = getRelativeScale(store, oldViewPath, newViewPath);
+      if (ratio !== null) {
+        scaleRatio = ratio;
+        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, scale: ${scaleRatio.toFixed(3)}x, transition: ${nextEntry.transition})`);
+      } else {
+        console.warn(`  ${cellId}: Could not calculate scale ratio for enter/exit transition`);
+        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, no scale, transition: ${nextEntry.transition})`);
+      }
+    } else {
+      console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (within-grid)`);
+    }
 
     movements.push({
       cellId,
       oldPos,
       newPos,
-      isEnterExit
+      isEnterExit,
+      scaleRatio
     });
   }
 
