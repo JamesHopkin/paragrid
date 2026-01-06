@@ -495,10 +495,8 @@ class IsometricDemo {
         const newViewPath = viewUpdate.targetView;
         this.currentViewPath = newViewPath;
 
-        // Convert push chain to movements using view paths
-        const movements = oldViewPath && newViewPath
-          ? chainToMovements(this.store, pushChain, oldViewPath, newViewPath)
-          : [];
+        // Convert push chain to movements using hierarchy helper
+        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
 
         // Handle camera and object animation
         if (viewUpdate.animationStartView && oldViewPath && movements.length > 0) {
@@ -523,9 +521,7 @@ class IsometricDemo {
         this.currentViewPath = newViewPath;
 
         // Convert push chain to movements and animate
-        const movements = oldViewPath && newViewPath
-          ? chainToMovements(this.store, pushChain, oldViewPath, newViewPath)
-          : [];
+        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
 
         if (movements.length > 0) {
           // Create animations for all movements
@@ -1089,8 +1085,8 @@ const GRIDS = {
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
-    main: '_ _ _|_ 2 _|a _ _',
-    a: 'b _ _|_ 1 _|_ _ _',
+    main: '_ _ _|a 2 1|_ _ _',
+    a: 'b _ _|_ _ _|_ _ _',
     b: '_ _ _|_ _ _|_ _ _' },
 
   exitEnter: {
