@@ -112,7 +112,7 @@ export function chainToMovements(
     }
 
     // Determine if this is a cross-grid movement (enter/exit transition)
-    const isEnterExit = oldCellPos.gridId !== newCellPos.gridId ||
+    const isEnterExit = //oldCellPos.gridId !== newCellPos.gridId ||
                         nextEntry.transition === 'enter' ||
                         nextEntry.transition === 'exit';
 
@@ -159,14 +159,14 @@ export function chainToMovements(
 
     if (isEnterExit) {
       // Visual scale for the scale animation (old -> new)
-      const visualScale = getRelativeScale(store, oldViewPath, newViewPath);
+      const visualScale = getRelativeScale(store, oldViewPath!, newViewPath!);
       if (visualScale !== null) {
         visualScaleRatio = visualScale;
       }
 
       // Parent scale compensation for translation offset (root -> new)
-      const rootViewPath = [newViewPath[0]]; // Just the root grid
-      const parentCompensation = getRelativeScale(store, rootViewPath, newViewPath);
+      const rootViewPath = [newViewPath![0]]; // Just the root grid
+      const parentCompensation = getRelativeScale(store, rootViewPath, newViewPath!);
       if (parentCompensation !== null) {
         parentScaleCompensation = parentCompensation;
       }

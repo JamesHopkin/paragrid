@@ -13,26 +13,30 @@
 
 import type { CameraController, ViewUpdate, ViewPath } from './camera-protocol.js';
 import type { HierarchyHelper } from './hierarchy-helper.js';
-import { ParentViewCameraController } from './parent-view-camera.js';
+import { buildViewPath } from './parent-view-camera.js';
+
+
+// may need to generalise but handle this first
+function isSelfReference(fromPath: ViewPath, toPath: ViewPath) {
+  return fromPath.length == 2 && toPath.length == 2 &&
+    [fromPath[1], toPath[0], toPath[1]].every(s => s === fromPath[0]);
+}
 
 /**
  * Camera controller with smooth animations for enter/exit transitions.
  */
 export class AnimatedParentViewCameraController implements CameraController {
-  private baseController: ParentViewCameraController;
-  private currentView: ViewPath | null = null;
 
-  constructor(helper: HierarchyHelper) {
-    this.baseController = new ParentViewCameraController(helper);
+  constructor(private helper: HierarchyHelper) {
   }
 
   /**
    * Get initial view - no animation for first view.
    */
   getInitialView(playerGridId: string): ViewUpdate {
-    const update = this.baseController.getInitialView(playerGridId);
-    this.currentView = update.targetView;
-    return update;
+    return {
+      targetView: buildViewPath(this.helper, playerGridId),
+    }
   }
 
   /**
@@ -40,10 +44,14 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Creates a zoom-in effect as the camera focuses on the entered grid.
    */
   onPlayerEnter(fromGridId: string, toGridId: string): ViewUpdate {
-    const update = this.baseController.onPlayerEnter(fromGridId, toGridId);
-    const animatedUpdate = this.addAnimation(update);
-    this.currentView = update.targetView;
-    return animatedUpdate;
+    const toViewPath = buildViewPath(this.helper, toGridId);
+    const fromViewPath = buildViewPath(this.helper, fromGridId);
+
+    return {
+      targetView: isSelfReference(fromViewPath, toViewPath)
+        ? [toViewPath[0], ...toViewPath] : toViewPath,
+      animationStartView: buildViewPath(this.helper, fromGridId),
+    };
   }
 
   /**
@@ -51,10 +59,14 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Creates a zoom-out effect as the camera pulls back to show context.
    */
   onPlayerExit(fromGridId: string, toGridId: string): ViewUpdate {
-    const update = this.baseController.onPlayerExit(fromGridId, toGridId);
-    const animatedUpdate = this.addAnimation(update);
-    this.currentView = update.targetView;
-    return animatedUpdate;
+    const toViewPath = buildViewPath(this.helper, toGridId);
+    const fromViewPath = buildViewPath(this.helper, fromGridId);
+
+    return {
+      targetView: toViewPath,
+      animationStartView: isSelfReference(fromViewPath, toViewPath)
+        ? [fromViewPath[0], ...fromViewPath] : fromViewPath,
+    };
   }
 
   /**
@@ -62,40 +74,6 @@ export class AnimatedParentViewCameraController implements CameraController {
    * The view typically doesn't change for within-grid movement.
    */
   onPlayerMove(gridId: string): ViewUpdate {
-    const update = this.baseController.onPlayerMove(gridId);
-    this.currentView = update.targetView;
-    return update;
-  }
-
-  /**
-   * Add animation start view if we have a previous view.
-   * Only adds animation if the view is actually changing.
-   */
-  private addAnimation(update: ViewUpdate): ViewUpdate {
-    if (!this.currentView) {
-      // No previous view - no animation
-      return update;
-    }
-
-    if (this.viewPathsEqual(this.currentView, update.targetView)) {
-      // View hasn't changed - no animation needed
-      return update;
-    }
-
-    // Add current view as animation start
-    return {
-      targetView: update.targetView,
-      animationStartView: this.currentView,
-    };
-  }
-
-  /**
-   * Compare two view paths for equality.
-   */
-  private viewPathsEqual(a: ViewPath, b: ViewPath): boolean {
-    if (a.length !== b.length) {
-      return false;
-    }
-    return a.every((gridId, index) => gridId === b[index]);
+    return { targetView: buildViewPath(this.helper, gridId) };
   }
 }

@@ -19,7 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath } from './lib/camera/index.js';
+import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath, type ViewUpdate } from './lib/camera/index.js';
 import { chainToMovements, ParagridAnimator, type Movement } from './lib/animations/index.js';
 
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
@@ -463,35 +463,34 @@ class IsometricDemo {
     // Find new player position
     const newPos = this.playerPosition;
     if (newPos) {
+      // Update previous position for next movement
+      this.previousPlayerPosition = newPos;
+
       this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
 
-      // Capture old view path before any updates
-      const oldViewPath = this.currentViewPath;
-
       // Check if we changed grids (enter/exit transitions)
-      const changedGrids = playerPos.gridId !== newPos.gridId;
 
-      if (changedGrids) {
-        // Grid transition - update view using camera controller
-        const transition = detectGridTransition(pushChain, playerPos.gridId, newPos.gridId);
-
-        let viewUpdate;
-        if (transition?.type === 'enter') {
+      let viewUpdate: ViewUpdate | null = null;
+      if (pushChain.length > 1) {
+        if (pushChain[1].transition === 'enter') {
           viewUpdate = this.cameraController.onPlayerEnter(
             playerPos.gridId,
             newPos.gridId
           );
-        } else if (transition?.type === 'exit') {
+        } else if (pushChain[1].transition === 'exit') {
           viewUpdate = this.cameraController.onPlayerExit(
             playerPos.gridId,
             newPos.gridId
           );
-        } else {
-          // Fallback - treat as move
-          viewUpdate = this.cameraController.onPlayerMove(newPos.gridId);
-        }
+        } 
+      } 
+
+        // otherwise fall back to movement below
+      if (viewUpdate) {
+
 
         // Update current view
+        const oldViewPath = this.currentViewPath;
         const newViewPath = viewUpdate.targetView;
         this.currentViewPath = newViewPath;
 
@@ -511,26 +510,25 @@ class IsometricDemo {
           this.currentRenderer = null;
           this.render(true);
         }
-      } else {
-        // Same grid - update view and animate movements
-        const viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
-        const newViewPath = viewUpdate.targetView;
-        this.currentViewPath = newViewPath;
 
-        // Convert push chain to movements and animate
-        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
-
-        if (movements.length > 0) {
-          // Create animations for all movements
-          this.createMultipleMovementAnimations(movements);
-        } else {
-          // No animation - render immediately
-          this.render(true);
-        }
+        return;
       }
 
-      // Update previous position for next movement
-      this.previousPlayerPosition = newPos;
+      // No player enter/exit - update view and animate movements
+      viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
+      const newViewPath = viewUpdate.targetView;
+      this.currentViewPath = newViewPath;
+
+      // Convert push chain to movements and animate
+      const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
+
+      if (movements.length > 0) {
+        // Create animations for all movements
+        this.createMultipleMovementAnimations(movements);
+      } else {
+        // No animation - render immediately
+        this.render(true);
+      }
     } else {
       this.statusMessage = '✓ Push succeeded but player lost!';
       this.render(true);
@@ -1010,8 +1008,11 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 1 9 9|9 _ *inner _ 9|9 _ main _ 9|9 _ _ _ 9|9 9 9 9 9'
+    main: '9 9 9 9 9 9 9 9|9 _ _ 9 main 1 _ 9|9 _ *inner _ _ 2 _ 9|9 _ _ _ _ _ _ 9|9 _ _ a _ _ _ _|9 _ _ _ _ _ _ 9|' +
+          '9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+    a: 'b _ _|_ _ _|_ _ _',
+    b: '_ _ _|_ _ _|_ _ _'
   },
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
@@ -1042,7 +1043,7 @@ const GRIDS = {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  const store = parseGrids(GRIDS.doubleExit);
+  const store = parseGrids(GRIDS.swapEdited);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
