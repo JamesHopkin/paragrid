@@ -58,6 +58,7 @@ class IsometricDemo {
   private cameraController: CameraController; // Camera protocol implementation
   private currentViewPath: ViewPath | null = null; // Current automatic view path
   private cameraControllerSelectEl: HTMLSelectElement | null = null; // Camera controller dropdown
+  private trackObjectAnimations: boolean = false; // Whether camera should track object animations
 
   constructor(
     store: GridStore,
@@ -526,6 +527,7 @@ class IsometricDemo {
         const oldViewPath = this.currentViewPath;
         const newViewPath = viewUpdate.targetView;
         this.currentViewPath = newViewPath;
+        this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
 
         // Convert push chain to movements using hierarchy helper
         const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
@@ -551,6 +553,7 @@ class IsometricDemo {
       viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
       const newViewPath = viewUpdate.targetView;
       this.currentViewPath = newViewPath;
+      this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
 
       // Convert push chain to movements and animate
       const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
@@ -696,8 +699,52 @@ class IsometricDemo {
     // Rebuild scene data
     this.rebuildSceneData();
 
-    // Create and play animation using animator (no camera transition)
-    this.animator.animate(movements);
+    // Check if we need to track the focused grid's movement with the camera
+    let cameraTransition = undefined;
+    if (this.trackObjectAnimations && this.currentViewPath && this.currentViewPath.length > 0) {
+      const focusedGridId = this.currentViewPath[this.currentViewPath.length - 1];
+
+      // Find the movement for the reference cell containing the focused grid
+      // The cellId for a ref is "ref-${gridId}-${primary|secondary|auto}"
+      const focusedMovement = movements.find(m =>
+        m.cellId.startsWith(`ref-${focusedGridId}-`)
+      );
+      if (focusedMovement) {
+        console.log(`Tracking camera for focused grid '${focusedGridId}', movement:`, focusedMovement);
+        // Calculate camera start and end positions based on the grid's movement
+        const scaleResult = getScaleAndOffset(this.store, this.currentViewPath);
+        if (scaleResult) {
+          const grid = getGrid(this.store, this.currentViewPath[0]);
+          if (grid) {
+            const refX = scaleResult.centerX - grid.cols / 2;
+            const refZ = scaleResult.centerY - grid.rows / 2;
+            const diagonal = Math.sqrt(scaleResult.width ** 2 + scaleResult.height ** 2);
+            const viewWidth = diagonal * this.zoomMultiplier;
+
+            // Camera starts at old position (with object's old offset)
+            const oldOffset = [
+              focusedMovement.oldPos[0] - focusedMovement.newPos[0],
+              focusedMovement.oldPos[1] - focusedMovement.newPos[1],
+              focusedMovement.oldPos[2] - focusedMovement.newPos[2]
+            ] as [number, number, number];
+
+            cameraTransition = {
+              start: {
+                position: [refX + oldOffset[0], oldOffset[1], refZ + oldOffset[2]] as [number, number, number],
+                viewWidth
+              },
+              end: {
+                position: [refX, 0, refZ] as [number, number, number],
+                viewWidth
+              }
+            };
+          }
+        }
+      }
+    }
+
+    // Create and play animation using animator (with optional camera transition)
+    this.animator.animate(movements, cameraTransition);
 
     // Start the animation loop
     this.startAnimationLoop();
@@ -978,7 +1025,7 @@ class IsometricDemo {
         });
 
         // Apply camera animation if active
-        const activeCamera = this.animator.evaluateCamera(this.currentCamera);
+        let activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Now render the scene once
         screenSpace = project(
@@ -991,7 +1038,7 @@ class IsometricDemo {
         // During animation: only update transform overrides and re-render
         const transformOverrides = this.animator.evaluateTransforms();
 
-        // Apply camera animation if active
+        // Apply camera animation if active (handles tracking via camera animation system)
         const activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Re-project with animation overrides

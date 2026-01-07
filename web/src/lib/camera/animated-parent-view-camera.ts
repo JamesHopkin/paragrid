@@ -72,8 +72,12 @@ export class AnimatedParentViewCameraController implements CameraController {
   /**
    * Handle player moving within the same grid - no animation needed.
    * The view typically doesn't change for within-grid movement.
+   * Enables tracking so camera follows if the player's grid is pushed.
    */
   onPlayerMove(gridId: string): ViewUpdate {
-    return { targetView: buildViewPath(this.helper, gridId) };
+    return {
+      targetView: buildViewPath(this.helper, gridId),
+      trackObjectAnimations: true
+    };
   }
 }

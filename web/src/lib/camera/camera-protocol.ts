@@ -41,6 +41,19 @@ export interface ViewUpdate {
    * focus on the same content but the animation provides continuity.
    */
   readonly animationStartView?: ViewPath;
+
+  /**
+   * If true, the camera should track any object animations affecting
+   * the focused grid. This makes the camera follow the grid if it's
+   * being pushed or moved as part of an operation.
+   *
+   * When enabled, the rendering system applies the same positional
+   * animation offsets to the camera that are applied to the focused grid.
+   *
+   * Typically enabled for cameras that stay locked to a moving player grid.
+   * Defaults to false if not specified.
+   */
+  readonly trackObjectAnimations?: boolean;
 }
 
 /**

@@ -308,7 +308,6 @@ export class ParagridAnimator {
         this.animationFrameId = requestAnimationFrame(animate);
       } else {
         // All animations complete - clean up
-        console.log('Animation complete - cleaning up');
         this.animationFrameId = null;
         const callback = this.frameCallback;
         this.frameCallback = null;
@@ -320,7 +319,6 @@ export class ParagridAnimator {
 
         // Trigger one final render to show the final state without animation transforms
         if (callback) {
-          console.log('Animation complete - triggering final render');
           callback(0);
         }
       }
