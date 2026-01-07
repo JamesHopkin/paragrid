@@ -314,13 +314,11 @@ class IsometricDemo {
     // Update display
     this.zoomValueEl.textContent = `${this.zoomMultiplier.toFixed(2)}×`;
 
-    // Force re-render if manual view is active
-    if (this.manualViewPath) {
-      this.currentScene = null;
-      this.currentCellTree = null;
-      this.currentRenderer = null;
-      this.render(true);
-    }
+    // Force re-render to apply new zoom
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+    this.render(true);
   }
 
   /**
@@ -457,8 +455,19 @@ class IsometricDemo {
 
       this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
 
-      // Check if we changed grids (enter/exit transitions)
+      // Skip camera controller updates if manual view is active
+      if (this.manualViewPath) {
+        // Just animate the movements without camera updates
+        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
+        if (movements.length > 0) {
+          this.createMultipleMovementAnimations(movements);
+        } else {
+          this.render(true);
+        }
+        return;
+      }
 
+      // Check if we changed grids (enter/exit transitions)
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
@@ -471,8 +480,8 @@ class IsometricDemo {
             playerPos.gridId,
             newPos.gridId
           );
-        } 
-      } 
+        }
+      }
 
         // otherwise fall back to movement below
       if (viewUpdate) {
@@ -545,11 +554,13 @@ class IsometricDemo {
     this.statusMessage = 'Grid reset to original state';
     this.previousPlayerPosition = this.playerPosition ?? null;
 
-    // Update camera view
-    const playerPos = this.playerPosition;
-    if (playerPos) {
-      const view = this.cameraController.getInitialView(playerPos.gridId);
-      this.currentViewPath = view.targetView;
+    // Update camera view (only if not in manual view mode)
+    if (!this.manualViewPath) {
+      const playerPos = this.playerPosition;
+      if (playerPos) {
+        const view = this.cameraController.getInitialView(playerPos.gridId);
+        this.currentViewPath = view.targetView;
+      }
     }
 
     this.cancelCurrentAnimation();
@@ -580,11 +591,13 @@ class IsometricDemo {
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
 
-    // Update camera view for new player position
-    const playerPos = this.playerPosition;
-    if (playerPos) {
-      const view = this.cameraController.getInitialView(playerPos.gridId);
-      this.currentViewPath = view.targetView;
+    // Update camera view for new player position (only if not in manual view mode)
+    if (!this.manualViewPath) {
+      const playerPos = this.playerPosition;
+      if (playerPos) {
+        const view = this.cameraController.getInitialView(playerPos.gridId);
+        this.currentViewPath = view.targetView;
+      }
     }
 
     // Full scene rebuild needed
@@ -621,11 +634,13 @@ class IsometricDemo {
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
 
-    // Update camera view for new player position
-    const playerPos = this.playerPosition;
-    if (playerPos) {
-      const view = this.cameraController.getInitialView(playerPos.gridId);
-      this.currentViewPath = view.targetView;
+    // Update camera view for new player position (only if not in manual view mode)
+    if (!this.manualViewPath) {
+      const playerPos = this.playerPosition;
+      if (playerPos) {
+        const view = this.cameraController.getInitialView(playerPos.gridId);
+        this.currentViewPath = view.targetView;
+      }
     }
 
     // Full scene rebuild needed
