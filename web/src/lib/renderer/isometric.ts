@@ -59,17 +59,16 @@ function computeFocusLayer(
     return undefined;
   }
 
-  // Only apply to siblings of the focused grid (focusDepth === 0)
-  if (node.focusDepth !== 0 || !node.focusOffset) {
+  // Only apply to siblings of the focused grid (focusDepth === -1, i.e., parent grid)
+  if (node.focusDepth !== -1 || !node.focusOffset) {
     return undefined;
   }
 
   const [cellCol, cellRow] = node.focusOffset;
-  const focusCol = focusPosition.col;
-  const focusRow = focusPosition.row;
 
-  // Apply layer 1 if x < focused.x AND z > focused.z
-  if (cellCol < focusCol && cellRow > focusRow) {
+  // For parent grid cells, focusOffset is relative to the reference position
+  // Apply layer 1 if x <= 0 AND z => 0 (cell is in front of the reference in isometric view)
+  if (cellCol <= 0 && cellRow >= 0) {
     return 1;
   }
 

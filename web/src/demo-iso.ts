@@ -859,6 +859,7 @@ class IsometricDemo {
       return;
     }
 
+    let screenSpace: ScreenSpace;
     try {
       // Rebuild scene only when necessary (store changed, or first render)
       if (forceRebuild || !this.currentScene || !this.currentCellTree || !this.currentRenderer) {
@@ -945,14 +946,12 @@ class IsometricDemo {
         const activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Now render the scene once
-        const screenSpace = project(
+        screenSpace = project(
           this.currentScene,
           activeCamera,
           this.renderWidth,
           this.renderHeight
         );
-
-        this.currentRenderer.render(screenSpace);
       } else {
         // During animation: only update transform overrides and re-render
         const transformOverrides = this.animator.evaluateTransforms();
@@ -961,17 +960,20 @@ class IsometricDemo {
         const activeCamera = this.animator.evaluateCamera(this.currentCamera);
 
         // Re-project with animation overrides
-        const screenSpace = project(
+        screenSpace = project(
           this.currentScene,
           activeCamera,
           this.renderWidth,
           this.renderHeight,
           { transformOverrides }
         );
-
-        // Re-render using the SAME renderer instance (it clears and re-renders automatically)
-        this.currentRenderer.render(screenSpace);
       }
+
+      // the actual render!
+      this.currentRenderer.render(screenSpace, { layers: (layerNum: number) => {
+        return layerNum >= 1 ? { opacity: 0.5 } : { opacity: 1.0 };
+      }});
+
     } catch (error) {
       console.error('Render error:', error);
       this.canvas.innerHTML = `<div style="color: red; padding: 20px;">Render error: ${error}</div>`;
