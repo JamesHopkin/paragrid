@@ -43,6 +43,40 @@ import { getGridColor } from './colors.js';
 import { analyze } from '../analyzer/index.js';
 
 /**
+ * Compute the layer for a cell based on its focus metadata.
+ * Returns 1 for cells that should be semi-transparent (siblings with x < focused.x AND z > focused.z).
+ * Returns undefined for cells that should use default layer assignment.
+ *
+ * @param node - Cell node with focus metadata
+ * @param focusPosition - Position of the focused cell (typically player position)
+ * @returns Layer number or undefined for default
+ */
+function computeFocusLayer(
+  node: CellNode,
+  focusPosition: CellPosition | undefined
+): number | undefined {
+  if (!focusPosition) {
+    return undefined;
+  }
+
+  // Only apply to siblings of the focused grid (focusDepth === 0)
+  if (node.focusDepth !== 0 || !node.focusOffset) {
+    return undefined;
+  }
+
+  const [cellCol, cellRow] = node.focusOffset;
+  const focusCol = focusPosition.col;
+  const focusRow = focusPosition.row;
+
+  // Apply layer 1 if x < focused.x AND z > focused.z
+  if (cellCol < focusCol && cellRow > focusRow) {
+    return 1;
+  }
+
+  return undefined;
+}
+
+/**
  * Render options for the isometric renderer.
  */
 export interface RenderOptions {
@@ -180,7 +214,7 @@ export function buildIsometricScene(
     const templateId = nodeToTemplateId.get(node)!;
     const depth = nodeToDepth.get(node) ?? 0;
     const floorColors = getFloorColors(node.gridId);
-    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn, 0, depth);
+    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn, 0, depth, highlightPosition);
   }
 
   // Get root grid dimensions
@@ -215,7 +249,7 @@ export function buildIsometricScene(
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
-  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn);
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, highlightPosition);
 
   // Build scene
   const scene = builder.build();
@@ -255,9 +289,9 @@ export function renderIsometric(
     height
   });
 
-  // Configure layer opacity: layers >= 200 should be 50% transparent
+  // Configure layer opacity: layer 1 and layers >= 200 should be 50% transparent
   const layerConfig = (layer: number) => {
-    if (layer >= 200) {
+    if (layer === 1 || layer >= 200) {
       return { opacity: 0.5 };
     }
     return { opacity: 1.0 };
@@ -325,7 +359,8 @@ function renderGridDirect(
   squareSize: number,
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
-  tagFn: TagFn
+  tagFn: TagFn,
+  highlightPosition?: CellPosition
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
@@ -378,8 +413,11 @@ function renderGridDirect(
       }
 
       // Create a content group with content-based ID for animations (ID computed above)
+      // Apply focus-based layer if applicable
+      const focusLayer = computeFocusLayer(child, highlightPosition);
       builder.group(contentGroupId, {
-        position: [0, 0, 0]
+        position: [0, 0, 0],
+        ...(focusLayer !== undefined && { layer: focusLayer })
       });
 
       // Render cell content
@@ -458,6 +496,7 @@ function renderGridDirect(
  * @param tagFn - Tag function to check cell tags
  * @param baseLayer - Base layer for content (floor will be baseLayer - 50 + recursionDepth), defaults to 0
  * @param recursionDepth - Depth of recursion for floor layer calculation, defaults to 0
+ * @param highlightPosition - Position of focused cell for layer computation
  */
 function buildGridTemplate(
   node: NestedNode,
@@ -469,7 +508,8 @@ function buildGridTemplate(
   store: GridStore,
   tagFn: TagFn,
   baseLayer: number = 0,
-  recursionDepth: number = 0
+  recursionDepth: number = 0,
+  highlightPosition?: CellPosition
 ): void {
   builder.template(templateId);
 
@@ -554,9 +594,12 @@ function buildGridTemplate(
 
         // Create content group with ID (matching root grid structure)
         // This ensures ts-poly can target this group for animations
+        // Apply focus-based layer if applicable, otherwise use baseLayer
+        const focusLayer = computeFocusLayer(child, highlightPosition);
+        const effectiveLayer = focusLayer !== undefined ? focusLayer : baseLayer;
         builder.group(`concrete-${child.id}`, {
           position: [0, 0, 0],
-          layer: baseLayer
+          layer: effectiveLayer
         });
 
         builder.instance(objectType, {
@@ -587,9 +630,13 @@ function buildGridTemplate(
             contentGroupId = `ref-${child.gridId}-${row}-${col}`;
           }
 
+          // Apply focus-based layer if applicable, otherwise use baseLayer
+          const focusLayer = computeFocusLayer(child, highlightPosition);
+          const effectiveLayer = focusLayer !== undefined ? focusLayer : baseLayer;
+
           builder.group(contentGroupId, {
             position: [0, 0, 0],
-            layer: baseLayer
+            layer: effectiveLayer
           });
 
           const refRows = child.content.children.length;

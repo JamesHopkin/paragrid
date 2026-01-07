@@ -713,7 +713,16 @@ class IsometricDemo {
     const grid = getGrid(this.store, gridId);
     if (!grid) return;
 
-    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, RENDER_THRESHOLD);
+    // Use endViewPath as focus path for focus metadata computation
+    this.currentCellTree = analyze(
+      this.store,
+      gridId,
+      grid.cols,
+      grid.rows,
+      RENDER_THRESHOLD,
+      new Set(), // primaryRefs
+      endViewPath // focusPath
+    );
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
@@ -748,6 +757,9 @@ class IsometricDemo {
       start: startCameraParams,
       end: endCameraParams
     });
+
+    // Render initial frame with transforms at t=0 before starting animation loop
+    this.render(false);
 
     // Start animation loop
     this.startAnimationLoop();
@@ -791,7 +803,16 @@ class IsometricDemo {
     const viewWidth = diagonal * this.zoomMultiplier;
 
     // Phase 1: Analyze grid to build CellTree
-    this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, /*threshold = */RENDER_THRESHOLD);
+    // Use viewPath as focus path for focus metadata computation
+    this.currentCellTree = analyze(
+      this.store,
+      gridId,
+      grid.cols,
+      grid.rows,
+      /*threshold = */ RENDER_THRESHOLD,
+      new Set(), // primaryRefs
+      viewPath // focusPath
+    );
 
     // Phase 2: Build scene from CellTree
     const result = buildIsometricScene(this.currentCellTree, {
@@ -887,7 +908,16 @@ class IsometricDemo {
         });
 
         // Phase 1: Analyze grid to build CellTree
-        this.currentCellTree = analyze(this.store, gridId, grid.cols, grid.rows, /*threshold = */RENDER_THRESHOLD);
+        // Use viewPath as focus path for focus metadata computation
+        this.currentCellTree = analyze(
+          this.store,
+          gridId,
+          grid.cols,
+          grid.rows,
+          /*threshold = */ RENDER_THRESHOLD,
+          new Set(), // primaryRefs
+          viewPath // focusPath
+        );
 
         // Phase 2: Build scene from CellTree (without rendering yet)
         const result = buildIsometricScene(this.currentCellTree, {

@@ -11,6 +11,8 @@
  */
 export interface EmptyNode {
   readonly type: 'empty';
+  readonly focusDepth?: number | null;
+  readonly focusOffset?: readonly [number, number] | null;
 }
 
 /**
@@ -20,6 +22,8 @@ export interface EmptyNode {
 export interface CutoffNode {
   readonly type: 'cutoff';
   readonly gridId: string; // Which grid this cutoff belongs to
+  readonly focusDepth?: number | null;
+  readonly focusOffset?: readonly [number, number] | null;
 }
 
 /**
@@ -29,6 +33,8 @@ export interface ConcreteNode {
   readonly type: 'concrete';
   readonly id: string;      // Concrete cell identifier
   readonly gridId: string;  // Which grid this cell belongs to
+  readonly focusDepth?: number | null;
+  readonly focusOffset?: readonly [number, number] | null;
 }
 
 /**
@@ -41,6 +47,8 @@ export interface RefNode {
   readonly refTarget: string;   // Grid being referenced
   readonly isPrimary: boolean;  // Whether this is the primary reference
   readonly content: CellNode;   // Analyzed content of referenced grid
+  readonly focusDepth?: number | null;
+  readonly focusOffset?: readonly [number, number] | null;
 }
 
 /**
@@ -50,6 +58,8 @@ export interface NestedNode {
   readonly type: 'nested';
   readonly gridId: string;
   readonly children: ReadonlyArray<ReadonlyArray<CellNode>>;
+  readonly focusDepth?: number | null;
+  readonly focusOffset?: readonly [number, number] | null;
 }
 
 /**
