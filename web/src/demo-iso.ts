@@ -449,17 +449,6 @@ class IsometricDemo {
     this.hierarchyHelper.setStore(this.store); // Update helper with new store
     const pushChain = result.chain;
 
-    // DEBUG: Log the full push chain
-    console.log('=== PUSH CHAIN ===');
-    for (const entry of pushChain) {
-      const pos = entry.position;
-      const cell = entry.cell;
-      const cellType = cell.type === 'concrete' ? `Concrete(${cell.id})` :
-                       cell.type === 'ref' ? `Ref(${cell.gridId})` :
-                       cell.type === 'empty' ? 'Empty' : 'Unknown';
-      console.log(`  [${pos.gridId}:${pos.row},${pos.col}] ${cellType} - transition: ${entry.transition}`);
-    }
-
     // Find new player position
     const newPos = this.playerPosition;
     if (newPos) {
@@ -868,8 +857,6 @@ class IsometricDemo {
           throw new Error('No view path available');
         }
 
-        console.log('Using view path:', viewPath);
-
         // Get the root grid (first in path)
         const gridId = viewPath[0];
         const grid = getGrid(this.store, gridId);
@@ -899,13 +886,6 @@ class IsometricDemo {
 
         // Apply zoom multiplier (only in manual mode, or always?)
         const viewWidth = diagonal * this.zoomMultiplier;
-
-        console.log('Camera view:', {
-          path: viewPath,
-          center: [refX, 0, refZ],
-          viewWidth,
-          scaleResult
-        });
 
         // Phase 1: Analyze grid to build CellTree
         // Use viewPath as focus path for focus metadata computation
@@ -937,8 +917,6 @@ class IsometricDemo {
           this.renderWidth,
           this.renderHeight
         );
-
-        console.log('Camera created with createParagridCamera');
 
         // Create new renderer after clearing canvas
         this.currentRenderer = new Renderer({
@@ -1073,7 +1051,7 @@ const GRIDS = {
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  const store = parseGrids(GRIDS.swapEdited);
+  const store = parseGrids(GRIDS.transparency);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {

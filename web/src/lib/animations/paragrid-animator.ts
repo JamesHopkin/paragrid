@@ -155,18 +155,6 @@ export class ParagridAnimator {
           ];
         }
 
-        console.log(`  Animation setup for ${movement.cellId}:`);
-        console.log(`    oldPos (world): [${movement.oldPos[0].toFixed(3)}, ${movement.oldPos[1].toFixed(3)}, ${movement.oldPos[2].toFixed(3)}]`);
-        console.log(`    newPos (world): [${movement.newPos[0].toFixed(3)}, ${movement.newPos[1].toFixed(3)}, ${movement.newPos[2].toFixed(3)}]`);
-        const offsetLabel = hasParentCompensation ? 'relativeOffset (compensated)' : 'relativeOffset';
-        console.log(`    ${offsetLabel}: [${relativeOffset[0].toFixed(3)}, ${relativeOffset[1].toFixed(3)}, ${relativeOffset[2].toFixed(3)}]`);
-        if (hasVisualScale) {
-          console.log(`    visualScaleRatio: ${movement.visualScaleRatio!.toFixed(3)}x`);
-        }
-        if (hasParentCompensation) {
-          console.log(`    parentScaleCompensation: ${movement.parentScaleCompensation!.toFixed(3)}x`);
-        }
-
         // Build channels: always position, optionally scale
         const channels: Array<{
           target: 'position' | 'rotation' | 'scale';

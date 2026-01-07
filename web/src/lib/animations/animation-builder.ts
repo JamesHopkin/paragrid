@@ -171,14 +171,9 @@ export function chainToMovements(
         parentScaleCompensation = parentCompensation;
       }
 
-      if (visualScaleRatio !== undefined && parentScaleCompensation !== undefined) {
-        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, visualScale: ${visualScaleRatio.toFixed(3)}x, parentCompensation: ${parentScaleCompensation.toFixed(3)}x, transition: ${nextEntry.transition})`);
-      } else {
+      if (visualScaleRatio === undefined || parentScaleCompensation === undefined) {
         console.warn(`  ${cellId}: Could not calculate scale values for enter/exit transition`);
-        console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (enter/exit, no scale, transition: ${nextEntry.transition})`);
       }
-    } else {
-      console.log(`  ${cellId}: [${oldPos[0].toFixed(2)}, ${oldPos[2].toFixed(2)}] -> [${newPos[0].toFixed(2)}, ${newPos[2].toFixed(2)}] (within-grid)`);
     }
 
     movements.push({
