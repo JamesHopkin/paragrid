@@ -308,12 +308,21 @@ export class ParagridAnimator {
         this.animationFrameId = requestAnimationFrame(animate);
       } else {
         // All animations complete - clean up
+        console.log('Animation complete - cleaning up');
         this.animationFrameId = null;
+        const callback = this.frameCallback;
         this.frameCallback = null;
 
         // Remove animation clips so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
         this.animationSystem.removeClip('enter-exit-move');
+        this.cameraAnimationSystem.removeClip('camera-transition');
+
+        // Trigger one final render to show the final state without animation transforms
+        if (callback) {
+          console.log('Animation complete - triggering final render');
+          callback(0);
+        }
       }
     };
 

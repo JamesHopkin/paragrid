@@ -92,6 +92,7 @@ class IsometricDemo {
     this.setupKeyboardHandlers();
     this.setupExportButton();
     this.setupManualViewControls();
+    this.setupAnimationStatusPanel();
     this.render();
   }
 
@@ -209,6 +210,37 @@ class IsometricDemo {
     }
   }
 
+  private setupAnimationStatusPanel(): void {
+    const animationStatusContent = document.getElementById('animation-status-content');
+    if (!animationStatusContent) return;
+
+    // Poll animation status every 100ms
+    setInterval(() => {
+      const isAnimating = this.animator.isAnimating();
+      const cellState = (this.animator as any).animationSystem.getState();
+      const cameraState = (this.animator as any).cameraAnimationSystem.getState();
+
+      if (!isAnimating && !cellState.playing && !cameraState.playing) {
+        animationStatusContent.innerHTML = '<span style="color: #666;">No animations active</span>';
+        return;
+      }
+
+      const lines: string[] = [];
+
+      if (cellState.playing) {
+        const clipIds = Object.keys((this.animator as any).animationSystem.clips || {});
+        lines.push(`<span style="color: #4fc3f7;">Cell Animations:</span> ${clipIds.join(', ')}`);
+      }
+
+      if (cameraState.playing) {
+        const clipIds = Object.keys((this.animator as any).cameraAnimationSystem.clips || {});
+        lines.push(`<span style="color: #4fc3f7;">Camera Animations:</span> ${clipIds.join(', ')}`);
+      }
+
+      animationStatusContent.innerHTML = lines.join('<br>') || '<span style="color: #666;">No animations active</span>';
+    }, 100);
+  }
+
   private updateManualView(): void {
     if (!this.manualViewInputEl || !this.manualViewStatusEl) return;
 
@@ -314,6 +346,11 @@ class IsometricDemo {
     // Update display
     this.zoomValueEl.textContent = `${this.zoomMultiplier.toFixed(2)}×`;
 
+    // Cancel any ongoing animation before rebuilding
+    if (this.animator.isAnimating()) {
+      this.cancelCurrentAnimation();
+    }
+
     // Force re-render to apply new zoom
     this.currentScene = null;
     this.currentCellTree = null;
@@ -332,10 +369,8 @@ class IsometricDemo {
     // Create new camera controller based on selection
     if (selectedValue === 'animated') {
       this.cameraController = new AnimatedParentViewCameraController(this.hierarchyHelper);
-      console.log('Switched to Animated Parent View Camera');
     } else {
       this.cameraController = new ParentViewCameraController(this.hierarchyHelper);
-      console.log('Switched to Parent View Camera');
     }
 
     // Update current view to match new controller
@@ -1030,11 +1065,10 @@ class IsometricDemo {
 const GRIDS = {
   swap: {
     main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ 9 main 1 _ 9|9 _ *inner _ _ 2 _ 9|9 _ _ _ _ _ _ 9|9 _ _ a _ _ _ _|9 _ _ _ _ _ _ 9|' +
-          '9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 ~inner 2 main 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ a _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
     a: 'b _ _|_ _ _|_ _ _',
     b: '_ _ _|_ _ _|_ _ _'
@@ -1061,14 +1095,14 @@ const GRIDS = {
         '9 ' + '_ '.repeat(10) + '9'
   },
   transparency: {
-   main: '_ _ _|_ a _|2 _ _',
+   main: '_ _ _|_ a _|_ 2 _',
    a: '_ _ _|_ 1 _|_ _ _'
   },
 };
 
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  const store = parseGrids(GRIDS.transparency);
+  const store = parseGrids(GRIDS.swapEdited);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
