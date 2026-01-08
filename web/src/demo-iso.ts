@@ -33,17 +33,20 @@ const RENDER_THRESHOLD = 1/64;
  * - scene=<name>: Select scene (swap, simple, doubleExit, etc.)
  * - hideControls=true: Hide side controls panel
  * - hideHeader=true: Hide title and description
+ * - mobile=true: Enable mobile controls with diagonal arrow buttons
  *
  * Examples:
  * - demo-iso.html?fullscreen=true&hideHeader=true&hideControls=true
  * - demo-iso.html?scene=swap
  * - demo-iso.html?fullscreen=true&scene=simple
+ * - demo-iso.html?mobile=true&fullscreen=true&hideHeader=true&hideControls=true
  */
 interface DemoConfig {
   fullscreen: boolean;
   scene: string;
   hideControls: boolean;
   hideHeader: boolean;
+  mobile: boolean;
 }
 
 /**
@@ -56,6 +59,7 @@ function parseConfig(): DemoConfig {
     scene: params.get('scene') || 'indirectSelfRef',
     hideControls: params.get('hideControls') === 'true',
     hideHeader: params.get('hideHeader') === 'true',
+    mobile: params.get('mobile') === 'true',
   };
 }
 
@@ -1228,11 +1232,11 @@ const GRIDS = {
   },
 
   indirectSelfRef: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ _ _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ 1 a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 a 9|9 _ _ _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: 'b _ _|_ main _|_ _ 9',
-    b: '_ _ _|_ _ _|_ _ 9'
+    a: '~b _ _|*b 9 main|_ _ 9',
+    b: '_ _ _|_ 1 _|_ _ 9'
   },
 
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
@@ -1324,6 +1328,156 @@ function applyUIConfig(config: DemoConfig): void {
   // Add burger menu for fullscreen mode
   if (config.fullscreen) {
     createBurgerMenu(config);
+  }
+}
+
+/**
+ * Create mobile control buttons with diagonal arrows.
+ */
+function createMobileControls(demo: IsometricDemo): void {
+  const buttonSize = '80px';
+  const buttonPadding = '1rem';
+
+  const buttonStyle = `
+    width: ${buttonSize};
+    height: ${buttonSize};
+    background: rgba(79, 195, 247, 0.8);
+    color: #1a1a1a;
+    border: 2px solid rgba(79, 195, 247, 1);
+    border-radius: 12px;
+    font-size: 2rem;
+    cursor: pointer;
+    z-index: 900;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  `;
+
+  // Define buttons with their directions and arrows
+  const buttons = [
+    { id: 'mobile-north', direction: Direction.N, arrow: '↖', label: 'N' },
+    { id: 'mobile-south', direction: Direction.S, arrow: '↘', label: 'S' },
+    { id: 'mobile-west', direction: Direction.W, arrow: '↙', label: 'W' },
+    { id: 'mobile-east', direction: Direction.E, arrow: '↗', label: 'E' },
+  ];
+
+  const mobileControlsContainer = document.createElement('div');
+  mobileControlsContainer.id = 'mobile-controls';
+
+  buttons.forEach(({ id, direction, arrow, label }) => {
+    const button = document.createElement('button');
+    button.id = id;
+    button.innerHTML = arrow;
+    button.setAttribute('aria-label', `Move ${label}`);
+    button.style.cssText = buttonStyle + 'position: fixed;';
+
+    // Add touch and click handlers
+    const handlePress = (e: Event) => {
+      e.preventDefault();
+      (demo as any).attemptPush(direction);
+    };
+
+    button.addEventListener('touchstart', handlePress);
+    button.addEventListener('click', handlePress);
+
+    // Hover effect for desktop
+    button.addEventListener('mouseenter', () => {
+      button.style.background = 'rgba(129, 212, 250, 0.9)';
+      button.style.transform = 'scale(1.05)';
+    });
+    button.addEventListener('mouseleave', () => {
+      button.style.background = 'rgba(79, 195, 247, 0.8)';
+      button.style.transform = 'scale(1)';
+    });
+
+    // Touch feedback
+    button.addEventListener('touchstart', () => {
+      button.style.background = 'rgba(41, 182, 246, 0.9)';
+      button.style.transform = 'scale(0.95)';
+    });
+    button.addEventListener('touchend', () => {
+      button.style.background = 'rgba(79, 195, 247, 0.8)';
+      button.style.transform = 'scale(1)';
+    });
+
+    mobileControlsContainer.appendChild(button);
+  });
+
+  // Add container to body
+  document.body.appendChild(mobileControlsContainer);
+
+  // Apply positioning based on screen size
+  updateMobileControlsPosition();
+
+  // Update on resize
+  window.addEventListener('resize', updateMobileControlsPosition);
+
+  function updateMobileControlsPosition() {
+    const northBtn = document.getElementById('mobile-north')!;
+    const southBtn = document.getElementById('mobile-south')!;
+    const westBtn = document.getElementById('mobile-west')!;
+    const eastBtn = document.getElementById('mobile-east')!;
+
+    // Detect if phone or tablet based on screen width
+    const isPhone = window.innerWidth < 768; // Phone: < 768px, Tablet: >= 768px
+
+    if (isPhone) {
+      // Phone: One button in each corner
+      // Bottom-left: West
+      westBtn.style.bottom = buttonPadding;
+      westBtn.style.left = buttonPadding;
+      westBtn.style.top = 'auto';
+      westBtn.style.right = 'auto';
+
+      // Bottom-right: East
+      eastBtn.style.bottom = buttonPadding;
+      eastBtn.style.right = buttonPadding;
+      eastBtn.style.top = 'auto';
+      eastBtn.style.left = 'auto';
+
+      // Top-left: North
+      northBtn.style.top = buttonPadding;
+      northBtn.style.left = buttonPadding;
+      northBtn.style.bottom = 'auto';
+      northBtn.style.right = 'auto';
+
+      // Top-right: South
+      southBtn.style.top = buttonPadding;
+      southBtn.style.right = buttonPadding;
+      southBtn.style.bottom = 'auto';
+      southBtn.style.left = 'auto';
+    } else {
+      // Tablet: All four buttons clustered in bottom-left
+      const spacing = '0.5rem';
+
+      // West: bottom-left corner
+      westBtn.style.bottom = buttonPadding;
+      westBtn.style.left = buttonPadding;
+      westBtn.style.top = 'auto';
+      westBtn.style.right = 'auto';
+
+      // East: to the right of West
+      eastBtn.style.bottom = buttonPadding;
+      eastBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      eastBtn.style.top = 'auto';
+      eastBtn.style.right = 'auto';
+
+      // North: above West
+      northBtn.style.bottom = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      northBtn.style.left = buttonPadding;
+      northBtn.style.top = 'auto';
+      northBtn.style.right = 'auto';
+
+      // South: above East (top-right of the cluster)
+      southBtn.style.bottom = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      southBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      southBtn.style.top = 'auto';
+      southBtn.style.right = 'auto';
+    }
   }
 }
 
@@ -1449,5 +1603,10 @@ document.addEventListener('DOMContentLoaded', () => {
   // Apply UI configuration
   applyUIConfig(config);
 
-  new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
+  const demo = new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
+
+  // Create mobile controls if enabled
+  if (config.mobile) {
+    createMobileControls(demo);
+  }
 });
