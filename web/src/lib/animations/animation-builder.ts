@@ -13,13 +13,18 @@ import type { HierarchyHelper } from '../camera/hierarchy-helper.js';
 
 /**
  * Represents a single object movement animation.
+ *
+ * Note: Positions are intermediate values used to calculate displacement vectors.
+ * For enter/exit movements, they're in world-space to enable computing displacement
+ * across different grids. For in-grid movements, they're in grid-local space.
+ * The animator converts these to group-relative animation offsets.
  */
 export interface Movement {
   /** Unique identifier for the animated object (e.g., 'concrete-1', 'ref-inner-primary') */
   cellId: string;
-  /** Starting position in world coordinates [x, y, z] */
+  /** Starting position [x, y, z] - used to calculate displacement vector */
   oldPos: [number, number, number];
-  /** Ending position in world coordinates [x, y, z] */
+  /** Ending position [x, y, z] - used to calculate displacement vector */
   newPos: [number, number, number];
   /** Whether this movement crosses grid boundaries (enter/exit transition) */
   isEnterExit: boolean;
@@ -41,6 +46,29 @@ export interface Movement {
   parentScaleCompensation?: number;
 }
 
+
+function overlapSuffixPrefix(a: string[], b: string[]): string[] {
+  const max = Math.min(a.length, b.length);
+
+  // Try longer overlaps first
+  for (let len = max; len > 0; len--) {
+    let match = true;
+
+    for (let i = 0; i < len; i++) {
+      if (a[a.length - len + i] !== b[i]) {
+        match = false;
+        break;
+      }
+    }
+
+    if (match) {
+      return a.slice(a.length - len);
+    }
+  }
+
+  return [];
+}
+
 /**
  * Convert a push chain to movement animations.
  * The chain represents positions and their cells BEFORE the push.
@@ -50,14 +78,18 @@ export interface Movement {
  * After rotation: pos0←Empty, pos1←A, pos2←B
  * Movements: A(pos0→pos1), B(pos1→pos2), Empty(pos2→pos0)
  *
- * This function calculates movements in objective world coordinates by using
- * the hierarchy helper to determine each cell's path through the grid hierarchy.
- * Movements are independent of the camera's current view.
+ * This function calculates position pairs (old/new) for each movement:
+ * - For enter/exit movements: positions in world-space using hierarchy paths,
+ *   enabling displacement calculation across different grids
+ * - For in-grid movements: positions in grid-local space
+ * - Scale ratios for visual scaling and parent compensation
+ *
+ * The animator will convert these position pairs into group-relative animation offsets.
  *
  * @param store - The grid store containing all grids
  * @param chain - Push chain with position and transition metadata
  * @param hierarchyHelper - Helper for navigating grid hierarchy
- * @returns Array of movements with world coordinates
+ * @returns Array of movements with position pairs and scale data
  */
 export function chainToMovements(
   store: GridStore,
@@ -112,8 +144,7 @@ export function chainToMovements(
     }
 
     // Determine if this is a cross-grid movement (enter/exit transition)
-    const isEnterExit = //oldCellPos.gridId !== newCellPos.gridId ||
-                        nextEntry.transition === 'enter' ||
+    const isEnterExit = nextEntry.transition === 'enter' ||
                         nextEntry.transition === 'exit';
 
     let oldPos: [number, number, number];
@@ -122,24 +153,43 @@ export function chainToMovements(
     let newViewPath: string[] | null = null;
 
     if (isEnterExit) {
-      // For enter/exit movements, use world coordinates
+      // For enter/exit movements, calculate positions in world-space
+      // This allows us to compute the displacement vector between cells in different grids
       oldViewPath = getViewPathForGrid(oldCellPos.gridId);
       newViewPath = getViewPathForGrid(newCellPos.gridId);
 
       if (!oldViewPath || !newViewPath) {
         console.warn(`  [WARN] Skipping animation for ${cellId}: could not determine view paths`);
-        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
         continue;
       }
 
-      // Calculate world positions using the hierarchy-determined view paths
+      if (nextEntry.transition === 'enter') {
+        oldViewPath = overlapSuffixPrefix(oldViewPath, newViewPath);
+        if (oldViewPath.length === 0) {
+          console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
+          console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
+          continue;
+        }
+      }
+      else {
+        newViewPath = overlapSuffixPrefix(newViewPath, oldViewPath);
+        if (newViewPath.length === 0) {
+          console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
+          console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
+          continue;
+        }
+      }
+
+      // Get world-space positions for both the start and end of the movement
+      // These will be used to calculate the displacement vector (oldPos - newPos)
       const oldWorldPos = getCellWorldPosition(store, oldViewPath, oldCellPos);
       const newWorldPos = getCellWorldPosition(store, newViewPath, newCellPos);
 
       if (!oldWorldPos || !newWorldPos) {
         console.warn(`  [WARN] Skipping animation for ${cellId}: could not calculate world positions`);
         console.warn(`    Old path: ${oldViewPath.join(' → ')}, New path: ${newViewPath.join(' → ')}`);
-        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
         continue;
       }
 
@@ -172,7 +222,8 @@ export function chainToMovements(
       }
 
       if (visualScaleRatio === undefined || parentScaleCompensation === undefined) {
-        console.warn(`  ${cellId}: Could not calculate scale values for enter/exit transition`);
+        console.warn(`  ${cellId}: Could not calculate scale values for enter/exit transition - skipping animation`);
+        continue; // Skip animation; object will jump to destination
       }
     }
 

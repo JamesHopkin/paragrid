@@ -15,13 +15,6 @@ import type { CameraController, ViewUpdate, ViewPath } from './camera-protocol.j
 import type { HierarchyHelper } from './hierarchy-helper.js';
 import { buildViewPath } from './parent-view-camera.js';
 
-
-// may need to generalise but handle this first
-function isFromSelfReference(fromPath: ViewPath, toPath: ViewPath) {
-  return fromPath.length == 2 && toPath.length == 2 &&
-    fromPath[0] === fromPath[1] && fromPath[0] ===  toPath[0];
-}
-
 /**
  * Camera controller with smooth animations for enter/exit transitions.
  */
@@ -44,13 +37,15 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Creates a zoom-in effect as the camera focuses on the entered grid.
    */
   onPlayerEnter(fromGridId: string, toGridId: string): ViewUpdate {
-    const toViewPath = buildViewPath(this.helper, toGridId);
+    // Base everything on fromViewPath, so we don't briefly show the background before zooming in
     const fromViewPath = buildViewPath(this.helper, fromGridId);
 
+    const gridsDownToTo = this.helper.getAncestorChain(toGridId, fromGridId);
+    gridsDownToTo.reverse();
+
     return {
-      targetView: isFromSelfReference(fromViewPath, toViewPath)
-        ? [fromViewPath[0], ...toViewPath] : toViewPath,
-      animationStartView: buildViewPath(this.helper, fromGridId),
+      targetView: [...fromViewPath, ...gridsDownToTo],
+      animationStartView: fromViewPath
     };
   }
 
@@ -59,13 +54,15 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Creates a zoom-out effect as the camera pulls back to show context.
    */
   onPlayerExit(fromGridId: string, toGridId: string): ViewUpdate {
+    // Base everything on toViewPath, so we don't briefly show the background before popping in ancestors
     const toViewPath = buildViewPath(this.helper, toGridId);
-    const fromViewPath = buildViewPath(this.helper, fromGridId);
+
+    const gridsDownToFrom = this.helper.getAncestorChain(fromGridId, toGridId);
+    gridsDownToFrom.reverse();
 
     return {
       targetView: toViewPath,
-      animationStartView: isFromSelfReference(toViewPath, fromViewPath)
-        ? [fromViewPath[0], ...fromViewPath] : fromViewPath,
+      animationStartView: [...toViewPath, ...gridsDownToFrom]
     };
   }
 

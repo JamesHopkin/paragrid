@@ -190,10 +190,13 @@ export class HierarchyHelper {
    * // rootChain === ['root'] (root has no parent)
    * ```
    */
-  getAncestorChain(gridId: string): string[] | null {
+  getAncestorChain(gridId: string, stopAt?: string): string[] {
     const chain: string[] = [];
     const visited = new Set<string>();
     let currentId = gridId;
+
+    if (stopAt)
+      visited.add(stopAt);
 
     while (true) {
       // Cycle detection

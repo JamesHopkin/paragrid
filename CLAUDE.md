@@ -37,3 +37,5 @@
 - Location: `python/venv/`
 - Activate with: `source python/venv/bin/activate` (Unix/Mac) or `python\venv\Scripts\activate` (Windows)
 - Run tests with: `python/venv/bin/python -m pytest python/test_paragrid.py` (or use the activated venv)
+
+**iso-render Library**: The `iso-render` library code is located at `../ts-poly/` (relative to this project root). This is used for the isometric 3D rendering.

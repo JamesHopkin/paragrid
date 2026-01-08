@@ -131,7 +131,9 @@ export class ParagridAnimator {
       }> = [];
 
       for (const movement of movements) {
-        // Calculate offset from new position to old position (in world space)
+        // Calculate displacement vector: how far the object needs to move
+        // For enter/exit: oldPos and newPos are in world-space, giving correct displacement across grids
+        // For in-grid: they're in grid-local space, giving correct displacement within the grid
         let relativeOffset: [number, number, number] = [
           movement.oldPos[0] - movement.newPos[0],
           movement.oldPos[1] - movement.newPos[1],

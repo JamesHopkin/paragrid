@@ -545,6 +545,10 @@ function renderGridDirect(
           color: color
         });
       } else if (isRefNode(child) && isNestedNode(child.content)) {
+        // Check if this is a non-primary ref
+        const cell = grid?.cells[row]?.[col];
+        const isNonPrimary = cell && isRef(cell) && cell.isPrimary === false;
+
         // Reference the SPECIFIC nested instance's template
         const nestedTemplateId = nodeToTemplateId.get(child.content);
         if (!nestedTemplateId) {
@@ -559,10 +563,28 @@ function renderGridDirect(
           // Y-scale is the reciprocal of max dimension to keep cubes cubic
           const scaleY = 1 / Math.max(refCols, refRows);
 
+          // Wrap non-primary refs in a lighting override group for increased brightness
+          if (isNonPrimary) {
+            builder.group('lighting-override', {
+              lighting: {
+                ambient: '#ffffff',
+                directional: {
+                  direction: [1, 2, 1],
+                  color: '#ffffff',
+                  ambient: 0.8
+                }
+              }
+            });
+          }
+
           // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
             scale: [scaleX, scaleY, scaleZ]
           });
+
+          if (isNonPrimary) {
+            builder.endGroup(); // End lighting override group
+          }
         }
       }
       // Empty and Cutoff nodes don't add geometry
@@ -743,10 +765,29 @@ function buildGridTemplate(
           // Y-scale is the reciprocal of max dimension to keep cubes cubic
           const scaleY = 1 / Math.max(refCols, refRows);
 
+          // Wrap non-primary refs in a lighting override group for increased brightness
+          const isNonPrimary = cell && isRef(cell) && cell.isPrimary === false;
+          if (isNonPrimary) {
+            builder.group('lighting-override', {
+              lighting: {
+                ambient: '#ffffff',
+                directional: {
+                  direction: [1, 2, 1],
+                  color: '#ffffff',
+                  ambient: 0.8
+                }
+              }
+            });
+          }
+
           // No centering translation needed - template is already centered around origin
           builder.reference(nestedTemplateId, {
             scale: [scaleX, scaleY, scaleZ]
           });
+
+          if (isNonPrimary) {
+            builder.endGroup(); // End lighting override group
+          }
 
           builder.endGroup(); // End content group
         }
