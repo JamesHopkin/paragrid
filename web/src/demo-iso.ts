@@ -1232,10 +1232,10 @@ const GRIDS = {
   },
 
   indirectSelfRef: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 a 9|9 _ _ _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ a 9|9 _ _ _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: '~b _ _|*b 9 main|_ _ 9',
+    a: '~b main _|_ 9 *b|_ _ 9',
     b: '_ _ _|_ 1 _|_ _ 9'
   },
 
@@ -1263,6 +1263,11 @@ const GRIDS = {
   transparency: {
    main: '_ _ _|_ a _|_ 2 _',
    a: '_ _ _|_ 1 _|_ _ _'
+  },
+
+  nonPrimaryRef: {
+    main: '1 _ _|*a _ ~a|_ _ _', 
+    a: '9 _ 9|_ 3 _|9 _ 9'
   },
 };
 
@@ -1522,6 +1527,7 @@ function createBurgerMenu(config: DemoConfig): void {
   `;
 
   const modalContent = document.createElement('div');
+  modalContent.id = 'modal-content';
   modalContent.style.cssText = `
     background: #2a2a2a;
     border: 2px solid #444;
@@ -1533,34 +1539,60 @@ function createBurgerMenu(config: DemoConfig): void {
     color: #e0e0e0;
   `;
 
-  // Clone the controls into the modal
-  const manualView = document.getElementById('manual-view');
-  const animationStatus = document.getElementById('animation-status');
-  const status = document.getElementById('status');
-  const exportButtons = document.querySelector('.container > div:last-child');
-
-  if (manualView) modalContent.appendChild(manualView.cloneNode(true));
-  if (animationStatus) modalContent.appendChild(animationStatus.cloneNode(true));
-  if (status) {
-    const statusClone = status.cloneNode(true) as HTMLElement;
-    statusClone.style.marginBottom = '1rem';
-    modalContent.appendChild(statusClone);
-  }
-  if (exportButtons) modalContent.appendChild(exportButtons.cloneNode(true));
-
   const closeButton = document.createElement('button');
   closeButton.textContent = 'Close';
   closeButton.className = 'export-button';
   closeButton.style.marginTop = '1rem';
   closeButton.onclick = () => modal.style.display = 'none';
-  modalContent.appendChild(closeButton);
 
   modal.appendChild(modalContent);
   document.body.appendChild(burgerButton);
   document.body.appendChild(modal);
 
+  // Function to refresh modal content
+  const refreshModalContent = () => {
+    // Clear previous content
+    modalContent.innerHTML = '';
+
+    // Clone the controls into the modal (fresh clones each time)
+    const manualView = document.getElementById('manual-view');
+    const animationStatus = document.getElementById('animation-status');
+    const status = document.getElementById('status');
+    const exportButtons = document.querySelector('.container > div:last-child');
+
+    if (manualView) {
+      const clone = manualView.cloneNode(true) as HTMLElement;
+      clone.style.display = 'block'; // Ensure it's visible
+      modalContent.appendChild(clone);
+    }
+    if (animationStatus) {
+      const clone = animationStatus.cloneNode(true) as HTMLElement;
+      clone.style.display = 'block'; // Ensure it's visible
+      modalContent.appendChild(clone);
+    }
+    if (status) {
+      const statusClone = status.cloneNode(true) as HTMLElement;
+      statusClone.style.marginBottom = '1rem';
+      statusClone.style.display = 'block'; // Ensure it's visible
+      modalContent.appendChild(statusClone);
+    }
+    if (exportButtons) {
+      const clone = exportButtons.cloneNode(true) as HTMLElement;
+      clone.style.display = 'block'; // Ensure it's visible
+      modalContent.appendChild(clone);
+    }
+
+    // Re-add close button
+    modalContent.appendChild(closeButton);
+  };
+
   burgerButton.onclick = () => {
-    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+    if (modal.style.display === 'flex') {
+      modal.style.display = 'none';
+    } else {
+      refreshModalContent(); // Refresh content before showing
+      modal.style.display = 'flex';
+    }
   };
 
   // Close on backdrop click
