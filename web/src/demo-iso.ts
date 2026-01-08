@@ -26,6 +26,40 @@ const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
 
 /**
+ * Configuration options parsed from query string.
+ *
+ * Available query parameters:
+ * - fullscreen=true: Enable fullscreen mode with burger menu
+ * - scene=<name>: Select scene (swap, simple, doubleExit, etc.)
+ * - hideControls=true: Hide side controls panel
+ * - hideHeader=true: Hide title and description
+ *
+ * Examples:
+ * - demo-iso.html?fullscreen=true&hideHeader=true&hideControls=true
+ * - demo-iso.html?scene=swap
+ * - demo-iso.html?fullscreen=true&scene=simple
+ */
+interface DemoConfig {
+  fullscreen: boolean;
+  scene: string;
+  hideControls: boolean;
+  hideHeader: boolean;
+}
+
+/**
+ * Parse query string parameters into configuration.
+ */
+function parseConfig(): DemoConfig {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    fullscreen: params.get('fullscreen') === 'true',
+    scene: params.get('scene') || 'indirectSelfRef',
+    hideControls: params.get('hideControls') === 'true',
+    hideHeader: params.get('hideHeader') === 'true',
+  };
+}
+
+/**
  * Interactive demo class.
  */
 class IsometricDemo {
@@ -42,9 +76,12 @@ class IsometricDemo {
   private currentRenderer: Renderer | null = null;
   private animator: ParagridAnimator;
   private previousPlayerPosition: CellPosition | null = null;
-  private readonly renderWidth = 800;
-  private readonly renderHeight = 600;
+  private renderWidth = 800;
+  private renderHeight = 600;
   private readonly allowRapidInput = true; // Set to true to cancel animations on new input
+  private readonly isFullscreen: boolean;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeTimeout: number | null = null;
   private undoStack: GridStore[] = []; // Stack of previous states
   private redoStack: GridStore[] = []; // Stack of undone states
   private readonly maxHistorySize = 50; // Limit to prevent memory issues
@@ -64,17 +101,22 @@ class IsometricDemo {
     store: GridStore,
     tagFn: TagFn,
     canvas: HTMLElement,
-    statusEl: HTMLElement
+    statusEl: HTMLElement,
+    isFullscreen: boolean = false
   ) {
     this.store = store;
     this.originalStore = store;
     this.tagFn = tagFn;
     this.canvas = canvas;
     this.statusEl = statusEl;
+    this.isFullscreen = isFullscreen;
     this.animator = new ParagridAnimator({
       movementDuration: 0.3,
       cameraDuration: CAMERA_ANIMATION_DURATION
     });
+
+    // Set initial dimensions
+    this.updateDimensions();
 
     // Initialize hierarchy helper and camera controller
     this.hierarchyHelper = new HierarchyHelper(this.store);
@@ -94,11 +136,73 @@ class IsometricDemo {
     this.setupExportButton();
     this.setupManualViewControls();
     this.setupAnimationStatusPanel();
+    this.setupResizeHandler();
     this.render();
   }
 
   private get playerPosition(): CellPosition | null | undefined {
     return findTaggedCell(this.store, this.playerTag, this.tagFn);
+  }
+
+  /**
+   * Update render dimensions based on canvas size.
+   */
+  private updateDimensions(): void {
+    if (this.isFullscreen) {
+      // Use actual canvas client dimensions
+      const rect = this.canvas.getBoundingClientRect();
+      this.renderWidth = rect.width;
+      this.renderHeight = rect.height;
+    } else {
+      // Use fixed dimensions for standard mode
+      this.renderWidth = 800;
+      this.renderHeight = 600;
+    }
+  }
+
+  /**
+   * Setup resize handler for fullscreen mode.
+   */
+  private setupResizeHandler(): void {
+    if (!this.isFullscreen) {
+      return;
+    }
+
+    // Use ResizeObserver for more accurate size tracking
+    this.resizeObserver = new ResizeObserver(() => {
+      this.handleResize();
+    });
+    this.resizeObserver.observe(this.canvas);
+
+    // Also listen to window resize as fallback
+    window.addEventListener('resize', () => {
+      this.handleResize();
+    });
+  }
+
+  /**
+   * Handle window/canvas resize events with debouncing.
+   */
+  private handleResize(): void {
+    // Debounce resize to avoid excessive re-renders
+    if (this.resizeTimeout !== null) {
+      window.clearTimeout(this.resizeTimeout);
+    }
+
+    this.resizeTimeout = window.setTimeout(() => {
+      const oldWidth = this.renderWidth;
+      const oldHeight = this.renderHeight;
+
+      this.updateDimensions();
+
+      // Only re-render if dimensions actually changed
+      if (this.renderWidth !== oldWidth || this.renderHeight !== oldHeight) {
+        // Force rebuild to recreate renderer with new dimensions
+        this.render(true);
+      }
+
+      this.resizeTimeout = null;
+    }, 100); // 100ms debounce
   }
 
   private setupKeyboardHandlers(): void {
@@ -710,7 +814,7 @@ class IsometricDemo {
         m.cellId.startsWith(`ref-${focusedGridId}-`)
       );
       if (focusedMovement) {
-        console.log(`Tracking camera for focused grid '${focusedGridId}', movement:`, focusedMovement);
+        // console.log(`Tracking camera for focused grid '${focusedGridId}', movement:`, focusedMovement);
         // Calculate camera start and end positions based on the grid's movement
         const scaleResult = getScaleAndOffset(this.store, this.currentViewPath);
         if (scaleResult) {
@@ -1111,15 +1215,26 @@ class IsometricDemo {
 
 const GRIDS = {
   swap: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ _ _ 9|9 ~inner 2 main 1 *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ _ a _ _ 9|9 _ _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ r_ 9|9 _ _ _ _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: 'b _ _|_ _ _|_ _ _',
-    b: '_ _ _|_ _ _|_ _ _'
+    a: 'b _ _|_ _ _|_ 9 _',
+    b: '1 _ _|_ _ _|_ 9 _'
   },
+
+  indirectSelfRef: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ _ _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ 1 a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+    a: 'b _ _|_ main _|_ _ 9',
+    b: '_ _ _|_ _ _|_ _ 9'
+  },
+
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
   doubleExit: {
     main: '_ _ _|a 2 1|_ _ _',
@@ -1147,9 +1262,168 @@ const GRIDS = {
   },
 };
 
+/**
+ * Apply UI configuration based on config.
+ */
+function applyUIConfig(config: DemoConfig): void {
+  const container = document.querySelector('.container') as HTMLElement;
+  const header = document.querySelector('h1') as HTMLElement;
+  const description = document.querySelector('.description') as HTMLElement;
+  const manualView = document.getElementById('manual-view');
+  const animationStatus = document.getElementById('animation-status');
+  const statusPanel = document.getElementById('status');
+  const exportButtons = document.querySelector('.container > div:last-child') as HTMLElement;
+  const canvas = document.getElementById('canvas') as HTMLElement;
+  const demoArea = document.querySelector('.demo-area') as HTMLElement;
+
+  // Apply fullscreen mode
+  if (config.fullscreen) {
+    document.body.style.padding = '0';
+    document.body.style.margin = '0';
+    document.body.style.overflow = 'hidden';
+    if (container) {
+      container.style.maxWidth = '100%';
+      container.style.width = '100vw';
+      container.style.height = '100vh';
+      container.style.display = 'flex';
+      container.style.flexDirection = 'column';
+      container.style.padding = '0';
+    }
+    if (canvas) {
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.maxWidth = 'none';
+      canvas.style.maxHeight = 'none';
+      canvas.style.flex = '1';
+      canvas.style.minHeight = '0';
+    }
+    if (demoArea) {
+      demoArea.style.flex = '1';
+      demoArea.style.marginTop = '0';
+      demoArea.style.width = '100%';
+      demoArea.style.minHeight = '0';
+      demoArea.style.display = 'flex';
+      demoArea.style.gap = '0';
+    }
+  }
+
+  // Hide header if requested
+  if (config.hideHeader) {
+    if (header) header.style.display = 'none';
+    if (description) description.style.display = 'none';
+  }
+
+  // Hide controls if requested
+  if (config.hideControls) {
+    if (manualView) manualView.style.display = 'none';
+    if (animationStatus) animationStatus.style.display = 'none';
+    if (statusPanel) statusPanel.style.display = 'none';
+    if (exportButtons) exportButtons.style.display = 'none';
+  }
+
+  // Add burger menu for fullscreen mode
+  if (config.fullscreen) {
+    createBurgerMenu(config);
+  }
+}
+
+/**
+ * Create burger menu for fullscreen mode.
+ */
+function createBurgerMenu(config: DemoConfig): void {
+  const burgerButton = document.createElement('button');
+  burgerButton.id = 'burger-menu';
+  burgerButton.innerHTML = '☰';
+  burgerButton.style.cssText = `
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    width: 3rem;
+    height: 3rem;
+    background: #4fc3f7;
+    color: #1a1a1a;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    z-index: 1000;
+    transition: background 0.2s;
+  `;
+  burgerButton.onmouseenter = () => burgerButton.style.background = '#81d4fa';
+  burgerButton.onmouseleave = () => burgerButton.style.background = '#4fc3f7';
+
+  const modal = document.createElement('div');
+  modal.id = 'settings-modal';
+  modal.style.cssText = `
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 999;
+    align-items: center;
+    justify-content: center;
+  `;
+
+  const modalContent = document.createElement('div');
+  modalContent.style.cssText = `
+    background: #2a2a2a;
+    border: 2px solid #444;
+    border-radius: 8px;
+    padding: 2rem;
+    max-width: 600px;
+    max-height: 80vh;
+    overflow-y: auto;
+    color: #e0e0e0;
+  `;
+
+  // Clone the controls into the modal
+  const manualView = document.getElementById('manual-view');
+  const animationStatus = document.getElementById('animation-status');
+  const status = document.getElementById('status');
+  const exportButtons = document.querySelector('.container > div:last-child');
+
+  if (manualView) modalContent.appendChild(manualView.cloneNode(true));
+  if (animationStatus) modalContent.appendChild(animationStatus.cloneNode(true));
+  if (status) {
+    const statusClone = status.cloneNode(true) as HTMLElement;
+    statusClone.style.marginBottom = '1rem';
+    modalContent.appendChild(statusClone);
+  }
+  if (exportButtons) modalContent.appendChild(exportButtons.cloneNode(true));
+
+  const closeButton = document.createElement('button');
+  closeButton.textContent = 'Close';
+  closeButton.className = 'export-button';
+  closeButton.style.marginTop = '1rem';
+  closeButton.onclick = () => modal.style.display = 'none';
+  modalContent.appendChild(closeButton);
+
+  modal.appendChild(modalContent);
+  document.body.appendChild(burgerButton);
+  document.body.appendChild(modal);
+
+  burgerButton.onclick = () => {
+    modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+  };
+
+  // Close on backdrop click
+  modal.onclick = (e) => {
+    if (e.target === modal) {
+      modal.style.display = 'none';
+    }
+  };
+}
+
 // Initialize the demo when the page loads
 document.addEventListener('DOMContentLoaded', () => {
-  const store = parseGrids(GRIDS.swapEdited);
+  const config = parseConfig();
+
+  // Select the scene based on config
+  const sceneData = (GRIDS as any)[config.scene] || GRIDS.indirectSelfRef;
+  const store = parseGrids(sceneData);
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
@@ -1172,5 +1446,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
-  new IsometricDemo(store, tagFn, canvas, status);
+  // Apply UI configuration
+  applyUIConfig(config);
+
+  new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
 });
