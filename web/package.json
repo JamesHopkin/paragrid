@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run build:clean && tsc && npm run build:index && npm run build:demo",
+    "build:clean": "rm -rf dist",
+    "build:index": "vite build --outDir dist --emptyOutDir false",
+    "build:demo": "BUILD_TARGET=demo vite build --outDir dist --emptyOutDir false",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,9 +25,11 @@
     "@vitest/ui": "^4.0.16",
     "typescript": "^5.9.3",
     "vite": "^7.3.0",
+    "vite-plugin-singlefile": "^2.3.0",
     "vitest": "^4.0.16"
   },
   "dependencies": {
-    "fraction.js": "^5.3.4"
+    "fraction.js": "^5.3.4",
+    "iso-render": "file:../../ts-poly"
   }
 }
