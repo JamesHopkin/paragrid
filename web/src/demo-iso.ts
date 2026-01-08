@@ -1427,29 +1427,29 @@ function createMobileControls(demo: IsometricDemo): void {
 
     if (isPhone) {
       // Phone: One button in each corner
-      // Bottom-left: West
+      // Bottom-left: West (↙ southwest)
       westBtn.style.bottom = buttonPadding;
       westBtn.style.left = buttonPadding;
       westBtn.style.top = 'auto';
       westBtn.style.right = 'auto';
 
-      // Bottom-right: East
-      eastBtn.style.bottom = buttonPadding;
-      eastBtn.style.right = buttonPadding;
-      eastBtn.style.top = 'auto';
-      eastBtn.style.left = 'auto';
+      // Bottom-right: South (↘ southeast)
+      southBtn.style.bottom = buttonPadding;
+      southBtn.style.right = buttonPadding;
+      southBtn.style.top = 'auto';
+      southBtn.style.left = 'auto';
 
-      // Top-left: North
+      // Top-left: North (↖ northwest)
       northBtn.style.top = buttonPadding;
       northBtn.style.left = buttonPadding;
       northBtn.style.bottom = 'auto';
       northBtn.style.right = 'auto';
 
-      // Top-right: South
-      southBtn.style.top = buttonPadding;
-      southBtn.style.right = buttonPadding;
-      southBtn.style.bottom = 'auto';
-      southBtn.style.left = 'auto';
+      // Top-right: East (↗ northeast)
+      eastBtn.style.top = buttonPadding;
+      eastBtn.style.right = buttonPadding;
+      eastBtn.style.bottom = 'auto';
+      eastBtn.style.left = 'auto';
     } else {
       // Tablet: All four buttons clustered in bottom-left
       const spacing = '0.5rem';
