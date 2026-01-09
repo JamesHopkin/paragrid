@@ -40,6 +40,17 @@ export class AnimatedParentViewCameraController implements CameraController {
     // Base everything on fromViewPath, so we don't briefly show the background before zooming in
     const fromViewPath = buildViewPath(this.helper, fromGridId);
 
+    if (fromGridId === toGridId) {
+      if (this.helper.getParent(fromGridId) !== toGridId) {
+        console.warn(`Entering same grid but not self-reference (grid ${fromGridId})?`)
+      }
+
+      return {
+        targetView: [...fromViewPath, fromViewPath[0]],
+        animationStartView: fromViewPath
+      }
+    }
+
     const gridsDownToTo = this.helper.getAncestorChain(toGridId, fromGridId);
     gridsDownToTo.reverse();
 
@@ -56,6 +67,17 @@ export class AnimatedParentViewCameraController implements CameraController {
   onPlayerExit(fromGridId: string, toGridId: string): ViewUpdate {
     // Base everything on toViewPath, so we don't briefly show the background before popping in ancestors
     const toViewPath = buildViewPath(this.helper, toGridId);
+
+    if (fromGridId === toGridId) {
+      if (this.helper.getParent(fromGridId) !== toGridId) {
+        console.warn(`Exiting to same grid but not self-reference (grid ${fromGridId})?`)
+      }
+
+      return {
+        targetView: toViewPath,
+        animationStartView: [...toViewPath, toViewPath[0]]
+      }
+    }
 
     const gridsDownToFrom = this.helper.getAncestorChain(fromGridId, toGridId);
     gridsDownToFrom.reverse();
