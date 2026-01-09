@@ -60,10 +60,18 @@ export class AnimatedParentViewCameraController implements CameraController {
     const gridsDownToFrom = this.helper.getAncestorChain(fromGridId, toGridId);
     gridsDownToFrom.reverse();
 
-    return {
+    const result = {
       targetView: toViewPath,
       animationStartView: [...toViewPath, ...gridsDownToFrom]
     };
+
+    console.log(`[EXIT] from=${fromGridId} to=${toGridId}`);
+    console.log(`  toViewPath: [${toViewPath.join(', ')}]`);
+    console.log(`  gridsDownToFrom: [${gridsDownToFrom.join(', ')}]`);
+    console.log(`  animationStartView: [${result.animationStartView.join(', ')}]`);
+    console.log(`  targetView: [${result.targetView.join(', ')}]`);
+
+    return result;
   }
 
   /**

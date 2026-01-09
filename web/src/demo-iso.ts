@@ -637,6 +637,11 @@ class IsometricDemo {
         this.currentViewPath = newViewPath;
         this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
 
+        console.log(`[DEMO] View transition:`);
+        console.log(`  oldViewPath: [${oldViewPath?.join(', ') ?? 'null'}]`);
+        console.log(`  newViewPath: [${newViewPath.join(', ')}]`);
+        console.log(`  animationStartView: [${viewUpdate.animationStartView?.join(', ') ?? 'null'}]`);
+
         // Convert push chain to movements using hierarchy helper
         const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
 
@@ -879,8 +884,14 @@ class IsometricDemo {
     endViewPath: ViewPath
   ): void {
     // Calculate camera parameters for both views
-    const startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
+    let startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
     const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
+
+    console.log('[CAMERA PARAMS]');
+    console.log('  startViewPath:', startViewPath);
+    console.log('  startCameraParams:', startCameraParams);
+    console.log('  endViewPath:', endViewPath);
+    console.log('  endCameraParams:', endCameraParams);
 
     if (!startCameraParams || !endCameraParams) {
       console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
@@ -889,6 +900,32 @@ class IsometricDemo {
       this.currentRenderer = null;
       this.render(true);
       return;
+    }
+
+    // Check if the focused grid (last in endViewPath) is moving and adjust camera tracking
+    // This ensures the camera zoom animation tracks the focused grid when it moves (e.g., self-reference exits)
+    const focusedGridId = endViewPath[endViewPath.length - 1];
+    const movingRef = movements.find(m => m.cellId.startsWith(`ref-${focusedGridId}-`));
+    if (movingRef) {
+      console.log(`[TRACK] Focused grid '${focusedGridId}' is moving, adjusting camera start position`);
+      const displacement = [
+        movingRef.oldPos[0] - movingRef.newPos[0],
+        movingRef.oldPos[1] - movingRef.newPos[1],
+        movingRef.oldPos[2] - movingRef.newPos[2]
+      ];
+      console.log(`  displacement:`, displacement);
+      console.log(`  old startCameraParams:`, startCameraParams);
+
+      // Offset the start camera position to track the moving grid
+      startCameraParams = {
+        position: [
+          startCameraParams.position[0] + displacement[0],
+          startCameraParams.position[1] + displacement[1],
+          startCameraParams.position[2] + displacement[2]
+        ],
+        viewWidth: startCameraParams.viewWidth
+      };
+      console.log(`  new startCameraParams:`, startCameraParams);
     }
 
     // Stop any existing animations
