@@ -80,9 +80,10 @@ export interface CameraController {
    *
    * @param fromGridId - Grid the player is leaving
    * @param toGridId - Grid the player is entering
+   * @param viaNonPrimaryReference - True if entering via a non-primary (secondary) reference
    * @returns View update, potentially with animation start view
    */
-  onPlayerEnter(fromGridId: string, toGridId: string): ViewUpdate;
+  onPlayerEnter(fromGridId: string, toGridId: string, viaNonPrimaryReference: boolean): ViewUpdate;
 
   /**
    * Get view update when player exits a grid (moving out of a reference cell).

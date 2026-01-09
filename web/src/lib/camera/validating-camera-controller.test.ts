@@ -37,7 +37,7 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        const update = validating.onPlayerEnter('child', 'grandchild');
+        const update = validating.onPlayerEnter('child', 'grandchild', false);
         expect(update.targetView).toBeDefined();
       }).not.toThrow();
     });
@@ -80,7 +80,7 @@ describe('ValidatingCameraController', () => {
         return { targetView: ['nonexistent'] };
       }
 
-      onPlayerEnter(_fromGridId: string, _toGridId: string): ViewUpdate {
+      onPlayerEnter(_fromGridId: string, _toGridId: string, _viaNonPrimaryReference: boolean): ViewUpdate {
         return { targetView: ['invalid', 'path'] };
       }
 
@@ -112,7 +112,7 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        validating.onPlayerEnter('root', 'root');
+        validating.onPlayerEnter('root', 'root', false);
       }).toThrow("Grid 'invalid' does not exist");
     });
 

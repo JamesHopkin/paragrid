@@ -133,7 +133,7 @@ export function validateViewPath(
  *
  * @example
  * ```typescript
- * const update = cameraController.onPlayerEnter('from', 'to');
+ * const update = cameraController.onPlayerEnter('from', 'to', false);
  * const result = validateViewUpdate(store, update, 'onPlayerEnter');
  * if (!result.valid) {
  *   console.error(`Camera error in onPlayerEnter: ${result.error.message}`);

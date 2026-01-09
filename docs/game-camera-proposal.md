@@ -145,7 +145,7 @@ Defines the interface for game camera controllers:
 - `ViewUpdate` - Return type containing target view and optional animation start view
 - `CameraController` interface with methods:
   - `getInitialView(store, playerGridId)` - Get initial view when game starts
-  - `onPlayerEnter(store, fromGridId, toGridId)` - Handle player entering a grid
+  - `onPlayerEnter(store, fromGridId, toGridId, viaNonPrimaryReference)` - Handle player entering a grid
   - `onPlayerExit(store, fromGridId, toGridId)` - Handle player exiting a grid
   - `onPlayerMove(store, gridId)` - Handle player moving within same grid
 

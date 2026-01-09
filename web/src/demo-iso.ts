@@ -5,7 +5,7 @@
 import { parseGrids } from './lib/parser/parser.js';
 import type { GridStore, Grid } from './lib/core/types.js';
 import type { Cell } from './lib/core/types.js';
-import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
+import { Concrete, isConcrete, getGrid, isRef } from './lib/core/types.js';
 import { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
 import { push, type PushResult, detectGridTransition } from './lib/operations/push.js';
@@ -727,10 +727,15 @@ class IsometricDemo {
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
+          // Determine if entering via a non-primary reference
+          const enterCell = pushChain[1].cell;
+          const viaNonPrimaryReference = isRef(enterCell) && enterCell.isPrimary === false;
+
           viewUpdate = this.safeCallCamera(
             () => this.cameraController.onPlayerEnter(
               playerPos.gridId,
-              newPos.gridId
+              newPos.gridId,
+              viaNonPrimaryReference
             ),
             'player enter'
           );

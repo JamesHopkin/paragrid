@@ -198,7 +198,10 @@ private attemptPush(direction: Direction): void {
 
     let viewUpdate;
     if (transition?.type === 'enter') {
-      viewUpdate = this.cameraController.onPlayerEnter(playerPos.gridId, newPos.gridId);
+      // Check if entering via non-primary reference
+      const enterCell = pushChain[1].cell;
+      const viaNonPrimaryReference = isRef(enterCell) && enterCell.isPrimary === false;
+      viewUpdate = this.cameraController.onPlayerEnter(playerPos.gridId, newPos.gridId, viaNonPrimaryReference);
     } else if (transition?.type === 'exit') {
       viewUpdate = this.cameraController.onPlayerExit(playerPos.gridId, newPos.gridId);
     } else {
