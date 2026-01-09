@@ -48,7 +48,7 @@ export class AnimatedParentViewCameraController implements CameraController {
       return {
         targetView: [...fromViewPath, fromViewPath[0]],
         animationStartView: fromViewPath
-      }
+      };
     }
 
     const gridsDownToTo = this.helper.getAncestorChain(toGridId, fromGridId);
@@ -73,10 +73,25 @@ export class AnimatedParentViewCameraController implements CameraController {
         console.warn(`Exiting to same grid but not self-reference (grid ${fromGridId})?`)
       }
 
-      return {
-        targetView: toViewPath,
-        animationStartView: [...toViewPath, toViewPath[0]]
+      // Self-reference exit: un-nest from doubled path to single path
+      // toViewPath might already be doubled (e.g., [main, main]), so extract the base path
+      const gridId = toGridId;
+      let basePath: string[];
+
+      if (toViewPath.length >= 2 &&
+          toViewPath[toViewPath.length - 1] === gridId &&
+          toViewPath[toViewPath.length - 2] === gridId) {
+        // toViewPath is already doubled, remove the duplication
+        basePath = toViewPath.slice(0, -1);
+      } else {
+        // toViewPath is not doubled, use as-is
+        basePath = toViewPath;
       }
+
+      return {
+        targetView: basePath,                    // [main] - where we're going
+        animationStartView: [...basePath, gridId]  // [main, main] - where we are
+      };
     }
 
     const gridsDownToFrom = this.helper.getAncestorChain(fromGridId, toGridId);

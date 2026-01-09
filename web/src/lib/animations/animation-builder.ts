@@ -164,20 +164,31 @@ export function chainToMovements(
         continue;
       }
 
-      if (nextEntry.transition === 'enter') {
-        oldViewPath = overlapSuffixPrefix(oldViewPath, newViewPath);
-        if (oldViewPath.length === 0) {
-          console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
-          console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
-          continue;
+      // Special case: self-reference enter/exit
+      // For self-reference transitions, skip object animation entirely
+      // The camera zoom animation provides the visual transition
+      // Object animations don't make sense here because the coordinate systems
+      // are the same grid at different zoom levels
+      const isSelfReference = oldCellPos.gridId === newCellPos.gridId;
+      if (isSelfReference) {
+        continue;
+      } else {
+        // Normal enter/exit: find overlapping coordinate system
+        if (nextEntry.transition === 'enter') {
+          oldViewPath = overlapSuffixPrefix(oldViewPath, newViewPath);
+          if (oldViewPath.length === 0) {
+            console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
+            console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
+            continue;
+          }
         }
-      }
-      else {
-        newViewPath = overlapSuffixPrefix(newViewPath, oldViewPath);
-        if (newViewPath.length === 0) {
-          console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
-          console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
-          continue;
+        else {
+          newViewPath = overlapSuffixPrefix(newViewPath, oldViewPath);
+          if (newViewPath.length === 0) {
+            console.warn(`  [WARN] Skipping animation for ${cellId}: no overlap between view paths`);
+            console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col}), transition: ${nextEntry.transition}`);
+            continue;
+          }
         }
       }
 
@@ -195,12 +206,33 @@ export function chainToMovements(
 
       oldPos = [oldWorldPos.x, oldWorldPos.y, oldWorldPos.z];
       newPos = [newWorldPos.x, newWorldPos.y, newWorldPos.z];
+
+      // Sanity check: even for enter/exit, cell coordinates shouldn't be too far apart
+      // (more than a few cells suggests something might be wrong)
+      const cellRowDist = Math.abs(newCellPos.row - oldCellPos.row);
+      const cellColDist = Math.abs(newCellPos.col - oldCellPos.col);
+      const maxCellDist = Math.max(cellRowDist, cellColDist);
+      if (maxCellDist > 5) {
+        console.warn(`  [WARN] ${cellId}: Enter/exit movement has large cell coordinate displacement (${maxCellDist} cells)`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col}), transition: ${nextEntry.transition}`);
+        console.warn(`    New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+        console.warn(`    This might indicate incorrect world position calculation`);
+      }
     } else {
       // For in-grid movements, use grid-local coordinates
       // Cell centers are at (col + 0.5, row + 0.5) in grid-local space
       // where each cell is 1x1 units
       oldPos = [oldCellPos.col + 0.5, 0, oldCellPos.row + 0.5];
       newPos = [newCellPos.col + 0.5, 0, newCellPos.row + 0.5];
+
+      // Sanity check: in-grid movements should be exactly 1 cell (Manhattan distance)
+      const manhattanDist = Math.abs(newCellPos.row - oldCellPos.row) +
+                           Math.abs(newCellPos.col - oldCellPos.col);
+      if (manhattanDist !== 1) {
+        console.warn(`  [WARN] ${cellId}: In-grid movement is ${manhattanDist} cells (expected 1)`);
+        console.warn(`    Old: [${oldCellPos.gridId}](${oldCellPos.row},${oldCellPos.col})`);
+        console.warn(`    New: [${newCellPos.gridId}](${newCellPos.row},${newCellPos.col})`);
+      }
     }
 
     // Calculate scale values for enter/exit movements
