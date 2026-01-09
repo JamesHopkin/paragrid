@@ -239,14 +239,19 @@
       </div>
 
       <div style="margin-top: 2rem; max-width: 300px; margin-left: auto; margin-right: 0;">
-        <button id="export-scene" class="export-button">Export Scene JSON</button>
-        <p style="color: #aaa; font-size: 0.85rem; margin-top: 0.5rem; text-align: center;">
-          Logs scene to browser console
-        </p>
-
-        <button id="export-svg" class="export-button" style="margin-top: 1rem;">Export Scene SVG</button>
-        <p style="color: #aaa; font-size: 0.85rem; margin-top: 0.5rem; text-align: center;">
-          Downloads SVG file
+        <strong>Export</strong>
+        <select
+          id="export-format-select"
+          class="manual-view-input"
+          style="cursor: pointer; margin-top: 0.5rem;"
+        >
+          <option value="grid-store">Grid Store (console)</option>
+          <option value="scene-json">Scene JSON (console)</option>
+          <option value="scene-svg">Scene SVG (download)</option>
+        </select>
+        <button id="export-button" class="export-button" style="margin-top: 0.5rem;">Export</button>
+        <p id="export-description" style="color: #aaa; font-size: 0.85rem; margin-top: 0.5rem; text-align: center;">
+          Logs grid definitions to console
         </p>
       </div>
     </div>

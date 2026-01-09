@@ -50,15 +50,15 @@ export class ValidatingCameraController implements CameraController {
   }
 
   /**
-   * Get initial view when the game starts.
+   * Get standard steady-state view.
    * Validates the result before returning.
    */
-  getInitialView(playerGridId: string): ViewUpdate {
-    const update = this.controller.getInitialView(playerGridId);
+  getStandardView(playerGridId: string): ViewUpdate {
+    const update = this.controller.getStandardView(playerGridId);
     assertValidViewUpdate(
       this.store,
       update,
-      `${this.controller.constructor.name}.getInitialView`
+      `${this.controller.constructor.name}.getStandardView`
     );
     return update;
   }

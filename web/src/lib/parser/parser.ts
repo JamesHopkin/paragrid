@@ -124,3 +124,59 @@ export function parseGrids(definitions: Record<string, string>): GridStore {
 
   return Object.freeze(store);
 }
+
+/**
+ * Export grid store to the compact string format (inverse of parseGrids).
+ *
+ * @param store - GridStore to export
+ * @returns Object mapping grid_id to string definition
+ *
+ * @example
+ * const store = parseGrids({
+ *   "main": "1 A|2 3",
+ *   "A": "4 5|6 7"
+ * });
+ * const exported = exportGrids(store);
+ * // exported === { "main": "1 A|2 3", "A": "4 5|6 7" }
+ */
+export function exportGrids(store: GridStore): Record<string, string> {
+  const result: Record<string, string> = {};
+
+  for (const [gridId, grid] of Object.entries(store)) {
+    const rowStrings: string[] = [];
+
+    for (let rowIdx = 0; rowIdx < grid.rows; rowIdx++) {
+      const cellStrings: string[] = [];
+
+      for (let colIdx = 0; colIdx < grid.cols; colIdx++) {
+        const cell = grid.cells[rowIdx][colIdx];
+
+        if (cell.type === 'empty') {
+          // Empty cell - use underscore
+          cellStrings.push('_');
+        } else if (cell.type === 'concrete') {
+          // Concrete cell - use the ID directly
+          cellStrings.push(cell.id);
+        } else if (cell.type === 'ref') {
+          // Ref cell - prefix based on isPrimary status
+          if (cell.isPrimary === true) {
+            // Explicitly primary
+            cellStrings.push('*' + cell.gridId);
+          } else if (cell.isPrimary === false) {
+            // Explicitly secondary
+            cellStrings.push('~' + cell.gridId);
+          } else {
+            // Auto-determined (null)
+            cellStrings.push(cell.gridId);
+          }
+        }
+      }
+
+      rowStrings.push(cellStrings.join(' '));
+    }
+
+    result[gridId] = rowStrings.join('|');
+  }
+
+  return result;
+}

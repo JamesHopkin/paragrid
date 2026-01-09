@@ -46,9 +46,12 @@ interface CellTreeNode {
 
 ## Offset Semantics
 
-- **Depth -1**: `[cell_x - ref_x, cell_y - ref_y]` where `[ref_x, ref_y]` is the focus reference position
+- **Depth < 0 (ancestors)**: `[cell_x - ref_x, cell_y - ref_y]` where `[ref_x, ref_y]` is the position of the reference cell that points toward the focused grid
+  - For depth -1: offset from the ref to the focused grid's parent
+  - For depth -2: offset from the ref to the focused grid's grandparent
+  - And so on for all ancestor levels
 - **Depth 0**: `[cell_x, cell_y]` within the focused grid
-- **Other depths**: `undefined`
+- **Depth > 0 (descendants)**: `undefined` (offsets not provided for descendant grids)
 
 ## Implementation
 

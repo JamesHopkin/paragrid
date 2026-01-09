@@ -31,6 +31,11 @@ export interface PushChainEntry {
   readonly position: CellPosition;
   readonly cell: Cell;
   readonly transition: TransitionType;
+  /**
+   * For 'enter' transitions, indicates whether entry was via a non-primary (secondary) reference.
+   * Undefined for other transition types.
+   */
+  readonly viaNonPrimaryReference?: boolean;
   // Future: Add more metadata fields for custom animations
   // readonly metadata?: { duration?: number; easing?: string; ... }
 }
@@ -89,7 +94,7 @@ export function pushSimple(
 
   // Initialize navigator
   const nav = new Navigator(store, start, direction);
-  const path: Array<[CellPosition, TransitionType]> = [[start, null]];
+  const path: Array<[CellPosition, TransitionType, boolean?]> = [[start, null, undefined]];
   const visited = new Set<string>([`${start.gridId},${start.row},${start.col}`]);
   let depth = 0;
 
@@ -101,8 +106,10 @@ export function pushSimple(
       details: 'Cannot advance from start position (hit edge)',
     };
   }
-  // Get the transition type from the navigator
+  // Get the transition type and enter metadata from the navigator
   let currentTransition: TransitionType = nav.getLastTransition();
+  let currentViaNonPrimary: boolean | undefined =
+    currentTransition === 'enter' ? (nav.getLastEnterViaNonPrimary() ?? undefined) : undefined;
 
   while (depth < maxDepth) {
     depth++;
@@ -112,10 +119,10 @@ export function pushSimple(
 
     // Check for empty (success)
     if (isEmpty(currentCell)) {
-      path.push([nav.current, currentTransition]);
+      path.push([nav.current, currentTransition, currentViaNonPrimary]);
       // Build final path with cells for applyPush
-      const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = path.map(
-        ([pos, trans]) => [pos, getCell(store, pos), trans]
+      const finalPath: Array<readonly [CellPosition, Cell, TransitionType, boolean?]> = path.map(
+        ([pos, trans, viaNonPrimary]) => [pos, getCell(store, pos), trans, viaNonPrimary]
       );
       return applyPush(store, finalPath);
     }
@@ -134,10 +141,10 @@ export function pushSimple(
     if (visited.has(currentKey)) {
       // Cycle detected - check if cycling back to start (success) or elsewhere (failure)
       if (nav.current.equals(start)) {
-        path.push([nav.current, currentTransition]);
+        path.push([nav.current, currentTransition, currentViaNonPrimary]);
         // Build final path with cells for applyPush
-        const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = path.map(
-          ([pos, trans]) => [pos, getCell(store, pos), trans]
+        const finalPath: Array<readonly [CellPosition, Cell, TransitionType, boolean?]> = path.map(
+          ([pos, trans, viaNonPrimary]) => [pos, getCell(store, pos), trans, viaNonPrimary]
         );
         return applyPush(store, finalPath);
       } else {
@@ -186,20 +193,26 @@ export function pushSimple(
 
     // Execute the selected strategy and get next transition from navigator
     if (selectedStrategy === RefStrategyType.SOLID) {
-      path.push([nav.current, currentTransition]);
+      path.push([nav.current, currentTransition, currentViaNonPrimary]);
       nav.advance();
       currentTransition = nav.getLastTransition();
+      currentViaNonPrimary =
+        currentTransition === 'enter' ? (nav.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     } else if (selectedStrategy === RefStrategyType.PORTAL) {
       nav.enter(rules);
       currentTransition = nav.getLastTransition();
+      currentViaNonPrimary =
+        currentTransition === 'enter' ? (nav.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     } else if (selectedStrategy === RefStrategyType.SWALLOW) {
-      path.push([nav.current, currentTransition]);
+      path.push([nav.current, currentTransition, currentViaNonPrimary]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       nav.flip();
       nav.advance();
       nav.enter(rules);
       currentTransition = nav.getLastTransition();
+      currentViaNonPrimary =
+        currentTransition === 'enter' ? (nav.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     }
   }
 
@@ -214,11 +227,12 @@ export function pushSimple(
  * State for backtracking in push operations.
  */
 interface State {
-  readonly path: Array<[CellPosition, TransitionType]>;
+  readonly path: Array<[CellPosition, TransitionType, boolean?]>;
   readonly nav: Navigator;
   readonly strategies: RefStrategyType[];
   readonly visited: Set<string>;
   readonly nextTransition: TransitionType;
+  readonly nextViaNonPrimary?: boolean;
 }
 
 /**
@@ -256,10 +270,11 @@ export function push(
    * @returns 'succeed' if push succeeds, PushFailure if it fails, or a new State to continue processing
    */
   function makeNewState(
-    path: Array<[CellPosition, TransitionType]>,
+    path: Array<[CellPosition, TransitionType, boolean?]>,
     nav: Navigator,
     visited: Set<string>,
-    nextTransition: TransitionType
+    nextTransition: TransitionType,
+    nextViaNonPrimary?: boolean
   ): 'succeed' | PushFailure | State {
     // Check for empty (success)
     const currentCell = getCell(store, nav.current);
@@ -332,6 +347,7 @@ export function push(
       strategies,
       visited: newVisited,
       nextTransition,
+      nextViaNonPrimary,
     };
   }
 
@@ -360,17 +376,19 @@ export function push(
     };
   }
   const firstTransition: TransitionType = nav.getLastTransition();
+  const firstViaNonPrimary: boolean | undefined =
+    firstTransition === 'enter' ? (nav.getLastEnterViaNonPrimary() ?? undefined) : undefined;
 
   // Create initial state
-  const initialState = makeNewState([[start, null]], nav, initialVisited, firstTransition);
+  const initialState = makeNewState([[start, null, undefined]], nav, initialVisited, firstTransition, firstViaNonPrimary);
   if (typeof initialState === 'object' && 'reason' in initialState) {
     return initialState; // Failed immediately
   }
   if (initialState === 'succeed') {
     // Immediate success - pushed directly into empty
-    const finalPath: Array<readonly [CellPosition, Cell, TransitionType]> = [
-      [start, getCell(store, start), null],
-      [nav.current, getCell(store, nav.current), firstTransition],
+    const finalPath: Array<readonly [CellPosition, Cell, TransitionType, boolean?]> = [
+      [start, getCell(store, start), null, undefined],
+      [nav.current, getCell(store, nav.current), firstTransition, firstViaNonPrimary],
     ];
     return applyPush(store, finalPath);
   }
@@ -396,34 +414,41 @@ export function push(
 
     const newPath = [...state.path];
     let nextTransition: TransitionType;
+    let nextViaNonPrimary: boolean | undefined;
 
     if (strategy === RefStrategyType.SOLID) {
-      newPath.push([navClone.current, state.nextTransition]);
+      newPath.push([navClone.current, state.nextTransition, state.nextViaNonPrimary]);
       navClone.advance();
       nextTransition = navClone.getLastTransition();
+      nextViaNonPrimary =
+        nextTransition === 'enter' ? (navClone.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     } else if (strategy === RefStrategyType.PORTAL) {
       navClone.enter(rules);
       nextTransition = navClone.getLastTransition();
+      nextViaNonPrimary =
+        nextTransition === 'enter' ? (navClone.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     } else if (strategy === RefStrategyType.SWALLOW) {
-      newPath.push([navClone.current, state.nextTransition]);
+      newPath.push([navClone.current, state.nextTransition, state.nextViaNonPrimary]);
       // Swallow: S (last in path) swallows T (current)
       // Move T into S's referenced grid from opposite direction
       navClone.flip();
       navClone.advance();
       navClone.enter(rules);
       nextTransition = navClone.getLastTransition();
+      nextViaNonPrimary =
+        nextTransition === 'enter' ? (navClone.getLastEnterViaNonPrimary() ?? undefined) : undefined;
     } else {
       throw new Error(`Unknown strategy: ${strategy}`);
     }
 
-    const newState = makeNewState(newPath, navClone, state.visited, nextTransition);
+    const newState = makeNewState(newPath, navClone, state.visited, nextTransition, nextViaNonPrimary);
 
     if (newState === 'succeed') {
       // Build final path with cells for applyPush
-      const pathWithCells: Array<readonly [CellPosition, Cell, TransitionType]> = newPath.map(
-        ([pos, trans]) => [pos, getCell(store, pos), trans]
+      const pathWithCells: Array<readonly [CellPosition, Cell, TransitionType, boolean?]> = newPath.map(
+        ([pos, trans, viaNonPrimary]) => [pos, getCell(store, pos), trans, viaNonPrimary]
       );
-      pathWithCells.push([navClone.current, getCell(store, navClone.current), nextTransition]);
+      pathWithCells.push([navClone.current, getCell(store, navClone.current), nextTransition, nextViaNonPrimary]);
       return applyPush(store, pathWithCells);
     } else if (typeof newState === 'object' && 'reason' in newState) {
       // Store failure for potential return if all strategies exhausted

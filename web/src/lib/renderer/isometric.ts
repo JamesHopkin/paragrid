@@ -6,7 +6,7 @@
  * an isometric scene with checkerboard floors and floating cubes.
  */
 
-import { SceneBuilder, Camera, cube, octahedron, project, Renderer, type Scene, type TransformOverrides } from 'iso-render';
+import { SceneBuilder, Camera, cube, octahedron, pyramid, project, Renderer, type Scene, type TransformOverrides } from 'iso-render';
 
 /**
  * Create a camera with paragrid's standard viewing angles.
@@ -60,7 +60,7 @@ function computeFocusLayer(
   }
 
   // Only apply to siblings of the focused grid (focusDepth === -1, i.e., parent grid)
-  if (node.focusDepth !== -1 || !node.focusOffset) {
+  if (node.focusDepth == null || node.focusDepth >= 0 || !node.focusOffset) {
     return undefined;
   }
 
@@ -150,6 +150,7 @@ export function buildIsometricScene(
 
   builder.object('concrete-cube', cube(0.8));
   builder.object('player-octahedron', octahedron(0.8));
+  builder.object('concrete-pyramid', pyramid(0.7));
 
   // Half-height box for 'stop' tagged cells (broader than regular cubes)
 
@@ -425,10 +426,10 @@ function getStopBlockColor(floorColor: string): string {
 }
 
 /**
- * Get color for a concrete cell based on its ID.
- * Uses light pastel colors for objects.
+ * Get model type, y offset, and color for a concrete cell based on its ID.
+ * Alternates between cubes and pyramids, keeping the current colors for each index.
  */
-function getCellColor(cellId: string): string {
+function getCellColor(cellId: string): { model: 'cube' | 'pyramid'; yOffset: number; color: string } {
   const colors: Record<string, string> = {
     '1': '#ffb3ba', // Light red/pink
     '2': '#bae1ff', // Light blue
@@ -439,7 +440,17 @@ function getCellColor(cellId: string): string {
     '7': '#ffd4e5', // Light rose
     '8': '#d4f4dd', // Light green
   };
-  return colors[cellId] || getGridColor(cellId);
+
+  const color = colors[cellId] || getGridColor(cellId);
+
+  // Alternate between cube and pyramid based on cell ID
+  const cellNum = parseInt(cellId, 10);
+  const model = isNaN(cellNum) || cellNum % 2 === 1 ? 'cube' : 'pyramid';
+
+  // Different y offsets for cube vs pyramid
+  const yOffset = model === 'cube' ? 0.4 : 0.0;
+
+  return { model, yOffset, color };
 }
 
 /**
@@ -523,9 +534,14 @@ function renderGridDirect(
         const hasPlayer = tags.has('player');
         const hasStop = tags.has('stop');
 
-        let objectType = 'concrete-cube';
-        let yPos = 0.4;
-        let color = getCellColor(child.id);
+        if (hasPlayer) {
+          console.log('Player in renderGridDirect - focusDepth:', child.focusDepth, 'focusLayer:', focusLayer);
+        }
+
+        const cellInfo = getCellColor(child.id);
+        let objectType = cellInfo.model === 'cube' ? 'concrete-cube' : 'concrete-pyramid';
+        let yPos = cellInfo.yOffset;
+        let color = cellInfo.color;
 
         if (hasStop) {
           objectType = 'stop-box';
@@ -693,9 +709,10 @@ function buildGridTemplate(
         const hasPlayer = tags.has('player');
         const hasStop = tags.has('stop');
 
-        let objectType = 'concrete-cube';
-        let yPos = 0.4;
-        let color = getCellColor(child.id);
+        const cellInfo = getCellColor(child.id);
+        let objectType = cellInfo.model === 'cube' ? 'concrete-cube' : 'concrete-pyramid';
+        let yPos = cellInfo.yOffset;
+        let color = cellInfo.color;
 
         if (hasStop) {
           objectType = 'stop-box';
@@ -713,6 +730,11 @@ function buildGridTemplate(
         // This ensures ts-poly can target this group for animations
         // Apply focus-based layer if applicable, otherwise use baseLayer
         const focusLayer = computeFocusLayer(child, highlightPosition);
+
+        if (hasPlayer) {
+          console.log('Player in buildGridTemplate - focusDepth:', child.focusDepth, 'focusLayer:', focusLayer, 'baseLayer:', baseLayer);
+        }
+
         const effectiveLayer = focusLayer !== undefined ? focusLayer : baseLayer;
         builder.group(`concrete-${child.id}`, {
           position: [0, 0, 0],

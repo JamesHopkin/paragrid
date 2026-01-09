@@ -24,9 +24,9 @@ export class AnimatedParentViewCameraController implements CameraController {
   }
 
   /**
-   * Get initial view - no animation for first view.
+   * Get standard steady-state view - no animation for standard view.
    */
-  getInitialView(playerGridId: string): ViewUpdate {
+  getStandardView(playerGridId: string): ViewUpdate {
     return {
       targetView: buildViewPath(this.helper, playerGridId),
     };
@@ -37,6 +37,16 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Creates a zoom-in effect as the camera focuses on the entered grid.
    */
   onPlayerEnter(fromGridId: string, toGridId: string, viaNonPrimaryReference: boolean): ViewUpdate {
+    if (viaNonPrimaryReference) {
+      const toViewPath = buildViewPath(this.helper, toGridId);
+
+      // pretend we came from the parent if any
+      return {
+        targetView: toViewPath,
+        animationStartView: toViewPath.length > 1 ? toViewPath.slice(-1) : undefined
+      }
+    }
+
     // Base everything on fromViewPath, so we don't briefly show the background before zooming in
     const fromViewPath = buildViewPath(this.helper, fromGridId);
 

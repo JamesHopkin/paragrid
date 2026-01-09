@@ -2,10 +2,10 @@
  * Interactive isometric demo with WASD navigation.
  */
 
-import { parseGrids } from './lib/parser/parser.js';
+import { parseGrids, exportGrids } from './lib/parser/parser.js';
 import type { GridStore, Grid } from './lib/core/types.js';
 import type { Cell } from './lib/core/types.js';
-import { Concrete, isConcrete, getGrid, isRef } from './lib/core/types.js';
+import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
 import { CellPosition } from './lib/core/position.js';
 import { Direction } from './lib/core/direction.js';
 import { push, type PushResult, detectGridTransition } from './lib/operations/push.js';
@@ -27,6 +27,13 @@ const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
 
 const GRIDS = {
+  exported: {
+  "main": "9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ _ _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ a 9|9 9 9 9 9 9 9 9",
+  "inner": "9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9",
+  "a": "_ main *b|1 9 _|_ ~b 9",
+  "b": "_ 4 _|_ _ _|_ _ 9"
+},
+
   swap: {
     main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
           '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
@@ -204,7 +211,7 @@ class IsometricDemo {
     const playerPos = this.playerPosition;
     if (playerPos) {
       const initialView = this.safeCallCamera(
-        () => this.cameraController.getInitialView(playerPos.gridId),
+        () => this.cameraController.getStandardView(playerPos.gridId),
         'initial view'
       );
       if (initialView) {
@@ -338,19 +345,46 @@ class IsometricDemo {
   }
 
   private setupExportButton(): void {
-    const exportButton = document.getElementById('export-scene');
-    if (exportButton) {
-      exportButton.addEventListener('click', () => {
-        this.exportScene();
-      });
+    const exportButton = document.getElementById('export-button');
+    const exportFormatSelect = document.getElementById('export-format-select') as HTMLSelectElement;
+    const exportDescription = document.getElementById('export-description');
+
+    if (!exportButton || !exportFormatSelect || !exportDescription) {
+      return;
     }
 
-    const exportSvgButton = document.getElementById('export-svg');
-    if (exportSvgButton) {
-      exportSvgButton.addEventListener('click', () => {
-        this.exportSceneSVG();
-      });
-    }
+    // Update description when format changes
+    const updateDescription = () => {
+      const format = exportFormatSelect.value;
+      switch (format) {
+        case 'grid-store':
+          exportDescription.textContent = 'Logs grid definitions to console';
+          break;
+        case 'scene-json':
+          exportDescription.textContent = 'Logs scene to browser console';
+          break;
+        case 'scene-svg':
+          exportDescription.textContent = 'Downloads SVG file';
+          break;
+      }
+    };
+
+    exportFormatSelect.addEventListener('change', updateDescription);
+
+    exportButton.addEventListener('click', () => {
+      const format = exportFormatSelect.value;
+      switch (format) {
+        case 'grid-store':
+          this.exportGridStore();
+          break;
+        case 'scene-json':
+          this.exportScene();
+          break;
+        case 'scene-svg':
+          this.exportSceneSVG();
+          break;
+      }
+    });
   }
 
   private setupManualViewControls(): void {
@@ -587,7 +621,7 @@ class IsometricDemo {
     const playerPos = this.playerPosition;
     if (playerPos) {
       const view = this.safeCallCamera(
-        () => this.cameraController.getInitialView(playerPos.gridId),
+        () => this.cameraController.getStandardView(playerPos.gridId),
         'camera switch'
       );
       if (view) {
@@ -642,6 +676,14 @@ class IsometricDemo {
     URL.revokeObjectURL(url);
 
     console.log('SVG exported successfully');
+  }
+
+  private exportGridStore(): void {
+    const exported = exportGrids(this.store);
+    console.log('Grid Store Export:');
+    console.log(JSON.stringify(exported, null, 2));
+    console.log('\nParseable format for use with parseGrids():');
+    console.log(exported);
   }
 
   private attemptPush(direction: Direction): void {
@@ -727,9 +769,8 @@ class IsometricDemo {
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
-          // Determine if entering via a non-primary reference
-          const enterCell = pushChain[1].cell;
-          const viaNonPrimaryReference = isRef(enterCell) && enterCell.isPrimary === false;
+          // Get the viaNonPrimaryReference flag from the chain entry metadata
+          const viaNonPrimaryReference = pushChain[1].viaNonPrimaryReference ?? false;
 
           viewUpdate = this.safeCallCamera(
             () => this.cameraController.onPlayerEnter(
@@ -838,7 +879,7 @@ class IsometricDemo {
       const playerPos = this.playerPosition;
       if (playerPos) {
         const view = this.safeCallCamera(
-          () => this.cameraController.getInitialView(playerPos.gridId),
+          () => this.cameraController.getStandardView(playerPos.gridId),
           'reset'
         );
         if (view) {
@@ -884,7 +925,7 @@ class IsometricDemo {
       const playerPos = this.playerPosition;
       if (playerPos) {
         const view = this.safeCallCamera(
-          () => this.cameraController.getInitialView(playerPos.gridId),
+          () => this.cameraController.getStandardView(playerPos.gridId),
           'undo'
         );
         if (view) {
@@ -937,7 +978,7 @@ class IsometricDemo {
       const playerPos = this.playerPosition;
       if (playerPos) {
         const view = this.safeCallCamera(
-          () => this.cameraController.getInitialView(playerPos.gridId),
+          () => this.cameraController.getStandardView(playerPos.gridId),
           'redo'
         );
         if (view) {
@@ -1018,11 +1059,11 @@ class IsometricDemo {
   /**
    * Start the animation loop using requestAnimationFrame
    */
-  private startAnimationLoop(): void {
+  private startAnimationLoop(onComplete?: () => void): void {
     this.animator.start(() => {
       // Re-render each frame (camera animation will be applied in render method)
       this.render(false);
-    });
+    }, onComplete);
   }
 
   /**
@@ -1134,10 +1175,71 @@ class IsometricDemo {
     // Render initial frame with transforms at t=0 before starting animation loop
     this.render(false);
 
-    // Start animation loop
-    this.startAnimationLoop();
+    // Start animation loop with completion callback to return to standard view
+    this.startAnimationLoop(() => {
+      this.transitionToStandardView(endViewPath);
+    });
   }
 
+
+  /**
+   * Transition from the current view to the standard view if they differ.
+   * Called after camera animations complete to return to the steady-state view.
+   * This is an instant transition (no animation) since the views should be visually similar.
+   *
+   * @param currentViewPath - The view path we just animated to
+   */
+  private transitionToStandardView(currentViewPath: ViewPath): void {
+    // Skip if manual view is active
+    if (this.manualViewPath) {
+      return;
+    }
+
+    const playerPos = this.playerPosition;
+    if (!playerPos) {
+      return;
+    }
+
+    // Get the standard view
+    const standardViewUpdate = this.safeCallCamera(
+      () => this.cameraController.getStandardView(playerPos.gridId),
+      'get standard view'
+    );
+
+    if (!standardViewUpdate) {
+      return;
+    }
+
+    const standardViewPath = standardViewUpdate.targetView;
+
+    // Compare view paths - if they're the same, no transition needed
+    if (this.viewPathsEqual(currentViewPath, standardViewPath)) {
+      return;
+    }
+
+    // View paths differ - instantly switch to standard view (no animation)
+    // The visual change should be minimal since the views are similar
+    this.currentViewPath = standardViewPath;
+    this.currentScene = null;
+    this.currentCellTree = null;
+    this.currentRenderer = null;
+    this.render(true);
+  }
+
+  /**
+   * Check if two view paths are equal.
+   */
+  private viewPathsEqual(path1: ViewPath, path2: ViewPath): boolean {
+    if (path1.length !== path2.length) {
+      return false;
+    }
+    for (let i = 0; i < path1.length; i++) {
+      if (path1[i] !== path2[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
 
   /**
    * Rebuild scene data (analyze + build scene) without rendering.

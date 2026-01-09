@@ -48,12 +48,16 @@ export class Navigator {
   /** Type of the last navigation operation performed */
   private lastTransitionType: NavigatorTransition;
 
+  /** For 'enter' transitions, whether entry was via non-primary reference */
+  private lastEnterViaNonPrimary: boolean | null;
+
   constructor(store: GridStore, position: CellPosition, direction: Direction) {
     this.store = store;
     this.current = position.clone();
     this.direction = direction;
     this.visitedGrids = new Set();
     this.lastTransitionType = null;
+    this.lastEnterViaNonPrimary = null;
 
     this.deltas = {
       [Direction.N]: [-1, 0],
@@ -71,12 +75,22 @@ export class Navigator {
   }
 
   /**
+   * Get whether the last 'enter' transition was via a non-primary reference.
+   * Only meaningful when getLastTransition() returns 'enter'.
+   * @returns true if via non-primary ref, false if via primary ref, null if not applicable
+   */
+  getLastEnterViaNonPrimary(): boolean | null {
+    return this.lastEnterViaNonPrimary;
+  }
+
+  /**
    * Create a copy for backtracking.
    */
   clone(): Navigator {
     const nav = new Navigator(this.store, this.current, this.direction);
     nav.visitedGrids = new Set(this.visitedGrids);
     nav.lastTransitionType = this.lastTransitionType;
+    nav.lastEnterViaNonPrimary = this.lastEnterViaNonPrimary;
     return nav;
   }
 
@@ -90,8 +104,9 @@ export class Navigator {
    * @returns false if can't advance (hit root edge or exit cycle)
    */
   tryAdvance(): boolean {
-    // Clear visited grids when advancing
+    // Clear visited grids and enter metadata when advancing
     this.visitedGrids.clear();
+    this.lastEnterViaNonPrimary = null;
 
     const [dr, dc] = this.deltas[this.direction];
     const grid = this.store[this.current.gridId];
@@ -189,6 +204,8 @@ export class Navigator {
     this.visitedGrids.add(cell.gridId);
     this.current = entryPos;
     this.lastTransitionType = 'enter';
+    // Capture whether this was via a non-primary reference
+    this.lastEnterViaNonPrimary = cell.isPrimary === false;
     return true;
   }
 

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseGrids } from '../../src/lib/parser/parser.js';
+import { parseGrids, exportGrids } from '../../src/lib/parser/parser.js';
 import { Empty, Concrete, Ref, isConcrete, isEmpty, isRef } from '../../src/lib/core/types.js';
 
 describe('TestParseGrids', () => {
@@ -213,5 +213,123 @@ describe('TestParseGrids', () => {
     const grid = store.test;
     expect(grid.rows).toBe(2);
     expect(grid.cols).toBe(1);
+  });
+});
+
+describe('TestExportGrids', () => {
+  it('test_export_simple_concrete_grid', () => {
+    const definitions = {
+      test: '1 2|3 4',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_with_refs', () => {
+    const definitions = {
+      main: '1 A|2 3',
+      A: '5 6',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_with_empty_cells', () => {
+    const definitions = {
+      test: '1 _ 3|4 5 6',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_explicit_primary_ref', () => {
+    const definitions = {
+      main: '*A 1',
+      A: '2|3',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_explicit_secondary_ref', () => {
+    const definitions = {
+      main: '~A 1',
+      A: '2|3',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_auto_determined_ref', () => {
+    const definitions = {
+      main: 'A 1',
+      A: '2|3',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_multichar_content', () => {
+    const definitions = {
+      main: '123 456|SubGrid OtherGrid',
+      SubGrid: '789|012',
+      OtherGrid: '345|678',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_export_mixed_primary_secondary_refs', () => {
+    const definitions = {
+      main: '~A 1 *A',
+      A: '2|3',
+    };
+    const store = parseGrids(definitions);
+    const exported = exportGrids(store);
+
+    expect(exported).toEqual(definitions);
+  });
+
+  it('test_roundtrip_parse_export', () => {
+    const original = {
+      main: '9 9 9 9 9|9 _ _ _ 9|9 _ 1 _ 9|9 _ main _ 9|9 9 9 9 9',
+      inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ *A _ 9|9 _ _ _ 9|9 9 9 9 9',
+      A: '_ _ _|_ 2 _|_ _ _',
+    };
+
+    const store = parseGrids(original);
+    const exported = exportGrids(store);
+    const reparsed = parseGrids(exported);
+
+    // Verify the round-trip produces identical stores
+    expect(Object.keys(reparsed)).toEqual(Object.keys(store));
+
+    for (const gridId of Object.keys(store)) {
+      const originalGrid = store[gridId];
+      const reparsedGrid = reparsed[gridId];
+
+      expect(reparsedGrid.rows).toBe(originalGrid.rows);
+      expect(reparsedGrid.cols).toBe(originalGrid.cols);
+
+      for (let row = 0; row < originalGrid.rows; row++) {
+        for (let col = 0; col < originalGrid.cols; col++) {
+          expect(reparsedGrid.cells[row][col]).toEqual(originalGrid.cells[row][col]);
+        }
+      }
+    }
   });
 });

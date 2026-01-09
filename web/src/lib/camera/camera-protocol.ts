@@ -68,12 +68,13 @@ export interface ViewUpdate {
  */
 export interface CameraController {
   /**
-   * Get initial view when the game starts.
+   * Get standard steady-state view for a player position.
+   * This is the view shown when not animating (initial state, after animations complete).
    *
    * @param playerGridId - The grid containing the player
-   * @returns Initial view update
+   * @returns Standard view update
    */
-  getInitialView(playerGridId: string): ViewUpdate;
+  getStandardView(playerGridId: string): ViewUpdate;
 
   /**
    * Get view update when player enters a new grid (through a reference cell).

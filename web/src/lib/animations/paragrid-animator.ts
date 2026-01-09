@@ -72,6 +72,7 @@ export class ParagridAnimator {
   private animationFrameId: number | null = null;
   private lastFrameTime: number = 0;
   private frameCallback: ((deltaTime: number) => void) | null = null;
+  private completionCallback: (() => void) | null = null;
 
   constructor(config: AnimatorConfig = {}) {
     this.config = {
@@ -280,13 +281,15 @@ export class ParagridAnimator {
    * The callback receives deltaTime in seconds.
    *
    * @param onFrame - Callback invoked each frame with deltaTime
+   * @param onComplete - Optional callback invoked once when all animations complete
    */
-  start(onFrame: (deltaTime: number) => void): void {
+  start(onFrame: (deltaTime: number) => void, onComplete?: () => void): void {
     if (this.animationFrameId !== null) {
       return; // Already running
     }
 
     this.frameCallback = onFrame;
+    this.completionCallback = onComplete ?? null;
     this.lastFrameTime = performance.now();
 
     const animate = (currentTime: number): void => {
@@ -312,7 +315,9 @@ export class ParagridAnimator {
         // All animations complete - clean up
         this.animationFrameId = null;
         const callback = this.frameCallback;
+        const completionCallback = this.completionCallback;
         this.frameCallback = null;
+        this.completionCallback = null;
 
         // Remove animation clips so transform overrides are cleared
         this.animationSystem.removeClip('push-move');
@@ -322,6 +327,11 @@ export class ParagridAnimator {
         // Trigger one final render to show the final state without animation transforms
         if (callback) {
           callback(0);
+        }
+
+        // Invoke completion callback after final render
+        if (completionCallback) {
+          completionCallback();
         }
       }
     };

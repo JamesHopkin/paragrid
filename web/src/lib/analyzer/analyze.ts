@@ -80,13 +80,11 @@ export function analyze(
       if (isPrefixOf(currentPathArray, focusPathArray)) {
         // We're an ancestor (negative depth)
         const depth = -(focusPath.length - effectiveCurrentPath.length);
-        if (depth === -1) {
-          // Depth -1: offset relative to ref position in current grid
-          const refPos = findFocusRefPosition();
-          if (refPos !== null) {
-            const [refCol, refRow] = refPos;
-            return { focusDepth: depth, focusOffset: [col - refCol, row - refRow] };
-          }
+        // For any ancestor level, compute offset relative to ref position
+        const refPos = findFocusRefPosition();
+        if (refPos !== null) {
+          const [refCol, refRow] = refPos;
+          return { focusDepth: depth, focusOffset: [col - refCol, row - refRow] };
         }
         return { focusDepth: depth, focusOffset: null };
       }

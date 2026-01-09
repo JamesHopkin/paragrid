@@ -11,7 +11,7 @@ import type { CameraController, ViewUpdate } from './camera-protocol.js';
 
 describe('ValidatingCameraController', () => {
   describe('wrapping a valid controller', () => {
-    it('allows valid view updates from getInitialView', () => {
+    it('allows valid view updates from getStandardView', () => {
       const store = parseGrids({
         root: 'child _',
         child: '1 2',
@@ -21,7 +21,7 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        const update = validating.getInitialView('child');
+        const update = validating.getStandardView('child');
         expect(update.targetView).toEqual(['root', 'child']);
       }).not.toThrow();
     });
@@ -76,7 +76,7 @@ describe('ValidatingCameraController', () => {
   describe('catching invalid view updates', () => {
     // Create a mock controller that returns invalid view updates
     class InvalidController implements CameraController {
-      getInitialView(_playerGridId: string): ViewUpdate {
+      getStandardView(_playerGridId: string): ViewUpdate {
         return { targetView: ['nonexistent'] };
       }
 
@@ -96,13 +96,13 @@ describe('ValidatingCameraController', () => {
       }
     }
 
-    it('throws on invalid view from getInitialView', () => {
+    it('throws on invalid view from getStandardView', () => {
       const store = parseGrids({ root: '1 2' });
       const controller = new InvalidController();
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        validating.getInitialView('root');
+        validating.getStandardView('root');
       }).toThrow("Grid 'nonexistent' does not exist");
     });
 
@@ -142,8 +142,8 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        validating.getInitialView('root');
-      }).toThrow('InvalidController.getInitialView');
+        validating.getStandardView('root');
+      }).toThrow('InvalidController.getStandardView');
     });
   });
 
@@ -158,7 +158,7 @@ describe('ValidatingCameraController', () => {
 
       // Works with store1
       expect(() => {
-        validating.getInitialView('child');
+        validating.getStandardView('child');
       }).not.toThrow();
 
       // Update store and helper
@@ -167,7 +167,7 @@ describe('ValidatingCameraController', () => {
 
       // Now works with store2
       expect(() => {
-        validating.getInitialView('other');
+        validating.getStandardView('other');
       }).not.toThrow();
     });
 
@@ -191,8 +191,8 @@ describe('ValidatingCameraController', () => {
       const controller = new ParentViewCameraController(helper);
       const validating = new ValidatingCameraController(controller, store);
 
-      const directUpdate = controller.getInitialView('child');
-      const wrappedUpdate = validating.getInitialView('child');
+      const directUpdate = controller.getStandardView('child');
+      const wrappedUpdate = validating.getStandardView('child');
 
       // Should return identical results
       expect(wrappedUpdate.targetView).toEqual(directUpdate.targetView);
@@ -214,7 +214,7 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        const update = validating.getInitialView('c');
+        const update = validating.getStandardView('c');
         expect(update.targetView.length).toBeGreaterThan(0);
       }).not.toThrow();
     });
@@ -229,7 +229,7 @@ describe('ValidatingCameraController', () => {
       const validating = new ValidatingCameraController(controller, store);
 
       expect(() => {
-        validating.getInitialView('inner');
+        validating.getStandardView('inner');
       }).not.toThrow();
     });
   });

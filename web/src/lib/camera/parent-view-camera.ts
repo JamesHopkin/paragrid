@@ -46,9 +46,9 @@ export class ParentViewCameraController implements CameraController {
   constructor(private helper: HierarchyHelper) {}
 
   /**
-   * Get initial view - uses ancestor chain to show context.
+   * Get standard steady-state view - uses ancestor chain to show context.
    */
-  getInitialView(playerGridId: string): ViewUpdate {
+  getStandardView(playerGridId: string): ViewUpdate {
     const viewPath = buildViewPath(this.helper, playerGridId);
     return {
       targetView: viewPath,

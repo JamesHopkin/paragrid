@@ -1977,8 +1977,9 @@ class TestFocusMetadata:
 
         assert isinstance(tree, NestedNode)
         # "main" is the parent of "A", so depth should be -1
+        # The ref to "A" is at (0, 0), so the grid has offset (0, 0)
         assert tree.focus_depth == -1
-        assert tree.focus_offset is None
+        assert tree.focus_offset == (0, 0)
 
         # The ref at (0,0) should have depth -1 with offset (0,0)
         ref_node = tree.children[0][0]
@@ -2055,17 +2056,19 @@ class TestFocusMetadata:
         )
 
         # "root" is depth -2
+        # The ref to "A" is at (0, 0), so the grid has offset (0, 0)
         assert isinstance(tree, NestedNode)
         assert tree.focus_depth == -2
-        assert tree.focus_offset is None
+        assert tree.focus_offset == (0, 0)
 
         # "A" is depth -1
+        # The ref to "B" is at (0, 0), so the grid has offset (0, 0)
         ref_a = tree.children[0][0]
         assert isinstance(ref_a, RefNode)
         a_content = ref_a.content
         assert isinstance(a_content, NestedNode)
         assert a_content.focus_depth == -1
-        assert a_content.focus_offset is None
+        assert a_content.focus_offset == (0, 0)
 
         # "B" is depth 0
         ref_b = a_content.children[0][0]

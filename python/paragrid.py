@@ -357,12 +357,11 @@ def analyze(
             if focus_path[: len(current_path)] == current_path:
                 # We're an ancestor (negative depth)
                 depth = -(len(focus_path) - len(current_path))
-                if depth == -1:
-                    # Depth -1: offset relative to ref position in current grid
-                    ref_pos = find_focus_ref_position()
-                    if ref_pos is not None:
-                        ref_col, ref_row = ref_pos
-                        return depth, (col - ref_col, row - ref_row)
+                # For any ancestor level, compute offset relative to ref position
+                ref_pos = find_focus_ref_position()
+                if ref_pos is not None:
+                    ref_col, ref_row = ref_pos
+                    return depth, (col - ref_col, row - ref_row)
                 return depth, None
         elif len(current_path) > len(focus_path):
             # Check if focus_path is a prefix of current_path
@@ -429,26 +428,8 @@ def analyze(
         rows.append(tuple(cols))
 
     # Compute focus metadata for the NestedNode itself
-    # NestedNode represents the entire grid
-    if focus_path is None:
-        depth = None
-        offset = None
-    elif current_path == focus_path:
-        # Depth 0: the focused grid itself gets origin offset
-        depth = 0
-        offset = (0, 0)
-    elif len(current_path) < len(focus_path) and focus_path[: len(current_path)] == current_path:
-        # Ancestor: negative depth, no offset
-        depth = -(len(focus_path) - len(current_path))
-        offset = None
-    elif len(current_path) > len(focus_path) and current_path[: len(focus_path)] == focus_path:
-        # Descendant: positive depth, no offset
-        depth = len(current_path) - len(focus_path)
-        offset = None
-    else:
-        # Paths diverged
-        depth = None
-        offset = None
+    # NestedNode represents the entire grid - use position (0, 0) as representative
+    depth, offset = compute_focus_metadata(0, 0)
 
     return NestedNode(grid_id, tuple(rows), depth, offset)
 
