@@ -19,7 +19,7 @@ import { findHighestAncestor } from './lib/utils/hierarchy.js';
 import { renderIsometric, buildIsometricScene, createParagridCamera } from './lib/renderer/isometric.js';
 import { sceneToJSON, type Scene, project, Camera, Renderer, type ScreenSpace } from 'iso-render';
 import type { CellNode } from './lib/analyzer/types.js';
-import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath, type ViewUpdate } from './lib/camera/index.js';
+import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, ValidatingCameraController, type CameraController, type ViewPath, type ViewUpdate } from './lib/camera/index.js';
 import { chainToMovements, ParagridAnimator, type Movement } from './lib/animations/index.js';
 
 const MOVEMENT_ANIMATION_DURATION = 0.3; // 300ms in seconds
@@ -46,6 +46,16 @@ const GRIDS = {
     inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
     a: '_ main *b|_ 9 _|_ ~b 9',
     b: '_ 4 _|_ 1 _|_ _ 9'
+  },
+
+  simple5x5: {
+    main: '9 9 _ 9 9|9 1 _ _ 9|_ _ inner _ _|9 _ _ _ 9|9 9 _ 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|_ _ _ _ _|9 _ _ _ 9|9 9 _ 9 9'
+  },
+
+  secondaryToSelfRef: {
+    main: '9 9 _ 9 9|9 _ _ _ 9|_ _ _ 1 _|9 _ _ ~inner 9|9 9 _ 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|_ _ *inner _ _|9 _ _ _ 9|9 9 _ 9 9'
   },
 
   simple: { main: '1 _ _|_ 9 _|_ _ 2' },
@@ -80,7 +90,7 @@ const GRIDS = {
   },
 };
 
-const DEFAULT_GRID_ID: keyof typeof GRIDS = 'swapEdited';
+const DEFAULT_GRID_ID: keyof typeof GRIDS = 'secondaryToSelfRef';
 
 /**
  * Configuration options parsed from query string.
@@ -129,6 +139,7 @@ class IsometricDemo {
   private readonly tagFn: TagFn;
   private readonly playerTag = 'player';
   private statusMessage = 'Ready. Use WASD to move.';
+  private isStatusError = false; // Flag to indicate error status for styling
   private readonly canvas: HTMLElement;
   private readonly statusEl: HTMLElement;
   private currentScene: Scene | null = null;
@@ -181,7 +192,10 @@ class IsometricDemo {
 
     // Initialize hierarchy helper and camera controller
     this.hierarchyHelper = new HierarchyHelper(this.store);
-    this.cameraController = new AnimatedParentViewCameraController(this.hierarchyHelper);
+    this.cameraController = new ValidatingCameraController(
+      new AnimatedParentViewCameraController(this.hierarchyHelper),
+      this.store
+    );
 
     // Store initial player position
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -189,8 +203,13 @@ class IsometricDemo {
     // Get initial view from camera controller
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const initialView = this.cameraController.getInitialView(playerPos.gridId);
-      this.currentViewPath = initialView.targetView;
+      const initialView = this.safeCallCamera(
+        () => this.cameraController.getInitialView(playerPos.gridId),
+        'initial view'
+      );
+      if (initialView) {
+        this.currentViewPath = initialView.targetView;
+      }
     }
 
     this.setupKeyboardHandlers();
@@ -447,6 +466,25 @@ class IsometricDemo {
   }
 
   /**
+   * Safely call a camera controller method and handle validation errors.
+   * If an error occurs, it's displayed in the status and null is returned.
+   */
+  private safeCallCamera<T>(
+    fn: () => T,
+    context: string
+  ): T | null {
+    try {
+      return fn();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.statusMessage = `❌ Camera error (${context}): ${message}`;
+      this.isStatusError = true;
+      console.error(`Camera validation error in ${context}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Parse manual view input format (e.g., "m.i" -> ["main", "inner"]).
    * Letters are case-insensitive first letters of grid names.
    */
@@ -534,16 +572,27 @@ class IsometricDemo {
 
     // Create new camera controller based on selection
     if (selectedValue === 'animated') {
-      this.cameraController = new AnimatedParentViewCameraController(this.hierarchyHelper);
+      this.cameraController = new ValidatingCameraController(
+        new AnimatedParentViewCameraController(this.hierarchyHelper),
+        this.store
+      );
     } else {
-      this.cameraController = new ParentViewCameraController(this.hierarchyHelper);
+      this.cameraController = new ValidatingCameraController(
+        new ParentViewCameraController(this.hierarchyHelper),
+        this.store
+      );
     }
 
     // Update current view to match new controller
     const playerPos = this.playerPosition;
     if (playerPos) {
-      const view = this.cameraController.getInitialView(playerPos.gridId);
-      this.currentViewPath = view.targetView;
+      const view = this.safeCallCamera(
+        () => this.cameraController.getInitialView(playerPos.gridId),
+        'camera switch'
+      );
+      if (view) {
+        this.currentViewPath = view.targetView;
+      }
     }
 
     // Force rebuild with new controller
@@ -611,6 +660,7 @@ class IsometricDemo {
 
     if (!playerPos) {
       this.statusMessage = '❌ Error: No player found!';
+      this.isStatusError = true;
       this.render();
       return;
     }
@@ -626,6 +676,7 @@ class IsometricDemo {
     if (this.isPushFailure(result)) {
       // Push failed - just update status and render
       this.statusMessage = `❌ Push ${direction} failed: ${result.reason}`;
+      this.isStatusError = true;
       if (result.details) {
         this.statusMessage += ` (${result.details})`;
       }
@@ -646,6 +697,9 @@ class IsometricDemo {
     // Update store and get push chain
     this.store = result.store;
     this.hierarchyHelper.setStore(this.store); // Update helper with new store
+    if (this.cameraController instanceof ValidatingCameraController) {
+      this.cameraController.setStore(this.store); // Update validating wrapper with new store
+    }
     const pushChain = result.chain;
 
     // Find new player position
@@ -655,6 +709,7 @@ class IsometricDemo {
       this.previousPlayerPosition = newPos;
 
       this.statusMessage = `✓ Pushed ${direction}! Player at [${newPos.row}, ${newPos.col}]`;
+      this.isStatusError = false;
 
       // Skip camera controller updates if manual view is active
       if (this.manualViewPath) {
@@ -672,14 +727,20 @@ class IsometricDemo {
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
-          viewUpdate = this.cameraController.onPlayerEnter(
-            playerPos.gridId,
-            newPos.gridId
+          viewUpdate = this.safeCallCamera(
+            () => this.cameraController.onPlayerEnter(
+              playerPos.gridId,
+              newPos.gridId
+            ),
+            'player enter'
           );
         } else if (pushChain[1].transition === 'exit') {
-          viewUpdate = this.cameraController.onPlayerExit(
-            playerPos.gridId,
-            newPos.gridId
+          viewUpdate = this.safeCallCamera(
+            () => this.cameraController.onPlayerExit(
+              playerPos.gridId,
+              newPos.gridId
+            ),
+            'player exit'
           );
         }
       }
@@ -715,10 +776,15 @@ class IsometricDemo {
       }
 
       // No player enter/exit - update view and animate movements
-      viewUpdate = this.cameraController.onPlayerMove(playerPos.gridId);
-      const newViewPath = viewUpdate.targetView;
-      this.currentViewPath = newViewPath;
-      this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
+      viewUpdate = this.safeCallCamera(
+        () => this.cameraController.onPlayerMove(playerPos.gridId),
+        'player move'
+      );
+      if (viewUpdate) {
+        const newViewPath = viewUpdate.targetView;
+        this.currentViewPath = newViewPath;
+        this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
+      }
 
       // Convert push chain to movements and animate
       const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
@@ -732,6 +798,7 @@ class IsometricDemo {
       }
     } else {
       this.statusMessage = '✓ Push succeeded but player lost!';
+      this.isStatusError = false;
       this.render(true);
     }
   }
@@ -754,15 +821,24 @@ class IsometricDemo {
   private reset(): void {
     this.store = this.originalStore;
     this.hierarchyHelper.setStore(this.store); // Update helper with reset store
+    if (this.cameraController instanceof ValidatingCameraController) {
+      this.cameraController.setStore(this.store); // Update validating wrapper with reset store
+    }
     this.statusMessage = 'Grid reset to original state';
+    this.isStatusError = false;
     this.previousPlayerPosition = this.playerPosition ?? null;
 
     // Update camera view (only if not in manual view mode)
     if (!this.manualViewPath) {
       const playerPos = this.playerPosition;
       if (playerPos) {
-        const view = this.cameraController.getInitialView(playerPos.gridId);
-        this.currentViewPath = view.targetView;
+        const view = this.safeCallCamera(
+          () => this.cameraController.getInitialView(playerPos.gridId),
+          'reset'
+        );
+        if (view) {
+          this.currentViewPath = view.targetView;
+        }
       }
     }
 
@@ -776,6 +852,7 @@ class IsometricDemo {
   private undo(): void {
     if (this.undoStack.length === 0) {
       this.statusMessage = '⚠️ Nothing to undo';
+      this.isStatusError = false;
       this.updateStatus();
       return;
     }
@@ -790,6 +867,9 @@ class IsometricDemo {
     const previousState = this.undoStack.pop()!;
     this.store = previousState;
     this.hierarchyHelper.setStore(this.store); // Update helper with previous store
+    if (this.cameraController instanceof ValidatingCameraController) {
+      this.cameraController.setStore(this.store); // Update validating wrapper with previous store
+    }
 
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -798,8 +878,13 @@ class IsometricDemo {
     if (!this.manualViewPath) {
       const playerPos = this.playerPosition;
       if (playerPos) {
-        const view = this.cameraController.getInitialView(playerPos.gridId);
-        this.currentViewPath = view.targetView;
+        const view = this.safeCallCamera(
+          () => this.cameraController.getInitialView(playerPos.gridId),
+          'undo'
+        );
+        if (view) {
+          this.currentViewPath = view.targetView;
+        }
       }
     }
 
@@ -809,12 +894,14 @@ class IsometricDemo {
     this.currentRenderer = null;
 
     this.statusMessage = '↶ Undo successful';
+    this.isStatusError = false;
     this.render(true);
   }
 
   private redo(): void {
     if (this.redoStack.length === 0) {
       this.statusMessage = '⚠️ Nothing to redo';
+      this.isStatusError = false;
       this.updateStatus();
       return;
     }
@@ -833,6 +920,9 @@ class IsometricDemo {
     const nextState = this.redoStack.pop()!;
     this.store = nextState;
     this.hierarchyHelper.setStore(this.store); // Update helper with next store
+    if (this.cameraController instanceof ValidatingCameraController) {
+      this.cameraController.setStore(this.store); // Update validating wrapper with next store
+    }
 
     // Update player position tracking
     this.previousPlayerPosition = this.playerPosition ?? null;
@@ -841,8 +931,13 @@ class IsometricDemo {
     if (!this.manualViewPath) {
       const playerPos = this.playerPosition;
       if (playerPos) {
-        const view = this.cameraController.getInitialView(playerPos.gridId);
-        this.currentViewPath = view.targetView;
+        const view = this.safeCallCamera(
+          () => this.cameraController.getInitialView(playerPos.gridId),
+          'redo'
+        );
+        if (view) {
+          this.currentViewPath = view.targetView;
+        }
       }
     }
 
@@ -852,6 +947,7 @@ class IsometricDemo {
     this.currentRenderer = null;
 
     this.statusMessage = '↷ Redo successful';
+    this.isStatusError = false;
     this.render(true);
   }
 
@@ -1253,8 +1349,10 @@ class IsometricDemo {
   private updateStatus(): void {
     const playerPos = this.playerPosition;
 
+    // Apply error styling if needed
+    const statusClass = this.isStatusError ? ' style="color: #ff4444; font-weight: bold;"' : '';
     let statusHtml = `
-      <div class="status-line"><strong>Status:</strong> ${this.statusMessage}</div>
+      <div class="status-line"${statusClass}><strong>Status:</strong> ${this.statusMessage}</div>
     `;
 
     if (playerPos) {

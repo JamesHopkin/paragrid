@@ -29,7 +29,7 @@ export class AnimatedParentViewCameraController implements CameraController {
   getInitialView(playerGridId: string): ViewUpdate {
     return {
       targetView: buildViewPath(this.helper, playerGridId),
-    }
+    };
   }
 
   /**
@@ -76,7 +76,7 @@ export class AnimatedParentViewCameraController implements CameraController {
       // Self-reference exit: un-nest from doubled path to single path
       // toViewPath might already be doubled (e.g., [main, main]), so extract the base path
       const gridId = toGridId;
-      let basePath: string[];
+      let basePath: ViewPath;
 
       if (toViewPath.length >= 2 &&
           toViewPath[toViewPath.length - 1] === gridId &&

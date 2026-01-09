@@ -38,6 +38,14 @@ export class HierarchyHelper {
   }
 
   /**
+   * Get the current grid store.
+   * @returns The current grid store
+   */
+  getStore(): GridStore {
+    return this.store;
+  }
+
+  /**
    * Get the parent grid ID of a given grid.
    * The parent is defined as the grid containing the primary reference.
    *
@@ -179,7 +187,9 @@ export class HierarchyHelper {
    * continuing until no parent is found.
    *
    * @param gridId - Starting grid
-   * @returns Path array [gridId, parent, ..., root], or null if cycle detected
+   * @param stopAt - Optional grid ID to stop at (used to prevent infinite loops)
+   * @returns Path array [gridId, parent, ..., root]. If a cycle is detected,
+   *          returns the partial chain collected before hitting the cycle.
    *
    * @example
    * ```typescript
@@ -188,6 +198,10 @@ export class HierarchyHelper {
    *
    * const rootChain = helper.getAncestorChain('root');
    * // rootChain === ['root'] (root has no parent)
+   *
+   * // Cycle case: a -> b -> a
+   * const cycleChain = helper.getAncestorChain('a');
+   * // cycleChain === ['a', 'b'] (stops when it would revisit 'a')
    * ```
    */
   getAncestorChain(gridId: string, stopAt?: string): string[] {

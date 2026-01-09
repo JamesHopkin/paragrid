@@ -207,15 +207,20 @@ describe('Hierarchy Helper', () => {
       expect(helper.getAncestorChain('a')).toEqual(['a', 'root']);
     });
 
-    it('returns null when cycle detected', () => {
+    it('returns partial chain when cycle detected', () => {
       const store = parseGrids({
         a: '*b _',
         b: '~a _',
       });
       const helper = new HierarchyHelper(store);
 
-      expect(helper.getAncestorChain('a')).toBe(null);
-      expect(helper.getAncestorChain('b')).toBe(null);
+      // a -> b -> (would cycle back to a)
+      // Should return ['a', 'b'] - stops before revisiting 'a'
+      expect(helper.getAncestorChain('a')).toEqual(['a', 'b']);
+
+      // b -> a -> (would cycle back to b)
+      // Should return ['b', 'a'] - stops before revisiting 'b'
+      expect(helper.getAncestorChain('b')).toEqual(['b', 'a']);
     });
   });
 });

@@ -32,3 +32,16 @@ export {
 export {
   AnimatedParentViewCameraController,
 } from './animated-parent-view-camera.js';
+
+export {
+  ValidatingCameraController,
+} from './validating-camera-controller.js';
+
+export {
+  validateViewPath,
+  validateViewUpdate,
+  assertValidViewPath,
+  assertValidViewUpdate,
+  type ValidationError,
+  type ValidationResult,
+} from './view-validator.js';
