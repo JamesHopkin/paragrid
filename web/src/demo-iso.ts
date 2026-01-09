@@ -22,8 +22,65 @@ import type { CellNode } from './lib/analyzer/types.js';
 import { getScaleAndOffset, getCellWorldPosition, calculateCameraForView, HierarchyHelper, ParentViewCameraController, AnimatedParentViewCameraController, type CameraController, type ViewPath, type ViewUpdate } from './lib/camera/index.js';
 import { chainToMovements, ParagridAnimator, type Movement } from './lib/animations/index.js';
 
+const MOVEMENT_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const RENDER_THRESHOLD = 1/64;
+
+const GRIDS = {
+  swap: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+  },
+  swapEdited: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main _ _ *inner _ 1|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+    a: 'b _ _|_ _ _|_ 9 _',
+    b: '_ _ _|_ _ _|_ 9 _'
+  },
+
+  indirectSelfRef: {
+    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ a 9|9 _ _ _ _ *inner _ 9|' + 
+          '9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
+    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+    a: '_ main *b|_ 9 _|_ ~b 9',
+    b: '_ 4 _|_ 1 _|_ _ 9'
+  },
+
+  simple: { main: '1 _ _|_ 9 _|_ _ 2' },
+  doubleExit: {
+    main: '_ _ _|a 2 1|_ _ _',
+    a: 'b _ _|_ _ _|_ _ _',
+    b: '_ _ _|_ _ _|_ _ _' },
+
+  exitEnter: {
+    main: '_ _ 9|_ a b|1 _ _',
+    a: '_ b|_ _', b: '2 _|_ _'
+  },
+
+  tricky: {
+    main: '9 9 9 9 9 9 9|9 _ _ _ _ _ 9|9 _ a _ b _ 9|9 _ _ _ _ _ 9|' +
+              '9 _ c _ 1 _ 9|9 _ _ _ _ _ 9|9 9 9 9 9 9 9',
+    a: '_ 9 _|_ _ _|_ _ _',
+    b: '9 9 9 9|9 9 _ _|9 9 9 9|9 9 9 9',
+    c: '9 ' + '_ '.repeat(10) + '9|' +
+        '_ '.repeat(11) + '9|' + 
+        ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
+        '9 ' + '_ '.repeat(10) + '9'
+  },
+  transparency: {
+   main: '_ _ _|_ a _|_ 2 _',
+   a: '_ _ _|_ 1 _|_ _ _'
+  },
+
+  nonPrimaryRef: {
+    main: '1 _ _|*a _ ~a|_ _ _', 
+    a: '9 _ 9|_ 3 _|9 _ 9'
+  },
+};
+
+const DEFAULT_GRID_ID: keyof typeof GRIDS = 'swapEdited';
 
 /**
  * Configuration options parsed from query string.
@@ -56,7 +113,7 @@ function parseConfig(): DemoConfig {
   const params = new URLSearchParams(window.location.search);
   return {
     fullscreen: params.get('fullscreen') === 'true',
-    scene: params.get('scene') || 'indirectSelfRef',
+    scene: params.get('scene') || DEFAULT_GRID_ID,
     hideControls: params.get('hideControls') === 'true',
     hideHeader: params.get('hideHeader') === 'true',
     mobile: params.get('mobile') === 'true',
@@ -115,7 +172,7 @@ class IsometricDemo {
     this.statusEl = statusEl;
     this.isFullscreen = isFullscreen;
     this.animator = new ParagridAnimator({
-      movementDuration: 0.3,
+      movementDuration: MOVEMENT_ANIMATION_DURATION,
       cameraDuration: CAMERA_ANIMATION_DURATION
     });
 
@@ -1238,60 +1295,6 @@ class IsometricDemo {
   }
 }
 
-const GRIDS = {
-  swap: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-  },
-  swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ r_ 9|9 _ _ _ _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: 'b _ _|_ _ _|_ 9 _',
-    b: '1 _ _|_ _ _|_ 9 _'
-  },
-
-  indirectSelfRef: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ a 9|9 _ _ _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: '_ main *b|_ 9 _|_ ~b 9',
-    b: '_ 4 _|_ 1 _|_ _ 9'
-  },
-
-  simple: { main: '1 _ _|_ 9 _|_ _ 2' },
-  doubleExit: {
-    main: '_ _ _|a 2 1|_ _ _',
-    a: 'b _ _|_ _ _|_ _ _',
-    b: '_ _ _|_ _ _|_ _ _' },
-
-  exitEnter: {
-    main: '_ _ 9|_ a b|1 _ _',
-    a: '_ b|_ _', b: '2 _|_ _'
-  },
-
-  tricky: {
-    main: '9 9 9 9 9 9 9|9 _ _ _ _ _ 9|9 _ a _ b _ 9|9 _ _ _ _ _ 9|' +
-              '9 _ c _ 1 _ 9|9 _ _ _ _ _ 9|9 9 9 9 9 9 9',
-    a: '_ 9 _|_ _ _|_ _ _',
-    b: '9 9 9 9|9 9 _ _|9 9 9 9|9 9 9 9',
-    c: '9 ' + '_ '.repeat(10) + '9|' +
-        '_ '.repeat(11) + '9|' + 
-        ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
-        '9 ' + '_ '.repeat(10) + '9'
-  },
-  transparency: {
-   main: '_ _ _|_ a _|_ 2 _',
-   a: '_ _ _|_ 1 _|_ _ _'
-  },
-
-  nonPrimaryRef: {
-    main: '1 _ _|*a _ ~a|_ _ _', 
-    a: '9 _ 9|_ 3 _|9 _ 9'
-  },
-};
-
 /**
  * Apply UI configuration based on config.
  */
@@ -1629,7 +1632,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const config = parseConfig();
 
   // Select the scene based on config
-  const sceneData = (GRIDS as any)[config.scene] || GRIDS.indirectSelfRef;
+  const sceneData =  (GRIDS as any)[config.scene] || (GRIDS as any)[DEFAULT_GRID_ID]!;
   const store = parseGrids(sceneData);
 
   // Tag function: cell '1' is the player
