@@ -24,6 +24,8 @@ import { chainToMovements, ParagridAnimator, type Movement } from './lib/animati
 
 const MOVEMENT_ANIMATION_DURATION = 0.3; // 300ms in seconds
 const CAMERA_ANIMATION_DURATION = 0.3; // 300ms in seconds
+const ENTER_EXIT_MOVEMENT_DURATION = 0.7; // 700ms in seconds (a little more than 2x regular)
+const ENTER_EXIT_CAMERA_DURATION = 0.7; // 700ms in seconds (a little more than 2x regular)
 const RENDER_THRESHOLD = 1/64;
 
 const GRIDS = {
@@ -80,9 +82,9 @@ const GRIDS = {
     main: '9 9 9 9 9 9 9|9 _ _ _ _ _ 9|9 _ a _ b _ 9|9 _ _ _ _ _ 9|' +
               '9 _ c _ 1 _ 9|9 _ _ _ _ _ 9|9 9 9 9 9 9 9',
     a: '_ 9 _|_ _ _|_ _ _',
-    b: '9 9 9 9|9 9 _ _|9 9 9 9|9 9 9 9',
+    b: '9 9 9 9|_ _ 9 9|9 9 9 9|9 9 9 9',
     c: '9 ' + '_ '.repeat(10) + '9|' +
-        '_ '.repeat(11) + '9|' + 
+        '9' + ' _'.repeat(11) + '|' +
         ('9 ' + '_ '.repeat(10) + '9|').repeat(9) +
         '9 ' + '_ '.repeat(10) + '9'
   },
@@ -189,10 +191,7 @@ class IsometricDemo {
     this.canvas = canvas;
     this.statusEl = statusEl;
     this.isFullscreen = isFullscreen;
-    this.animator = new ParagridAnimator({
-      movementDuration: MOVEMENT_ANIMATION_DURATION,
-      cameraDuration: CAMERA_ANIMATION_DURATION
-    });
+    this.animator = this.createAnimator(MOVEMENT_ANIMATION_DURATION, CAMERA_ANIMATION_DURATION);
 
     // Set initial dimensions
     this.updateDimensions();
@@ -229,6 +228,24 @@ class IsometricDemo {
 
   private get playerPosition(): CellPosition | null | undefined {
     return findTaggedCell(this.store, this.playerTag, this.tagFn);
+  }
+
+  /**
+   * Create a new animator with the specified durations.
+   */
+  private createAnimator(movementDuration: number, cameraDuration: number): ParagridAnimator {
+    return new ParagridAnimator({
+      movementDuration,
+      cameraDuration
+    });
+  }
+
+  /**
+   * Update the animator with new durations.
+   * Recreates the animator since we always cancel before starting new animations.
+   */
+  private setAnimatorDurations(movementDuration: number, cameraDuration: number): void {
+    this.animator = this.createAnimator(movementDuration, cameraDuration);
   }
 
   /**
@@ -758,6 +775,8 @@ class IsometricDemo {
         // Just animate the movements without camera updates
         const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
         if (movements.length > 0) {
+          // Use regular durations for manual view (no enter/exit in this path)
+          this.setAnimatorDurations(MOVEMENT_ANIMATION_DURATION, CAMERA_ANIMATION_DURATION);
           this.createMultipleMovementAnimations(movements);
         } else {
           this.render(true);
@@ -806,7 +825,8 @@ class IsometricDemo {
 
         // Handle camera and object animation
         if (viewUpdate.animationStartView && oldViewPath) {
-          // Animate camera with optional object movements
+          // Animate camera with optional object movements (enter/exit uses 2x duration)
+          this.setAnimatorDurations(ENTER_EXIT_MOVEMENT_DURATION, ENTER_EXIT_CAMERA_DURATION);
           this.createAnimationWithCamera(movements, viewUpdate.animationStartView, viewUpdate.targetView);
         } else {
           // No animation - rebuild immediately
@@ -836,7 +856,8 @@ class IsometricDemo {
       const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
 
       if (movements.length > 0) {
-        // Create animations for all movements
+        // Create animations for all movements (regular duration)
+        this.setAnimatorDurations(MOVEMENT_ANIMATION_DURATION, CAMERA_ANIMATION_DURATION);
         this.createMultipleMovementAnimations(movements);
       } else {
         // No animation - render immediately
@@ -1140,7 +1161,6 @@ class IsometricDemo {
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
-      highlightPosition: playerPos,
       store: this.store,
       tagFn: this.tagFn
     });
@@ -1293,7 +1313,6 @@ class IsometricDemo {
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
-      highlightPosition: playerPos,
       store: this.store,
       tagFn: this.tagFn
     });
@@ -1390,7 +1409,6 @@ class IsometricDemo {
         const result = buildIsometricScene(this.currentCellTree, {
           width: this.renderWidth,
           height: this.renderHeight,
-          highlightPosition: playerPos,
           store: this.store,
           tagFn: this.tagFn
         });
@@ -1656,8 +1674,8 @@ function createMobileControls(demo: IsometricDemo): void {
     const westBtn = document.getElementById('mobile-west')!;
     const eastBtn = document.getElementById('mobile-east')!;
 
-    // Detect if phone or tablet based on screen width
-    const isPhone = window.innerWidth < 768; // Phone: < 768px, Tablet: >= 768px
+    // Detect if phone or tablet based on smaller screen dimension (works in both orientations)
+    const isPhone = Math.min(window.innerWidth, window.innerHeight) < 768; // Phone: < 768px, Tablet: >= 768px
 
     if (isPhone) {
       // Phone: One button in each corner
@@ -1694,11 +1712,11 @@ function createMobileControls(demo: IsometricDemo): void {
       westBtn.style.top = 'auto';
       westBtn.style.right = 'auto';
 
-      // East: to the right of West
-      eastBtn.style.bottom = buttonPadding;
-      eastBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
-      eastBtn.style.top = 'auto';
-      eastBtn.style.right = 'auto';
+      // South: to the right of West
+      southBtn.style.bottom = buttonPadding;
+      southBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      southBtn.style.top = 'auto';
+      southBtn.style.right = 'auto';
 
       // North: above West
       northBtn.style.bottom = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
@@ -1706,11 +1724,11 @@ function createMobileControls(demo: IsometricDemo): void {
       northBtn.style.top = 'auto';
       northBtn.style.right = 'auto';
 
-      // South: above East (top-right of the cluster)
-      southBtn.style.bottom = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
-      southBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
-      southBtn.style.top = 'auto';
-      southBtn.style.right = 'auto';
+      // East: above South (top-right of the cluster)
+      eastBtn.style.bottom = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      eastBtn.style.left = `calc(${buttonPadding} + ${buttonSize} + ${spacing})`;
+      eastBtn.style.top = 'auto';
+      eastBtn.style.right = 'auto';
     }
   }
 }
@@ -1724,8 +1742,6 @@ function createBurgerMenu(config: DemoConfig): void {
   burgerButton.innerHTML = '☰';
   burgerButton.style.cssText = `
     position: fixed;
-    top: 1rem;
-    right: 1rem;
     width: 3rem;
     height: 3rem;
     background: #4fc3f7;
@@ -1737,6 +1753,33 @@ function createBurgerMenu(config: DemoConfig): void {
     z-index: 1000;
     transition: background 0.2s;
   `;
+
+  // Function to update burger button position based on screen size
+  const updateBurgerPosition = () => {
+    const isPhone = Math.min(window.innerWidth, window.innerHeight) < 768;
+    if (isPhone) {
+      // Phone: bottom center
+      burgerButton.style.bottom = '1rem';
+      burgerButton.style.left = '50%';
+      burgerButton.style.transform = 'translateX(-50%)';
+      burgerButton.style.top = 'auto';
+      burgerButton.style.right = 'auto';
+    } else {
+      // Tablet/Desktop: top right
+      burgerButton.style.top = '1rem';
+      burgerButton.style.right = '1rem';
+      burgerButton.style.bottom = 'auto';
+      burgerButton.style.left = 'auto';
+      burgerButton.style.transform = 'none';
+    }
+  };
+
+  // Set initial position
+  updateBurgerPosition();
+
+  // Update on resize
+  window.addEventListener('resize', updateBurgerPosition);
+
   burgerButton.onmouseenter = () => burgerButton.style.background = '#81d4fa';
   burgerButton.onmouseleave = () => burgerButton.style.background = '#4fc3f7';
 

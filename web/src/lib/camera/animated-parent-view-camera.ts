@@ -83,24 +83,9 @@ export class AnimatedParentViewCameraController implements CameraController {
         console.warn(`Exiting to same grid but not self-reference (grid ${fromGridId})?`)
       }
 
-      // Self-reference exit: un-nest from doubled path to single path
-      // toViewPath might already be doubled (e.g., [main, main]), so extract the base path
-      const gridId = toGridId;
-      let basePath: ViewPath;
-
-      if (toViewPath.length >= 2 &&
-          toViewPath[toViewPath.length - 1] === gridId &&
-          toViewPath[toViewPath.length - 2] === gridId) {
-        // toViewPath is already doubled, remove the duplication
-        basePath = toViewPath.slice(0, -1);
-      } else {
-        // toViewPath is not doubled, use as-is
-        basePath = toViewPath;
-      }
-
       return {
-        targetView: basePath,                    // [main] - where we're going
-        animationStartView: [...basePath, gridId]  // [main, main] - where we are
+        targetView: toViewPath,
+        animationStartView: [toViewPath[0], ...toViewPath]
       };
     }
 

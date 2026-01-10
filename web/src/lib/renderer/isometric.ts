@@ -44,30 +44,29 @@ import { analyze } from '../analyzer/index.js';
 
 /**
  * Compute the layer for a cell based on its focus metadata.
- * Returns 1 for cells that should be semi-transparent (siblings with x < focused.x AND z > focused.z).
+ * Returns 1 for cells in the parent grid that should be semi-transparent
+ * (siblings of the focused grid's reference cell that occlude it in isometric view).
  * Returns undefined for cells that should use default layer assignment.
  *
+ * Only relevant when the focused grid has ancestors (parent grids).
+ * Position offsets are computed based on the location of the focused grid's
+ * reference cell in its parent grid.
+ *
  * @param node - Cell node with focus metadata
- * @param focusPosition - Position of the focused cell (typically player position)
  * @returns Layer number or undefined for default
  */
 function computeFocusLayer(
-  node: CellNode,
-  focusPosition: CellPosition | undefined
+  node: CellNode
 ): number | undefined {
-  if (!focusPosition) {
-    return undefined;
-  }
-
-  // Only apply to siblings of the focused grid (focusDepth === -1, i.e., parent grid)
-  if (node.focusDepth == null || node.focusDepth >= 0 || !node.focusOffset) {
+  // Only apply to cells in the immediate parent grid of the focused grid
+  if (node.focusDepth !== -1 || !node.focusOffset) {
     return undefined;
   }
 
   const [cellCol, cellRow] = node.focusOffset;
 
-  // For parent grid cells, focusOffset is relative to the reference position
-  // Apply layer 1 if x <= 0 AND z => 0 (cell is in front of the reference in isometric view)
+  // focusOffset is relative to the ref cell that points to the focused grid
+  // Apply layer 1 if x <= 0 AND z >= 0 (cell is in front of the reference in isometric view)
   if (cellCol <= 0 && cellRow >= 0) {
     return 1;
   }
@@ -82,7 +81,6 @@ export interface RenderOptions {
   width: number;
   height: number;
   target: HTMLElement;
-  highlightPosition?: CellPosition;
   store: GridStore;
   tagFn: TagFn;
   transformOverrides?: TransformOverrides;
@@ -113,7 +111,7 @@ export function buildIsometricScene(
   root: CellNode,
   options: Omit<RenderOptions, 'target'>
 ): BuildResult {
-  const { width, height, highlightPosition, store, tagFn } = options;
+  const { width, height, store, tagFn } = options;
 
   // Root must be a NestedNode
   if (!isNestedNode(root)) {
@@ -214,7 +212,7 @@ export function buildIsometricScene(
     const templateId = nodeToTemplateId.get(node)!;
     const depth = nodeToDepth.get(node) ?? 0;
     const floorColors = getFloorColors(node.gridId);
-    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn, 0, depth, highlightPosition);
+    buildGridTemplate(node, templateId, builder, floorColors, squareSize, nodeToTemplateId, store, tagFn, 0, depth);
   }
 
   // Get root grid dimensions
@@ -249,7 +247,7 @@ export function buildIsometricScene(
 
   // PASS 3: Render the root grid directly (not as a template)
   // This allows us to animate individual cells directly
-  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn, highlightPosition);
+  renderGridDirect(root, builder, [offsetX, 0, offsetZ], rootFloorColors, squareSize, nodeToTemplateId, store, tagFn);
 
   // Build scene
   const scene = builder.build();
@@ -465,8 +463,7 @@ function renderGridDirect(
   squareSize: number,
   nodeToTemplateId: Map<NestedNode, string>,
   store: GridStore,
-  tagFn: TagFn,
-  highlightPosition?: CellPosition
+  tagFn: TagFn
 ): void {
   const rows = node.children.length;
   const cols = node.children[0]?.length || 0;
@@ -520,7 +517,7 @@ function renderGridDirect(
 
       // Create a content group with content-based ID for animations (ID computed above)
       // Apply focus-based layer if applicable
-      const focusLayer = computeFocusLayer(child, highlightPosition);
+      const focusLayer = computeFocusLayer(child);
       builder.group(contentGroupId, {
         position: [0, 0, 0],
         ...(focusLayer !== undefined && { layer: focusLayer })
@@ -533,10 +530,6 @@ function renderGridDirect(
         const tags = tagFn(cell);
         const hasPlayer = tags.has('player');
         const hasStop = tags.has('stop');
-
-        if (hasPlayer) {
-          console.log('Player in renderGridDirect - focusDepth:', child.focusDepth, 'focusLayer:', focusLayer);
-        }
 
         const cellInfo = getCellColor(child.id);
         let objectType = cellInfo.model === 'cube' ? 'concrete-cube' : 'concrete-pyramid';
@@ -629,7 +622,6 @@ function renderGridDirect(
  * @param tagFn - Tag function to check cell tags
  * @param baseLayer - Base layer for content (floor will be baseLayer - 50 + recursionDepth), defaults to 0
  * @param recursionDepth - Depth of recursion for floor layer calculation, defaults to 0
- * @param highlightPosition - Position of focused cell for layer computation
  */
 function buildGridTemplate(
   node: NestedNode,
@@ -641,8 +633,7 @@ function buildGridTemplate(
   store: GridStore,
   tagFn: TagFn,
   baseLayer: number = 0,
-  recursionDepth: number = 0,
-  highlightPosition?: CellPosition
+  recursionDepth: number = 0
 ): void {
   builder.template(templateId);
 
@@ -729,12 +720,7 @@ function buildGridTemplate(
         // Create content group with ID (matching root grid structure)
         // This ensures ts-poly can target this group for animations
         // Apply focus-based layer if applicable, otherwise use baseLayer
-        const focusLayer = computeFocusLayer(child, highlightPosition);
-
-        if (hasPlayer) {
-          console.log('Player in buildGridTemplate - focusDepth:', child.focusDepth, 'focusLayer:', focusLayer, 'baseLayer:', baseLayer);
-        }
-
+        const focusLayer = computeFocusLayer(child);
         const effectiveLayer = focusLayer !== undefined ? focusLayer : baseLayer;
         builder.group(`concrete-${child.id}`, {
           position: [0, 0, 0],
@@ -770,7 +756,7 @@ function buildGridTemplate(
           }
 
           // Apply focus-based layer if applicable, otherwise use baseLayer
-          const focusLayer = computeFocusLayer(child, highlightPosition);
+          const focusLayer = computeFocusLayer(child);
           const effectiveLayer = focusLayer !== undefined ? focusLayer : baseLayer;
 
           builder.group(contentGroupId, {

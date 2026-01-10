@@ -147,6 +147,22 @@ export function chainToMovements(
     const isEnterExit = nextEntry.transition === 'enter' ||
                         nextEntry.transition === 'exit';
 
+    // Skip object animations for non-primary reference transitions
+    // - For enter: check if viaNonPrimaryReference is true
+    // - For exit: check if the destination ref cell is non-primary
+    if (isEnterExit) {
+      if (nextEntry.transition === 'enter' && nextEntry.viaNonPrimaryReference === true) {
+        continue; // Skip animation for enter via non-primary reference
+      }
+      if (nextEntry.transition === 'exit') {
+        // Check if exiting through a non-primary reference
+        const refCell = store[newCellPos.gridId]?.cells[newCellPos.row]?.[newCellPos.col];
+        if (refCell && refCell.type === 'ref' && refCell.isPrimary === false) {
+          continue; // Skip animation for exit via non-primary reference
+        }
+      }
+    }
+
     let oldPos: [number, number, number];
     let newPos: [number, number, number];
     let oldViewPath: string[] | null = null;
