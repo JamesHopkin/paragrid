@@ -13,23 +13,26 @@
 **Key Functions**:
 - Grid operations: `addGrid()`, `deleteGrid()`, `duplicateGrid()`, `renameGrid()` in `state.ts`
 - Cell operations: `setCell()` in `state.ts`
+- Cell selection: `selectCell()` in `ui.ts` (left-click)
 - Grid resize: `resizeGrid()` in `state.ts`, `startResize()` in `ui.ts`
 - Visual zoom: `getGridScale()`, `setGridScale()` in `state.ts`
 - UI rendering: `renderGrids()`, `createGridCard()`, `createCellElement()` in `ui.ts`
-- Palette: `showCellPalette()` in `ui.ts`
+- Palette: `showCellPalette()` in `ui.ts` (right-click on cell)
+- Grid menu: `showGridContextMenu()` in `ui.ts` (burger menu button)
 
 ## Core Functionality
 
-**Multi-Grid Management**: Card-based flexible layout where each grid is a draggable card. Grid reordering (Super+drag) is NOT part of undo history—it's a layout preference, not data.
+**Multi-Grid Management**: Card-based flexible layout where each grid is a card with burger menu (☰) in top-right for operations. Grid reordering (Super+drag) is NOT part of undo history—it's a layout preference, not data.
 
 **Grid Operations**:
-- **Add/Delete/Duplicate**: Via context menus, all undoable except reordering
+- **Add/Delete/Duplicate**: Via burger menu, all undoable except reordering
 - **Visual Zoom**: Drag corner handle to change visual size (scale transform, 0.1x to 5.0x)
 - **Resize Grid**: Super+drag (Cmd/Ctrl+drag) corner handle to add/remove rows/columns, snapped to cell boundaries
 - **Minimum size**: 1×1 (relaxed from spec's 1×2 minimum)
 
 **Cell Interaction**:
-- Click cell to open palette (Empty, Concrete IDs, Primary Refs, Non-primary Refs)
+- Left-click to select cell (visual highlight, prepares for rectangular selection)
+- Right-click to open palette (Empty, Concrete IDs, Primary Refs, Non-primary Refs)
 - Drag cell A to B: content moves, B's content attempts adjacent empty placement (single level, no cascading)
 - Pin system controls positioning during resize operations
 

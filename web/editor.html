@@ -105,6 +105,21 @@
         font-size: 1.1rem;
       }
 
+      .grid-burger {
+        background: transparent;
+        color: #4fc3f7;
+        border: none;
+        padding: 0.25rem 0.5rem;
+        font-size: 1.2rem;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: background 0.2s;
+      }
+
+      .grid-burger:hover {
+        background: #3a3a3a;
+      }
+
       .grid-table {
         display: grid;
         gap: 2px;
@@ -148,6 +163,11 @@
       .grid-cell.ref-secondary {
         background: #6b5b95;
         color: #c5b4e3;
+      }
+
+      .grid-cell.selected {
+        outline: 3px solid #4fc3f7;
+        outline-offset: -3px;
       }
 
       .resize-handle {

@@ -90,6 +90,17 @@ function createGridCard(grid: GridDefinition): HTMLElement {
   title.textContent = grid.id;
   header.appendChild(title);
 
+  // Burger menu button
+  const burgerBtn = document.createElement('button');
+  burgerBtn.className = 'grid-burger';
+  burgerBtn.textContent = '☰';
+  burgerBtn.title = 'Grid options';
+  burgerBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showGridContextMenu(grid.id, e.clientX, e.clientY);
+  });
+  header.appendChild(burgerBtn);
+
   card.appendChild(header);
 
   // Grid table wrapper (to contain scaled content)
@@ -141,12 +152,6 @@ function createGridCard(grid: GridDefinition): HTMLElement {
   tableWrapper.appendChild(table);
   card.appendChild(tableWrapper);
 
-  // Context menu on right-click
-  card.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    showGridContextMenu(grid.id, e.clientX, e.clientY);
-  });
-
   return card;
 }
 
@@ -174,13 +179,33 @@ function createCellElement(grid: GridDefinition, row: number, col: number): HTML
     cellDiv.textContent = cellContent.id || '?';
   }
 
-  // Click to open palette
+  // Left-click to select cell
   cellDiv.addEventListener('click', (e) => {
+    e.stopPropagation();
+    selectCell(cellDiv);
+  });
+
+  // Right-click to open palette
+  cellDiv.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
     e.stopPropagation();
     showCellPalette(grid.id, row, col, e.clientX, e.clientY);
   });
 
   return cellDiv;
+}
+
+/**
+ * Select a cell (visual feedback)
+ */
+function selectCell(cellElement: HTMLElement): void {
+  // Clear previous selection
+  document.querySelectorAll('.grid-cell.selected').forEach(el => {
+    el.classList.remove('selected');
+  });
+
+  // Select this cell
+  cellElement.classList.add('selected');
 }
 
 /**

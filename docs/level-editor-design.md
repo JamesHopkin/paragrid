@@ -39,8 +39,12 @@ A web-based visual editor for creating and modifying Paragrid grid structures. T
 
 ### Cell Interaction
 
+**Cell Selection**
+- Left-click to select cell (browser default, prepares for rectangular selection)
+- Selected cells highlighted with border/background
+
 **Palette Access**
-- Click anywhere on a cell (except pin controls) to open palette
+- Right-click anywhere on a cell to open palette
 - Palette shows available cell types:
   - **Empty**: Clear the cell
   - **Concrete**: Hardcoded IDs following convention (numbers = concrete in parseable format)
@@ -262,19 +266,21 @@ interface GridMetadata {
 
 ## Context Menus
 
-**Grid Card Right-Click**:
-- Rename grid
-- Duplicate grid
-- Delete grid (with confirmation)
+**Grid Card Burger Menu**:
+- Burger icon (☰) in top-right of each grid card header
+- Opens dropdown menu with:
+  - Rename grid
+  - Duplicate grid
+  - Delete grid
 
-**Cell Right-Click** (future):
-- Currently click opens palette
-- Could add copy/paste, clear, etc.
+**Cell Right-Click**:
+- Opens palette for editing cell content
+- Future: Could add copy/paste, clear shortcuts
 
 ## Visual Design Notes
 
 **Grid Cards**:
-- Title bar with grid ID
+- Title bar with grid ID and burger menu (☰) on right
 - Clear corner handle indicator (icon + cursor change)
 - Border/shadow for card depth
 
