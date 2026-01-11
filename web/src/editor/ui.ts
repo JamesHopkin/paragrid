@@ -242,6 +242,19 @@ function selectCell(cellElement: HTMLElement, gridId: string, row: number, col: 
 }
 
 /**
+ * Select a cell by coordinates (public API)
+ */
+export function selectCellByCoords(gridId: string, row: number, col: number): void {
+  const cellElement = document.querySelector(
+    `.grid-cell[data-grid-id="${gridId}"][data-row="${row}"][data-col="${col}"]`
+  ) as HTMLElement;
+
+  if (cellElement) {
+    selectCell(cellElement, gridId, row, col);
+  }
+}
+
+/**
  * Show the cell palette context menu
  */
 function showCellPalette(gridId: string, row: number, col: number, x: number, y: number): void {

@@ -3,7 +3,7 @@
  */
 
 import { onStateChange } from './state.js';
-import { renderGrids, initializeUI, updateHistoryStatus } from './ui.js';
+import { renderGrids, initializeUI, updateHistoryStatus, selectCellByCoords } from './ui.js';
 
 /**
  * Initialize the editor
@@ -20,6 +20,9 @@ function init(): void {
 
   // Initial render
   renderGrids();
+
+  // Select first cell (0, 0) of first grid
+  selectCellByCoords('grid_1', 0, 0);
 
   console.log('Paragrid Level Editor initialized');
 }
