@@ -3,15 +3,16 @@
  */
 
 import { onStateChange } from './state.js';
-import { renderGrids, initializeUI } from './ui.js';
+import { renderGrids, initializeUI, updateHistoryStatus } from './ui.js';
 
 /**
  * Initialize the editor
  */
 function init(): void {
-  // Set up state change listener to re-render
+  // Set up state change listener to re-render and update history
   onStateChange(() => {
     renderGrids();
+    updateHistoryStatus();
   });
 
   // Initialize UI event listeners

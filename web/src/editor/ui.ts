@@ -14,6 +14,10 @@ import {
   exportToConsole,
   getGridScale,
   setGridScale,
+  undo,
+  redo,
+  getUndoStackSize,
+  getRedoStackSize,
 } from './state.js';
 import {
   CellContent,
@@ -25,6 +29,30 @@ import {
 } from './types.js';
 
 let currentContextMenu: HTMLElement | null = null;
+
+/**
+ * Update the history status display showing undo/redo availability.
+ */
+export function updateHistoryStatus(): void {
+  const statusEl = document.getElementById('history-status');
+  const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
+  const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
+
+  const undoCount = getUndoStackSize();
+  const redoCount = getRedoStackSize();
+
+  if (statusEl) {
+    statusEl.textContent = `(${undoCount} undo, ${redoCount} redo)`;
+  }
+
+  // Enable/disable buttons based on availability
+  if (undoBtn) {
+    undoBtn.disabled = undoCount === 0;
+  }
+  if (redoBtn) {
+    redoBtn.disabled = redoCount === 0;
+  }
+}
 
 /**
  * Render all grids into the container
@@ -327,9 +355,28 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
 
   if (isSuperDrag) {
     // Super+drag: Resize grid (add/remove rows/columns)
+    // Preview during drag, commit on mouseup
     const startRows = grid.rows;
     const startCols = grid.cols;
     const scale = getGridScale(gridId);
+
+    // Get the table element for preview updates
+    const gridCard = (startEvent.target as HTMLElement).closest('.grid-card');
+    const table = gridCard?.querySelector('.grid-table') as HTMLElement;
+    if (!table) return;
+
+    let targetRows = startRows;
+    let targetCols = startCols;
+    let previewCells: HTMLElement[] = [];
+
+    // Pin existing cells to their original positions
+    const cells = table.querySelectorAll('.grid-cell');
+    cells.forEach((cell, index) => {
+      const row = Math.floor(index / startCols);
+      const col = index % startCols;
+      (cell as HTMLElement).style.gridRow = `${row + 1}`;
+      (cell as HTMLElement).style.gridColumn = `${col + 1}`;
+    });
 
     const onMouseMove = (e: MouseEvent) => {
       const deltaX = e.clientX - startX;
@@ -338,17 +385,78 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
       // Scale the delta to account for visual zoom, then calculate cells
       // If grid is zoomed 2x, 84px of mouse movement = 1 cell
       const cellSize = 42 * scale; // 40px cell + 2px gap, scaled
-      const newCols = Math.max(1, startCols + Math.round(deltaX / cellSize));
-      const newRows = Math.max(1, startRows + Math.round(deltaY / cellSize));
+      targetCols = Math.max(1, startCols + Math.round(deltaX / cellSize));
+      targetRows = Math.max(1, startRows + Math.round(deltaY / cellSize));
 
-      if (newCols !== grid.cols || newRows !== grid.rows) {
-        resizeGrid(gridId, newRows, newCols);
+      // Update grid template
+      table.style.gridTemplateColumns = `repeat(${targetCols}, 1fr)`;
+      table.style.gridTemplateRows = `repeat(${targetRows}, 1fr)`;
+
+      // Hide/show existing cells based on target dimensions
+      cells.forEach((cell, index) => {
+        const row = Math.floor(index / startCols);
+        const col = index % startCols;
+
+        if (row >= targetRows || col >= targetCols) {
+          (cell as HTMLElement).style.display = 'none';
+        } else {
+          (cell as HTMLElement).style.display = '';
+        }
+      });
+
+      // Remove old preview cells
+      previewCells.forEach(cell => cell.remove());
+      previewCells = [];
+
+      // Add preview cells for new positions when growing
+      for (let r = 0; r < targetRows; r++) {
+        for (let c = 0; c < targetCols; c++) {
+          // Skip positions that already have original cells
+          if (r < startRows && c < startCols) continue;
+
+          const previewCell = document.createElement('div');
+          previewCell.className = 'grid-cell empty preview-cell';
+          previewCell.textContent = '·';
+          previewCell.style.gridRow = `${r + 1}`;
+          previewCell.style.gridColumn = `${c + 1}`;
+          table.appendChild(previewCell);
+          previewCells.push(previewCell);
+        }
+      }
+
+      // Update wrapper size for new dimensions
+      const cellSize2 = 40;
+      const gapSize = 2;
+      const borderSize = 4;
+      const unscaledWidth = targetCols * cellSize2 + (targetCols - 1) * gapSize + borderSize;
+      const unscaledHeight = targetRows * cellSize2 + (targetRows - 1) * gapSize + borderSize;
+
+      table.style.width = `${unscaledWidth}px`;
+      table.style.height = `${unscaledHeight}px`;
+
+      const wrapper = table.parentElement;
+      if (wrapper) {
+        wrapper.style.width = `${unscaledWidth * scale}px`;
+        wrapper.style.height = `${unscaledHeight * scale}px`;
       }
     };
 
     const onMouseUp = () => {
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+
+      // Remove preview cells and explicit positioning
+      previewCells.forEach(cell => cell.remove());
+      cells.forEach(cell => {
+        (cell as HTMLElement).style.gridRow = '';
+        (cell as HTMLElement).style.gridColumn = '';
+        (cell as HTMLElement).style.display = '';
+      });
+
+      // Commit the resize only if dimensions changed
+      if (targetRows !== startRows || targetCols !== startCols) {
+        resizeGrid(gridId, targetRows, targetCols);
+      }
     };
 
     document.addEventListener('mousemove', onMouseMove);
@@ -394,6 +502,22 @@ export function initializeUI(): void {
     });
   }
 
+  // Undo button
+  const undoBtn = document.getElementById('undo-btn');
+  if (undoBtn) {
+    undoBtn.addEventListener('click', () => {
+      undo();
+    });
+  }
+
+  // Redo button
+  const redoBtn = document.getElementById('redo-btn');
+  if (redoBtn) {
+    redoBtn.addEventListener('click', () => {
+      redo();
+    });
+  }
+
   // Save button
   const saveBtn = document.getElementById('save-btn');
   if (saveBtn) {
@@ -402,6 +526,9 @@ export function initializeUI(): void {
     });
   }
 
+  // Update history status display
+  updateHistoryStatus();
+
   // Close context menu when clicking outside
   document.addEventListener('click', (e) => {
     if (currentContextMenu && !currentContextMenu.contains(e.target as Node)) {
@@ -409,10 +536,33 @@ export function initializeUI(): void {
     }
   });
 
-  // Close context menu on escape
+  // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
+    // Escape: Close context menu
     if (e.key === 'Escape') {
       closeContextMenu();
+      return;
+    }
+
+    // Ctrl+Z / Cmd+Z: Undo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      undo();
+      return;
+    }
+
+    // Ctrl+Shift+Z / Cmd+Shift+Z: Redo
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) {
+      e.preventDefault();
+      redo();
+      return;
+    }
+
+    // Ctrl+Y / Cmd+Y: Redo (Windows convention)
+    if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+      e.preventDefault();
+      redo();
+      return;
     }
   });
 }

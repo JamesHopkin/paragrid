@@ -24,6 +24,14 @@ let state: EditorState = createInitialState();
 let stateChangeCallbacks: Array<(state: EditorState) => void> = [];
 
 /**
+ * Undo/Redo history
+ * Note: Metadata (zoom/scale) changes are NOT tracked in history per design.
+ */
+let undoStack: EditorState[] = [];
+let redoStack: EditorState[] = [];
+const MAX_HISTORY_SIZE = 50;
+
+/**
  * Register a callback to be called when state changes
  */
 export function onStateChange(callback: (state: EditorState) => void): void {
@@ -45,9 +53,55 @@ export function getState(): EditorState {
 }
 
 /**
+ * Deep clone the current state (excluding metadata since it's not part of undo history).
+ */
+function cloneState(): EditorState {
+  const clonedGrids = new Map<string, GridDefinition>();
+
+  state.grids.forEach((grid, id) => {
+    clonedGrids.set(id, {
+      id: grid.id,
+      rows: grid.rows,
+      cols: grid.cols,
+      cells: grid.cells.map(row =>
+        row.map(cell => ({
+          ...cell,
+          pins: { ...cell.pins }
+        }))
+      )
+    });
+  });
+
+  return {
+    grids: clonedGrids,
+    gridOrder: [...state.gridOrder],
+    nextGridId: state.nextGridId,
+    metadata: new Map(state.metadata) // Clone metadata map
+  };
+}
+
+/**
+ * Save current state to undo stack before performing a mutation.
+ * Clears redo stack since we're performing a new action.
+ */
+function saveStateToUndoStack(): void {
+  undoStack.push(cloneState());
+
+  // Limit history size
+  if (undoStack.length > MAX_HISTORY_SIZE) {
+    undoStack.shift();
+  }
+
+  // Clear redo stack on new action
+  redoStack = [];
+}
+
+/**
  * Add a new empty grid
  */
 export function addGrid(): void {
+  saveStateToUndoStack();
+
   const newId = `grid_${state.nextGridId}`;
   const newGrid = createEmptyGrid(newId, 5, 5);
 
@@ -63,6 +117,8 @@ export function addGrid(): void {
  * Delete a grid and all references to it
  */
 export function deleteGrid(gridId: string): void {
+  saveStateToUndoStack();
+
   // Remove the grid itself
   state.grids.delete(gridId);
   state.gridOrder = state.gridOrder.filter(id => id !== gridId);
@@ -92,6 +148,8 @@ export function deleteGrid(gridId: string): void {
 export function duplicateGrid(gridId: string): void {
   const original = state.grids.get(gridId);
   if (!original) return;
+
+  saveStateToUndoStack();
 
   const newId = `grid_${state.nextGridId}`;
   state.nextGridId++;
@@ -139,6 +197,8 @@ export function renameGrid(oldId: string, newId: string): void {
   const grid = state.grids.get(oldId);
   if (!grid || state.grids.has(newId)) return;
 
+  saveStateToUndoStack();
+
   // Update the grid's ID
   grid.id = newId;
 
@@ -174,6 +234,8 @@ export function setCell(gridId: string, row: number, col: number, content: CellC
   const grid = state.grids.get(gridId);
   if (!grid) return;
 
+  saveStateToUndoStack();
+
   grid.cells[row][col] = content;
   notifyStateChange();
 }
@@ -184,6 +246,8 @@ export function setCell(gridId: string, row: number, col: number, content: CellC
 export function resizeGrid(gridId: string, newRows: number, newCols: number): void {
   const grid = state.grids.get(gridId);
   if (!grid) return;
+
+  saveStateToUndoStack();
 
   // Create new cells array
   const newCells: CellContent[][] = [];
@@ -238,25 +302,53 @@ export function getGridsAvailableForPrimaryRef(): Set<string> {
 }
 
 /**
- * Export state to console in parseable format
+ * Export state to console in parseable format matching demo-iso.ts GRIDS format
  */
 export function exportToConsole(): void {
-  console.log('=== Paragrid Level Editor State ===');
-  console.log('Grid Order:', state.gridOrder);
-  console.log('\nGrids:');
+  console.log('=== Paragrid Level Editor Export ===\n');
+
+  // Build the export object
+  const exportObj: Record<string, string> = {};
+
   state.grids.forEach((grid, id) => {
-    console.log(`\n${id} (${grid.rows}x${grid.cols}):`);
+    const rows: string[] = [];
+
     for (let r = 0; r < grid.rows; r++) {
       const row = grid.cells[r].map(cell => {
-        if (cell.type === 'Empty') return '.';
+        if (cell.type === 'Empty') return '_';
         if (cell.type === 'Concrete') return cell.id || '?';
-        if (cell.type === 'Ref') return `[${cell.id}${cell.isPrimary ? '*' : ''}]`;
+        if (cell.type === 'Ref') {
+          // Primary ref: *gridId, Secondary ref: ~gridId
+          const prefix = cell.isPrimary ? '*' : '~';
+          return `${prefix}${cell.id || '?'}`;
+        }
         return '?';
       });
-      console.log(`  ${row.join(' ')}`);
+      rows.push(row.join(' '));
     }
+
+    exportObj[id] = rows.join('|');
   });
-  console.log('\n=== End State ===');
+
+  // Output as JavaScript object literal
+  console.log('Copy this into your code:\n');
+  console.log('const GRIDS = {');
+  console.log('  myScene: {');
+
+  state.gridOrder.forEach((id, index) => {
+    const isLast = index === state.gridOrder.length - 1;
+    const comma = isLast ? '' : ',';
+    console.log(`    "${id}": "${exportObj[id]}"${comma}`);
+  });
+
+  console.log('  }');
+  console.log('};\n');
+
+  // Also output as JSON for programmatic use
+  console.log('JSON format (for parseGrids):');
+  console.log(JSON.stringify(exportObj, null, 2));
+
+  console.log('\n=== End Export ===');
 }
 
 /**
@@ -269,6 +361,7 @@ export function getGridScale(gridId: string): number {
 
 /**
  * Set the scale (zoom) of a grid
+ * Note: Zoom changes are NOT tracked in undo history per design.
  */
 export function setGridScale(gridId: string, scale: number): void {
   const metadata = state.metadata.get(gridId);
@@ -278,4 +371,52 @@ export function setGridScale(gridId: string, scale: number): void {
     state.metadata.set(gridId, { scale: Math.max(0.1, Math.min(5.0, scale)) });
   }
   notifyStateChange();
+}
+
+/**
+ * Undo the last action
+ */
+export function undo(): void {
+  if (undoStack.length === 0) {
+    return; // Nothing to undo
+  }
+
+  // Save current state to redo stack
+  redoStack.push(cloneState());
+
+  // Restore previous state
+  state = undoStack.pop()!;
+
+  notifyStateChange();
+}
+
+/**
+ * Redo the last undone action
+ */
+export function redo(): void {
+  if (redoStack.length === 0) {
+    return; // Nothing to redo
+  }
+
+  // Save current state to undo stack
+  undoStack.push(cloneState());
+
+  // Restore next state
+  state = redoStack.pop()!;
+
+  notifyStateChange();
+}
+
+/**
+ * Get the number of available undo actions
+ */
+export function getUndoStackSize(): number {
+  return undoStack.length;
+}
+
+/**
+ * Get the number of available redo actions
+ */
+export function getRedoStackSize(): number {
+  return redoStack.length;
 }
