@@ -193,9 +193,11 @@ function createCellElement(grid: GridDefinition, row: number, col: number): HTML
     cellDiv.classList.add('empty');
     cellDiv.textContent = '·';
   } else if (cellContent.type === 'Concrete') {
-    // Special styling for player cell (id "1")
+    // Special styling for special cell types
     if (cellContent.id === '1') {
       cellDiv.classList.add('player');
+    } else if (cellContent.id === '9') {
+      cellDiv.classList.add('stop');
     } else {
       cellDiv.classList.add('concrete');
     }
