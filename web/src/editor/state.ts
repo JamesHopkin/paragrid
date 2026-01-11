@@ -352,6 +352,166 @@ export function exportToConsole(): void {
 }
 
 /**
+ * Import grids from text format (JSON)
+ * @param jsonText - JSON string containing grid definitions
+ * @throws Error if parsing fails
+ */
+export async function importFromText(jsonText: string): Promise<void> {
+  // Parse JSON
+  let definitions: Record<string, string>;
+  try {
+    definitions = JSON.parse(jsonText);
+  } catch (e) {
+    throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Validate that it's an object
+  if (typeof definitions !== 'object' || definitions === null || Array.isArray(definitions)) {
+    throw new Error('Expected a JSON object mapping grid IDs to grid strings');
+  }
+
+  // Import parseGrids from the parser
+  const { parseGrids } = await import('../lib/parser/parser.js');
+
+  // Parse grids using the parser
+  const gridStore = parseGrids(definitions);
+
+  // Save current state to undo stack
+  saveStateToUndoStack();
+
+  // Convert parsed grids to editor format
+  const newGrids = new Map<string, GridDefinition>();
+  const newGridOrder: string[] = [];
+  const newMetadata = new Map<string, { scale: number }>();
+
+  for (const [gridId, grid] of Object.entries(gridStore)) {
+    // Convert cells from core types to editor types
+    const editorCells: CellContent[][] = [];
+    for (let r = 0; r < grid.rows; r++) {
+      editorCells[r] = [];
+      for (let c = 0; c < grid.cols; c++) {
+        const cell = grid.cells[r][c];
+        let editorCell: CellContent;
+
+        if (cell.type === 'empty') {
+          editorCell = {
+            type: 'Empty',
+            pins: {
+              top: false,
+              bottom: false,
+              left: false,
+              right: false,
+              center: false,
+            },
+          };
+        } else if (cell.type === 'concrete') {
+          editorCell = {
+            type: 'Concrete',
+            id: cell.id,
+            pins: {
+              top: false,
+              bottom: false,
+              left: false,
+              right: false,
+              center: false,
+            },
+          };
+        } else {
+          // ref cell - preserve isPrimary from parser (will be auto-determined later if null)
+          editorCell = {
+            type: 'Ref',
+            id: cell.gridId,
+            isPrimary: cell.isPrimary ?? false, // Temporarily set to false, will update below
+            pins: {
+              top: false,
+              bottom: false,
+              left: false,
+              right: false,
+              center: false,
+            },
+          };
+        }
+
+        editorCells[r][c] = editorCell;
+      }
+    }
+
+    // Create GridDefinition
+    const gridDef: GridDefinition = {
+      id: gridId,
+      rows: grid.rows,
+      cols: grid.cols,
+      cells: editorCells,
+    };
+
+    newGrids.set(gridId, gridDef);
+    newGridOrder.push(gridId);
+    newMetadata.set(gridId, { scale: 1.0 });
+  }
+
+  // Auto-determine primary references (first occurrence) only for refs that were null in parser
+  // Track which refs were explicitly marked as primary
+  const explicitPrimaryRefs = new Set<string>();
+  const primaryRefSeen = new Set<string>();
+
+  // First pass: identify explicitly marked primary refs
+  for (const [gridId, grid] of Object.entries(gridStore)) {
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const cell = grid.cells[r][c];
+        if (cell.type === 'ref' && cell.isPrimary === true) {
+          explicitPrimaryRefs.add(cell.gridId);
+        }
+      }
+    }
+  }
+
+  // Second pass: auto-determine primary refs for refs that had isPrimary === null
+  for (const gridId of newGridOrder) {
+    const grid = newGrids.get(gridId);
+    const sourceGrid = gridStore[gridId];
+    if (!grid || !sourceGrid) continue;
+
+    for (let r = 0; r < grid.rows; r++) {
+      for (let c = 0; c < grid.cols; c++) {
+        const cell = grid.cells[r][c];
+        const sourceCell = sourceGrid.cells[r][c];
+
+        if (cell.type === 'Ref' && cell.id && sourceCell.type === 'ref') {
+          if (sourceCell.isPrimary === true) {
+            // Explicitly marked as primary in input
+            cell.isPrimary = true;
+            primaryRefSeen.add(cell.id);
+          } else if (sourceCell.isPrimary === false) {
+            // Explicitly marked as secondary in input
+            cell.isPrimary = false;
+          } else {
+            // null = auto-determine based on first occurrence
+            if (!primaryRefSeen.has(cell.id)) {
+              cell.isPrimary = true;
+              primaryRefSeen.add(cell.id);
+            } else {
+              cell.isPrimary = false;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Update state
+  state.grids = newGrids;
+  state.gridOrder = newGridOrder;
+  state.nextGridId = Math.max(...newGridOrder.map(id => {
+    const match = id.match(/grid_(\d+)/);
+    return match ? parseInt(match[1], 10) : 0;
+  }), 0) + 1;
+  state.metadata = newMetadata;
+
+  notifyStateChange();
+}
+
+/**
  * Get the scale (zoom) of a grid
  */
 export function getGridScale(gridId: string): number {

@@ -208,6 +208,113 @@
         color: #888;
         font-weight: bold;
       }
+
+      /* Import Modal */
+      #import-modal {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.8);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+      }
+
+      #import-modal.visible {
+        display: flex;
+      }
+
+      .modal-content {
+        background: #2a2a2a;
+        border: 2px solid #4fc3f7;
+        border-radius: 8px;
+        padding: 2rem;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80vh;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+
+      .modal-header h2 {
+        color: #4fc3f7;
+        font-size: 1.5rem;
+        margin: 0;
+      }
+
+      .modal-close {
+        background: transparent;
+        color: #e0e0e0;
+        font-size: 1.5rem;
+        padding: 0.25rem 0.5rem;
+        line-height: 1;
+      }
+
+      .modal-close:hover {
+        background: #3a3a3a;
+        color: #fff;
+      }
+
+      #import-textarea {
+        width: 100%;
+        min-height: 300px;
+        background: #1a1a1a;
+        color: #e0e0e0;
+        border: 2px solid #444;
+        border-radius: 4px;
+        padding: 1rem;
+        font-family: 'Courier New', monospace;
+        font-size: 0.9rem;
+        resize: vertical;
+      }
+
+      #import-textarea:focus {
+        outline: none;
+        border-color: #4fc3f7;
+      }
+
+      .modal-help {
+        color: #888;
+        font-size: 0.85rem;
+        line-height: 1.5;
+      }
+
+      .modal-help code {
+        background: #1a1a1a;
+        padding: 0.125rem 0.25rem;
+        border-radius: 2px;
+        color: #4fc3f7;
+      }
+
+      .modal-actions {
+        display: flex;
+        gap: 1rem;
+        justify-content: flex-end;
+      }
+
+      #import-error {
+        color: #ff6b6b;
+        font-size: 0.9rem;
+        display: none;
+        padding: 0.5rem;
+        background: rgba(255, 107, 107, 0.1);
+        border: 1px solid #ff6b6b;
+        border-radius: 4px;
+      }
+
+      #import-error.visible {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -215,12 +322,41 @@
       <div id="toolbar">
         <h1>Paragrid Level Editor</h1>
         <button id="add-grid-btn">+ Add Grid</button>
+        <button id="import-btn">Import</button>
         <button id="undo-btn" title="Undo (Ctrl+Z)">Undo</button>
         <button id="redo-btn" title="Redo (Ctrl+Shift+Z or Ctrl+Y)">Redo</button>
         <span id="history-status" style="color: #888; margin-left: 0.5rem;"></span>
         <button id="save-btn" style="margin-left: auto;">Save</button>
       </div>
       <div id="grids-container"></div>
+    </div>
+
+    <!-- Import Modal -->
+    <div id="import-modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Import Grids</h2>
+          <button class="modal-close" id="import-modal-close">&times;</button>
+        </div>
+        <div class="modal-help">
+          Paste grid definitions in text format. Example:
+          <pre><code>{
+  "grid_1": "1 2|3 4",
+  "grid_2": "*grid_1 5|6 7"
+}</code></pre>
+          Format: JSON object where keys are grid IDs and values are grid strings. Use <code>|</code> to separate rows, spaces for cells. Digits = concrete cells, letters = refs, <code>*</code> = primary ref, <code>~</code> = secondary ref, <code>_</code> = empty.
+        </div>
+        <textarea id="import-textarea" placeholder='Paste grid definitions here in JSON format, e.g.:
+{
+  "main": "1 2|3 A",
+  "A": "4 5|6 7"
+}'></textarea>
+        <div id="import-error"></div>
+        <div class="modal-actions">
+          <button id="import-cancel-btn">Cancel</button>
+          <button id="import-submit-btn">Import</button>
+        </div>
+      </div>
     </div>
 
     <script type="module" src="/src/editor/main.ts"></script>

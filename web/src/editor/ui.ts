@@ -12,6 +12,7 @@ import {
   resizeGrid,
   getGridsAvailableForPrimaryRef,
   exportToConsole,
+  importFromText,
   getGridScale,
   setGridScale,
   undo,
@@ -491,6 +492,64 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
 }
 
 /**
+ * Show the import modal
+ */
+function showImportModal(): void {
+  const modal = document.getElementById('import-modal');
+  const textarea = document.getElementById('import-textarea') as HTMLTextAreaElement;
+  const errorDiv = document.getElementById('import-error');
+
+  if (modal) {
+    modal.classList.add('visible');
+  }
+
+  if (textarea) {
+    textarea.value = '';
+    textarea.focus();
+  }
+
+  if (errorDiv) {
+    errorDiv.classList.remove('visible');
+    errorDiv.textContent = '';
+  }
+}
+
+/**
+ * Hide the import modal
+ */
+function hideImportModal(): void {
+  const modal = document.getElementById('import-modal');
+  if (modal) {
+    modal.classList.remove('visible');
+  }
+}
+
+/**
+ * Handle import submission
+ */
+async function handleImportSubmit(): Promise<void> {
+  const textarea = document.getElementById('import-textarea') as HTMLTextAreaElement;
+  const errorDiv = document.getElementById('import-error');
+
+  if (!textarea || !errorDiv) return;
+
+  const text = textarea.value.trim();
+  if (!text) {
+    errorDiv.textContent = 'Please paste grid definitions';
+    errorDiv.classList.add('visible');
+    return;
+  }
+
+  try {
+    await importFromText(text);
+    hideImportModal();
+  } catch (e) {
+    errorDiv.textContent = e instanceof Error ? e.message : String(e);
+    errorDiv.classList.add('visible');
+  }
+}
+
+/**
  * Initialize UI event listeners
  */
 export function initializeUI(): void {
@@ -526,6 +585,48 @@ export function initializeUI(): void {
     });
   }
 
+  // Import button
+  const importBtn = document.getElementById('import-btn');
+  if (importBtn) {
+    importBtn.addEventListener('click', () => {
+      showImportModal();
+    });
+  }
+
+  // Import modal close button
+  const importCloseBtn = document.getElementById('import-modal-close');
+  if (importCloseBtn) {
+    importCloseBtn.addEventListener('click', () => {
+      hideImportModal();
+    });
+  }
+
+  // Import modal cancel button
+  const importCancelBtn = document.getElementById('import-cancel-btn');
+  if (importCancelBtn) {
+    importCancelBtn.addEventListener('click', () => {
+      hideImportModal();
+    });
+  }
+
+  // Import modal submit button
+  const importSubmitBtn = document.getElementById('import-submit-btn');
+  if (importSubmitBtn) {
+    importSubmitBtn.addEventListener('click', () => {
+      handleImportSubmit();
+    });
+  }
+
+  // Close import modal when clicking outside
+  const importModal = document.getElementById('import-modal');
+  if (importModal) {
+    importModal.addEventListener('click', (e) => {
+      if (e.target === importModal) {
+        hideImportModal();
+      }
+    });
+  }
+
   // Update history status display
   updateHistoryStatus();
 
@@ -538,8 +639,13 @@ export function initializeUI(): void {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    // Escape: Close context menu
+    // Escape: Close import modal or context menu
     if (e.key === 'Escape') {
+      const modal = document.getElementById('import-modal');
+      if (modal && modal.classList.contains('visible')) {
+        hideImportModal();
+        return;
+      }
       closeContextMenu();
       return;
     }
