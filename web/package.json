@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "fraction.js": "^5.3.4",
-    "iso-render": "file:../../ts-poly"
+    "iso-render": "file:../../ts-poly",
+    "json5": "^2.2.3"
   }
 }

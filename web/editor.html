@@ -339,17 +339,17 @@
           <button class="modal-close" id="import-modal-close">&times;</button>
         </div>
         <div class="modal-help">
-          Paste grid definitions in text format. Example:
+          Paste grid definitions in JSON5 format (unquoted keys OK). Example:
           <pre><code>{
-  "grid_1": "1 2|3 4",
-  "grid_2": "*grid_1 5|6 7"
+  main: "1 2|3 4",
+  grid_2: "*main 5|6 7"
 }</code></pre>
-          Format: JSON object where keys are grid IDs and values are grid strings. Use <code>|</code> to separate rows, spaces for cells. Digits = concrete cells, letters = refs, <code>*</code> = primary ref, <code>~</code> = secondary ref, <code>_</code> = empty.
+          Format: Object where keys are grid IDs and values are grid strings. Use <code>|</code> to separate rows, spaces for cells. Digits = concrete cells, letters = refs, <code>*</code> = primary ref, <code>~</code> = secondary ref, <code>_</code> = empty.
         </div>
-        <textarea id="import-textarea" placeholder='Paste grid definitions here in JSON format, e.g.:
+        <textarea id="import-textarea" placeholder='Paste grid definitions here, e.g.:
 {
-  "main": "1 2|3 A",
-  "A": "4 5|6 7"
+  main: "1 2|3 A",
+  A: "4 5|6 7"
 }'></textarea>
         <div id="import-error"></div>
         <div class="modal-actions">

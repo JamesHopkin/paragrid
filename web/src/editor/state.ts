@@ -2,6 +2,7 @@
  * State management for the Paragrid Level Editor
  */
 
+import JSON5 from 'json5';
 import { EditorState, GridDefinition, CellContent, createEmptyGrid } from './types.js';
 
 /**
@@ -352,17 +353,17 @@ export function exportToConsole(): void {
 }
 
 /**
- * Import grids from text format (JSON)
- * @param jsonText - JSON string containing grid definitions
+ * Import grids from text format (JSON5)
+ * @param jsonText - JSON5 string containing grid definitions (supports unquoted keys, trailing commas, comments)
  * @throws Error if parsing fails
  */
 export async function importFromText(jsonText: string): Promise<void> {
-  // Parse JSON
+  // Parse JSON5 (supports unquoted keys, trailing commas, comments, etc.)
   let definitions: Record<string, string>;
   try {
-    definitions = JSON.parse(jsonText);
+    definitions = JSON5.parse(jsonText);
   } catch (e) {
-    throw new Error(`Invalid JSON: ${e instanceof Error ? e.message : String(e)}`);
+    throw new Error(`Invalid JSON5: ${e instanceof Error ? e.message : String(e)}`);
   }
 
   // Validate that it's an object
