@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Paragrid Level Editor</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background: #1a1a1a;
+        color: #e0e0e0;
+        overflow: hidden;
+        height: 100vh;
+      }
+
+      #editor-container {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #toolbar {
+        background: #2a2a2a;
+        border-bottom: 2px solid #444;
+        padding: 1rem;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+      }
+
+      h1 {
+        color: #4fc3f7;
+        font-size: 1.5rem;
+        margin-right: auto;
+      }
+
+      button {
+        background: #4fc3f7;
+        color: #1a1a1a;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        font-size: 1rem;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      button:hover {
+        background: #81d4fa;
+      }
+
+      button:active {
+        background: #29b6f6;
+      }
+
+      #grids-container {
+        flex: 1;
+        overflow: auto;
+        padding: 2rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2rem;
+        align-content: flex-start;
+      }
+
+      .grid-card {
+        background: #2a2a2a;
+        border: 2px solid #444;
+        border-radius: 8px;
+        padding: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+
+      .grid-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid #444;
+      }
+
+      .grid-title {
+        color: #4fc3f7;
+        font-weight: bold;
+        font-size: 1.1rem;
+      }
+
+      .grid-table {
+        display: grid;
+        gap: 2px;
+        background: #444;
+        border: 2px solid #444;
+        position: relative;
+      }
+
+      .grid-cell {
+        background: #3a3a3a;
+        aspect-ratio: 1;
+        min-width: 40px;
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.1s;
+        font-weight: bold;
+        font-size: 1.2rem;
+      }
+
+      .grid-cell:hover {
+        background: #4a4a4a;
+      }
+
+      .grid-cell.empty {
+        color: #666;
+      }
+
+      .grid-cell.concrete {
+        background: #3d5a80;
+        color: #98c1d9;
+      }
+
+      .grid-cell.ref-primary {
+        background: #4a7c59;
+        color: #90ee90;
+      }
+
+      .grid-cell.ref-secondary {
+        background: #6b5b95;
+        color: #c5b4e3;
+      }
+
+      .resize-handle {
+        position: absolute;
+        bottom: -6px;
+        right: -6px;
+        width: 12px;
+        height: 12px;
+        background: #4fc3f7;
+        cursor: nwse-resize;
+        border-radius: 2px;
+      }
+
+      .resize-handle:hover {
+        background: #81d4fa;
+      }
+
+      /* Context Menu */
+      .context-menu {
+        position: fixed;
+        background: #2a2a2a;
+        border: 2px solid #4fc3f7;
+        border-radius: 4px;
+        padding: 0.5rem 0;
+        min-width: 200px;
+        z-index: 1000;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+      }
+
+      .context-menu-item {
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+
+      .context-menu-item:hover {
+        background: #3a3a3a;
+      }
+
+      .context-menu-item.disabled {
+        color: #666;
+        cursor: not-allowed;
+      }
+
+      .context-menu-item.disabled:hover {
+        background: transparent;
+      }
+
+      .context-menu-section {
+        border-top: 1px solid #444;
+        margin-top: 0.25rem;
+        padding-top: 0.25rem;
+      }
+
+      .context-menu-label {
+        padding: 0.25rem 1rem;
+        font-size: 0.85rem;
+        color: #888;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor-container">
+      <div id="toolbar">
+        <h1>Paragrid Level Editor</h1>
+        <button id="add-grid-btn">+ Add Grid</button>
+        <button id="save-btn">Save</button>
+      </div>
+      <div id="grids-container"></div>
+    </div>
+
+    <script type="module" src="/src/editor/main.ts"></script>
+  </body>
+</html>
