@@ -32,6 +32,17 @@ import {
 let currentContextMenu: HTMLElement | null = null;
 
 /**
+ * Track currently selected cell for keyboard navigation
+ */
+interface SelectedCell {
+  gridId: string;
+  row: number;
+  col: number;
+}
+
+let selectedCell: SelectedCell | null = null;
+
+/**
  * Update the history status display showing undo/redo availability.
  */
 export function updateHistoryStatus(): void {
@@ -72,6 +83,20 @@ export function renderGrids(): void {
       container.appendChild(gridCard);
     }
   });
+
+  // Restore selection after re-render
+  if (selectedCell) {
+    const cellElement = document.querySelector(
+      `.grid-cell[data-grid-id="${selectedCell.gridId}"][data-row="${selectedCell.row}"][data-col="${selectedCell.col}"]`
+    ) as HTMLElement;
+
+    if (cellElement) {
+      cellElement.classList.add('selected');
+    } else {
+      // Cell no longer exists, clear selection
+      selectedCell = null;
+    }
+  }
 }
 
 /**
@@ -179,10 +204,15 @@ function createCellElement(grid: GridDefinition, row: number, col: number): HTML
     cellDiv.textContent = cellContent.id || '?';
   }
 
+  // Store cell coordinates as data attributes for selection
+  cellDiv.dataset.gridId = grid.id;
+  cellDiv.dataset.row = row.toString();
+  cellDiv.dataset.col = col.toString();
+
   // Left-click to select cell
   cellDiv.addEventListener('click', (e) => {
     e.stopPropagation();
-    selectCell(cellDiv);
+    selectCell(cellDiv, grid.id, row, col);
   });
 
   // Right-click to open palette
@@ -196,9 +226,9 @@ function createCellElement(grid: GridDefinition, row: number, col: number): HTML
 }
 
 /**
- * Select a cell (visual feedback)
+ * Select a cell (visual feedback and state tracking)
  */
-function selectCell(cellElement: HTMLElement): void {
+function selectCell(cellElement: HTMLElement, gridId: string, row: number, col: number): void {
   // Clear previous selection
   document.querySelectorAll('.grid-cell.selected').forEach(el => {
     el.classList.remove('selected');
@@ -206,6 +236,9 @@ function selectCell(cellElement: HTMLElement): void {
 
   // Select this cell
   cellElement.classList.add('selected');
+
+  // Update selected cell state
+  selectedCell = { gridId, row, col };
 }
 
 /**
@@ -575,6 +608,114 @@ async function handleImportSubmit(): Promise<void> {
 }
 
 /**
+ * Handle cell navigation with arrow keys
+ */
+function handleCellNavigation(key: string): void {
+  if (!selectedCell) return;
+
+  const state = getState();
+  const grid = state.grids.get(selectedCell.gridId);
+  if (!grid) return;
+
+  let newRow = selectedCell.row;
+  let newCol = selectedCell.col;
+
+  switch (key) {
+    case 'ArrowUp':
+      newRow = Math.max(0, newRow - 1);
+      break;
+    case 'ArrowDown':
+      newRow = Math.min(grid.rows - 1, newRow + 1);
+      break;
+    case 'ArrowLeft':
+      newCol = Math.max(0, newCol - 1);
+      break;
+    case 'ArrowRight':
+      newCol = Math.min(grid.cols - 1, newCol + 1);
+      break;
+  }
+
+  // Find and select the cell element
+  const cellElement = document.querySelector(
+    `.grid-cell[data-grid-id="${selectedCell.gridId}"][data-row="${newRow}"][data-col="${newCol}"]`
+  ) as HTMLElement;
+
+  if (cellElement) {
+    selectCell(cellElement, selectedCell.gridId, newRow, newCol);
+    cellElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+}
+
+/**
+ * Handle grid navigation with Super+arrow keys
+ */
+function handleGridNavigation(key: string): void {
+  if (!selectedCell) return;
+
+  const state = getState();
+  const currentIndex = state.gridOrder.indexOf(selectedCell.gridId);
+  if (currentIndex === -1) return;
+
+  let newIndex = currentIndex;
+
+  // For now, treat left/up as previous, right/down as next
+  // Could be made more sophisticated with 2D grid layout detection
+  if (key === 'ArrowLeft' || key === 'ArrowUp') {
+    newIndex = Math.max(0, currentIndex - 1);
+  } else if (key === 'ArrowRight' || key === 'ArrowDown') {
+    newIndex = Math.min(state.gridOrder.length - 1, currentIndex + 1);
+  }
+
+  if (newIndex !== currentIndex) {
+    const newGridId = state.gridOrder[newIndex];
+    const newGrid = state.grids.get(newGridId);
+    if (newGrid) {
+      // Select first cell (0, 0) in the new grid
+      const cellElement = document.querySelector(
+        `.grid-cell[data-grid-id="${newGridId}"][data-row="0"][data-col="0"]`
+      ) as HTMLElement;
+
+      if (cellElement) {
+        selectCell(cellElement, newGridId, 0, 0);
+        cellElement.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    }
+  }
+}
+
+/**
+ * Handle letter key for setting ref cell
+ */
+function handleLetterKeyForRef(letter: string, isPrimary: boolean): void {
+  if (!selectedCell) return;
+
+  const state = getState();
+
+  // Find grid(s) that start with this letter
+  const matches = state.gridOrder.filter(id => id.toLowerCase().startsWith(letter));
+
+  if (matches.length === 0) {
+    // No matching grid
+    return;
+  }
+
+  // Use first match (could be made smarter with disambiguation)
+  const targetGridId = matches[0];
+
+  // Check if we can place this ref
+  if (isPrimary) {
+    const availablePrimaryRefs = getGridsAvailableForPrimaryRef();
+    if (!availablePrimaryRefs.has(targetGridId)) {
+      // Primary ref already placed
+      return;
+    }
+  }
+
+  // Set the cell
+  setCell(selectedCell.gridId, selectedCell.row, selectedCell.col, createRefCell(targetGridId, isPrimary));
+}
+
+/**
  * Initialize UI event listeners
  */
 export function initializeUI(): void {
@@ -664,6 +805,10 @@ export function initializeUI(): void {
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
+    // Skip if typing in input/textarea
+    const target = e.target as HTMLElement;
+    const isTypingInField = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+
     // Escape: Close import modal or context menu
     if (e.key === 'Escape') {
       const modal = document.getElementById('import-modal');
@@ -673,6 +818,50 @@ export function initializeUI(): void {
       }
       closeContextMenu();
       return;
+    }
+
+    // Arrow keys: Navigate selection
+    if (!isTypingInField && selectedCell) {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        if (e.metaKey || e.ctrlKey) {
+          // Super+Arrow: Move between grids
+          handleGridNavigation(e.key);
+        } else {
+          // Arrow: Move within grid
+          handleCellNavigation(e.key);
+        }
+        return;
+      }
+    }
+
+    // Typing: Set cell content
+    if (!isTypingInField && selectedCell) {
+      // Numbers: Set concrete cell
+      if (/^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        const state = getState();
+        const grid = state.grids.get(selectedCell.gridId);
+        if (grid) {
+          setCell(selectedCell.gridId, selectedCell.row, selectedCell.col, createConcreteCell(e.key));
+        }
+        return;
+      }
+
+      // Letters: Set ref cell (Shift for primary)
+      if (/^[a-zA-Z]$/.test(e.key)) {
+        e.preventDefault();
+        const isPrimary = e.shiftKey;
+        handleLetterKeyForRef(e.key.toLowerCase(), isPrimary);
+        return;
+      }
+
+      // Space or Delete: Clear cell
+      if (e.key === ' ' || e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        setCell(selectedCell.gridId, selectedCell.row, selectedCell.col, createEmptyCell());
+        return;
+      }
     }
 
     // Ctrl+Z / Cmd+Z: Undo
