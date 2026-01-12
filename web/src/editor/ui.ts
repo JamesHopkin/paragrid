@@ -486,13 +486,22 @@ function startCardReorder(gridId: string, startEvent: MouseEvent): void {
       }
     }
 
-    // Visual feedback: highlight the target position
+    // Visual feedback: highlight the target position with left or right border
+    // Show right border if moving right, left border if moving left
     cards.forEach((card, idx) => {
       const el = card as HTMLElement;
+      // Clear both borders first
+      el.style.borderLeft = '';
+      el.style.borderRight = '';
+
       if (idx === currentTargetIndex && idx !== startIndex) {
-        el.style.borderTop = '3px solid #4CAF50';
-      } else {
-        el.style.borderTop = '';
+        if (currentTargetIndex > startIndex) {
+          // Moving right: show border on right side
+          el.style.borderRight = '3px solid #4CAF50';
+        } else {
+          // Moving left: show border on left side
+          el.style.borderLeft = '3px solid #4CAF50';
+        }
       }
     });
   };
@@ -505,7 +514,9 @@ function startCardReorder(gridId: string, startEvent: MouseEvent): void {
     draggedCard.style.opacity = '';
     draggedCard.style.cursor = '';
     cards.forEach(card => {
-      (card as HTMLElement).style.borderTop = '';
+      const el = card as HTMLElement;
+      el.style.borderLeft = '';
+      el.style.borderRight = '';
     });
 
     // Perform reorder if position changed
