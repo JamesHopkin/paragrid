@@ -620,53 +620,6 @@ class Navigator:
         success = self.try_enter(rules)
         assert success, f"Navigator.enter() failed at {self.current}"
 
-    def try_enter_multi(self, rules: RuleSet) -> bool:
-        """
-        Try to enter the Ref at current position, following Ref chains.
-        Continues entering nested Refs until landing on a non-Ref cell.
-        Returns False if can't enter or if a cycle is detected.
-        Clears visited_grids on success (non-cyclic completion).
-        Increments depth for each successful entry.
-        """
-        visited_grids: set[str] = set()
-
-        while True:
-            cell = get_cell(self.store, self.current)
-            if not isinstance(cell, Ref):
-                # Landed on non-Ref, success - clear Navigator's visited
-                self.visited_grids.clear()
-                return True
-
-            # Check for cycle before entering
-            if cell.grid_id in visited_grids:
-                # Cycle detected - don't clear Navigator's visited
-                return False
-
-            visited_grids.add(cell.grid_id)
-
-            # Try to enter this Ref with depth-aware parameters
-            entry_pos = try_enter(
-                self.store,
-                cell.grid_id,
-                self.direction,
-                rules,
-                current_depth=self.depth + 1,
-                exit_position=self.exit_position,
-                exit_depth=self.exit_depth,
-                exit_fraction=self.exit_fraction,
-            )
-            if entry_pos is None:
-                return False
-
-            self.current = entry_pos
-            # Increment depth after successful entry
-            self.depth += 1
-
-    def enter_multi(self, rules: RuleSet) -> None:
-        """Enter the Ref at current position, following chains. Asserts if can't enter."""
-        success = self.try_enter_multi(rules)
-        assert success, f"Navigator.enter_multi() failed at {self.current}"
-
     def flip(self) -> None:
         """Reverse direction for swallow operations."""
         flips = {
