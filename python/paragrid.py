@@ -473,7 +473,7 @@ class Navigator:
         self.store = store
         self.current = position
         self.direction = direction
-        self.visited_grids: set[str] = set()  # For cycle detection in try_enter()
+        self.visited_grids: set[str] = set()  # For exit cycle detection
 
         # Depth-aware entry tracking
         self.depth: int = 0  # enters - exits
@@ -589,17 +589,11 @@ class Navigator:
     def try_enter(self, rules: RuleSet) -> bool:
         """
         Try to enter the Ref at current position from the current direction.
-        Uses visited_grids to detect entry cycles.
         Increments depth on successful entry and passes depth-aware entry parameters.
-        Returns False if can't enter or if cycle detected.
+        Returns False if can't enter.
         """
         cell = get_cell(self.store, self.current)
-        if not isinstance(cell, Ref):
-            return False
-
-        # Check for cycle before entering
-        if cell.grid_id in self.visited_grids:
-            return False  # Cycle detected
+        assert isinstance(cell, Ref)
 
         # Pass depth information for depth-aware entry
         entry_pos = try_enter(
