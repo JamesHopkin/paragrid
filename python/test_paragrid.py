@@ -551,6 +551,56 @@ class TestAnalyze:
         # The content may be nested multiple times before cutoff
         assert isinstance(ref_cell.content, (NestedNode, CutoffNode))
 
+    def test_analyze_explicit_is_primary_true(self) -> None:
+        """Test analyze() with explicit is_primary=True marking."""
+        store: GridStore = {
+            "main": Grid(
+                "main",
+                (
+                    (Ref("child", is_primary=True), Concrete("a")),
+                ),
+            ),
+            "child": Grid(
+                "child",
+                (
+                    (Concrete("x"),),
+                ),
+            ),
+        }
+        result = analyze(store, "main", Fraction(1), Fraction(1))
+        assert isinstance(result, NestedNode)
+        # Check that the ref is recognized as primary
+        ref_cell = result.children[0][0]
+        assert isinstance(ref_cell, RefNode)
+        assert ref_cell.is_primary is True
+
+    def test_analyze_explicit_is_primary_false(self) -> None:
+        """Test analyze() with explicit is_primary=False marking."""
+        store: GridStore = {
+            "main": Grid(
+                "main",
+                (
+                    (Ref("child", is_primary=True), Ref("child", is_primary=False)),
+                ),
+            ),
+            "child": Grid(
+                "child",
+                (
+                    (Concrete("x"),),
+                ),
+            ),
+        }
+        result = analyze(store, "main", Fraction(1), Fraction(1))
+        assert isinstance(result, NestedNode)
+        # First ref should be primary (explicitly marked)
+        ref_cell_1 = result.children[0][0]
+        assert isinstance(ref_cell_1, RefNode)
+        assert ref_cell_1.is_primary is True
+        # Second ref should be secondary (explicitly marked)
+        ref_cell_2 = result.children[0][1]
+        assert isinstance(ref_cell_2, RefNode)
+        assert ref_cell_2.is_primary is False
+
 
 # =============================================================================
 # Test Traversal
@@ -953,6 +1003,19 @@ class TestNavigator:
         result = nav.try_advance()
 
         assert result is False, "Should detect exit cycle and return False"
+
+    def test_try_enter_nonexistent_grid(self) -> None:
+        """Test that try_enter returns None when grid doesn't exist in store."""
+        from paragrid import try_enter, RuleSet
+
+        store: GridStore = {
+            "main": Grid("main", ((Concrete("A"),),)),
+        }
+
+        # Try to enter a grid that doesn't exist in the store
+        result = try_enter(store, "nonexistent", Direction.E, RuleSet())
+
+        assert result is None, "Should return None for non-existent grid"
 
 
 # =============================================================================

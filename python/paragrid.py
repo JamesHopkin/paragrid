@@ -326,8 +326,9 @@ def analyze(
     # Helper function to find ref position for depth -1 offset computation
     def find_focus_ref_position() -> tuple[int, int] | None:
         """Find the position of the ref cell that leads toward the focused grid."""
-        if focus_path is None or current_path is None:
-            return None
+        # Invariant: current_path is always initialized (lines 321-324)
+        # focus_path is checked by caller (compute_focus_metadata line 348)
+        assert focus_path is not None and current_path is not None, "unreachable: paths initialized before helper call"
         if len(current_path) >= len(focus_path):
             return None
         if focus_path[: len(current_path)] != current_path:
@@ -474,6 +475,12 @@ class Navigator:
         self.direction = direction
         self.visited_grids: set[str] = set()  # For cycle detection in try_enter()
 
+        # Depth-aware entry tracking
+        self.depth: int = 0  # enters - exits
+        self.exit_position: tuple[int, int] | None = None  # (row, col) when last exit occurred
+        self.exit_depth: int | None = None  # depth at which last exit occurred
+        self.exit_fraction: float | None = None  # fractional position (0.0-1.0) along edge when exiting
+
         # Direction deltas
         self.deltas = {
             Direction.N: (-1, 0),
@@ -486,6 +493,11 @@ class Navigator:
         """Create a copy for backtracking."""
         nav = Navigator(self.store, self.current, self.direction)
         nav.visited_grids = self.visited_grids.copy()
+        # Copy depth tracking state
+        nav.depth = self.depth
+        nav.exit_position = self.exit_position
+        nav.exit_depth = self.exit_depth
+        nav.exit_fraction = self.exit_fraction
         return nav
 
     def try_advance(self) -> bool:
@@ -506,6 +518,26 @@ class Navigator:
         # Check bounds
         if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
             # Hit edge - try to exit through cascading parent grids
+            # Capture exit position and fractional position for depth-aware entry
+            self.exit_position = (self.current.row, self.current.col)
+            self.exit_depth = self.depth
+
+            # Calculate fractional position along the edge (0.0 to 1.0)
+            if self.direction in (Direction.E, Direction.W):
+                # Exiting east or west: position is along north-south axis (row)
+                edge_dimension = grid.rows
+                exit_offset = self.current.row
+            else:  # Direction.N or Direction.S
+                # Exiting north or south: position is along east-west axis (col)
+                edge_dimension = grid.cols
+                exit_offset = self.current.col
+
+            # Calculate fraction (handle single-cell dimension)
+            if edge_dimension > 1:
+                self.exit_fraction = exit_offset / (edge_dimension - 1)
+            else:
+                self.exit_fraction = 0.5  # Default to middle for single-cell dimension
+
             # Use iterative approach with cycle detection
             visited_exit_positions: set[tuple[str, int, int]] = set()
             current_grid_id = self.current.grid_id
@@ -515,7 +547,9 @@ class Navigator:
                 if primary_ref is None:
                     return False  # Hit root edge
 
-                # Exit through primary ref
+                # Exit through primary ref - decrement depth
+                self.depth -= 1
+
                 parent_grid_id, parent_row, parent_col = primary_ref
 
                 # Detect exit cycle
@@ -556,6 +590,7 @@ class Navigator:
         """
         Try to enter the Ref at current position from the current direction.
         Uses visited_grids to detect entry cycles.
+        Increments depth on successful entry and passes depth-aware entry parameters.
         Returns False if can't enter or if cycle detected.
         """
         cell = get_cell(self.store, self.current)
@@ -566,12 +601,24 @@ class Navigator:
         if cell.grid_id in self.visited_grids:
             return False  # Cycle detected
 
-        entry_pos = try_enter(self.store, cell.grid_id, self.direction, rules)
+        # Pass depth information for depth-aware entry
+        entry_pos = try_enter(
+            self.store,
+            cell.grid_id,
+            self.direction,
+            rules,
+            current_depth=self.depth + 1,  # What depth will be after entering
+            exit_position=self.exit_position,
+            exit_depth=self.exit_depth,
+            exit_fraction=self.exit_fraction,
+        )
         if entry_pos is None:
             return False
 
         self.visited_grids.add(cell.grid_id)
         self.current = entry_pos
+        # Increment depth after successful entry
+        self.depth += 1
         return True
 
     def enter(self, rules: RuleSet) -> None:
@@ -585,6 +632,7 @@ class Navigator:
         Continues entering nested Refs until landing on a non-Ref cell.
         Returns False if can't enter or if a cycle is detected.
         Clears visited_grids on success (non-cyclic completion).
+        Increments depth for each successful entry.
         """
         visited_grids: set[str] = set()
 
@@ -602,12 +650,23 @@ class Navigator:
 
             visited_grids.add(cell.grid_id)
 
-            # Try to enter this Ref (call standalone function directly)
-            entry_pos = try_enter(self.store, cell.grid_id, self.direction, rules)
+            # Try to enter this Ref with depth-aware parameters
+            entry_pos = try_enter(
+                self.store,
+                cell.grid_id,
+                self.direction,
+                rules,
+                current_depth=self.depth + 1,
+                exit_position=self.exit_position,
+                exit_depth=self.exit_depth,
+                exit_fraction=self.exit_fraction,
+            )
             if entry_pos is None:
                 return False
 
             self.current = entry_pos
+            # Increment depth after successful entry
+            self.depth += 1
 
     def enter_multi(self, rules: RuleSet) -> None:
         """Enter the Ref at current position, following chains. Asserts if can't enter."""
@@ -682,15 +741,26 @@ def get_cell(store: GridStore, pos: CellPosition) -> Cell:
 
 
 def try_enter(
-    store: GridStore, grid_id: str, direction: Direction, rules: RuleSet
+    store: GridStore,
+    grid_id: str,
+    direction: Direction,
+    rules: RuleSet,
+    current_depth: int | None = None,
+    exit_position: tuple[int, int] | None = None,
+    exit_depth: int | None = None,
+    exit_fraction: float | None = None,
 ) -> CellPosition | None:
     """
     Determine entry point when entering a grid via a Ref.
 
     Returns the CellPosition to enter at, or None to deny entry.
-    Currently implements only standard middle-of-edge entry based on direction.
 
-    Entry Convention:
+    Entry Strategy:
+    - If current_depth == exit_depth (entering at same depth as last exit):
+      Use equivalent point transfer - preserve fractional position along edge
+    - Otherwise: Use standard middle-of-edge entry
+
+    Standard Entry Convention:
     - East (from left): (rows // 2, 0) — middle of left edge
     - West (from right): (rows // 2, cols - 1) — middle of right edge
     - South (from top): (0, cols // 2) — middle of top edge
@@ -701,6 +771,10 @@ def try_enter(
         grid_id: ID of the grid to enter
         direction: Direction of entry
         rules: RuleSet governing entry behavior (currently unused)
+        current_depth: Current depth (enters - exits), for depth-aware entry
+        exit_position: (row, col) of last exit position, for debugging/logging
+        exit_depth: Depth at which last exit occurred
+        exit_fraction: Fractional position (0.0-1.0) along edge when exiting
 
     Returns:
         CellPosition for entry point, or None to deny entry
@@ -713,7 +787,58 @@ def try_enter(
     rows = grid.rows
     cols = grid.cols
 
-    # Calculate middle-of-edge entry point based on direction
+    # Check if we should use depth-aware equivalent point transfer
+    use_equivalent_point = (
+        current_depth is not None
+        and exit_depth is not None
+        and exit_fraction is not None
+        and current_depth == exit_depth
+    )
+
+    if use_equivalent_point:
+        # Use equivalent point transfer - preserve fractional position
+        # Entry direction determines which edge and dimension
+        if direction == Direction.E:
+            # Entering from left edge (col=0)
+            # Position varies along north-south axis (row)
+            entry_dimension = rows
+            if entry_dimension > 1:
+                entry_row = round(exit_fraction * (entry_dimension - 1))
+            else:
+                entry_row = 0
+            return CellPosition(grid_id, entry_row, 0)
+
+        elif direction == Direction.W:
+            # Entering from right edge (col=cols-1)
+            # Position varies along north-south axis (row)
+            entry_dimension = rows
+            if entry_dimension > 1:
+                entry_row = round(exit_fraction * (entry_dimension - 1))
+            else:
+                entry_row = 0
+            return CellPosition(grid_id, entry_row, cols - 1)
+
+        elif direction == Direction.S:
+            # Entering from top edge (row=0)
+            # Position varies along east-west axis (col)
+            entry_dimension = cols
+            if entry_dimension > 1:
+                entry_col = round(exit_fraction * (entry_dimension - 1))
+            else:
+                entry_col = 0
+            return CellPosition(grid_id, 0, entry_col)
+
+        elif direction == Direction.N:
+            # Entering from bottom edge (row=rows-1)
+            # Position varies along east-west axis (col)
+            entry_dimension = cols
+            if entry_dimension > 1:
+                entry_col = round(exit_fraction * (entry_dimension - 1))
+            else:
+                entry_col = 0
+            return CellPosition(grid_id, rows - 1, entry_col)
+
+    # Standard middle-of-edge entry
     if direction == Direction.E:
         # Entering from left edge
         return CellPosition(grid_id, rows // 2, 0)
@@ -727,8 +852,8 @@ def try_enter(
         # Entering from bottom edge
         return CellPosition(grid_id, rows - 1, cols // 2)
     else:
-        # Unknown direction
-        return None
+        # Unreachable: Direction enum only has N/S/E/W
+        assert False, f"unreachable: unknown direction {direction}"
 
 def push(
     store: GridStore,
@@ -771,7 +896,9 @@ def push(
             return "solid"
         elif strat == RefStrategyType.SWALLOW:
             return "swallow"
-        return "solid"
+        else:
+            # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
+            assert False, f"unreachable: unknown strategy type {strat}"
 
     def make_new_state(
         path: list[CellPosition], nav: Navigator, visited: set[tuple[str, int, int]]
@@ -1052,7 +1179,9 @@ def push_simple(
             return "solid"
         elif strat == RefStrategyType.SWALLOW:
             return "swallow"
-        return "solid"
+        else:
+            # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
+            assert False, f"unreachable: unknown strategy type {strat}"
 
     # Check if starting cell has stop tag - stop-tagged cells cannot be pushed
     start_cell = get_cell(store, start)
