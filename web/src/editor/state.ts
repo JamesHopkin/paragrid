@@ -547,6 +547,25 @@ export function setGridScale(gridId: string, scale: number): void {
 }
 
 /**
+ * Reorder grids by moving a grid from one index to another
+ * Note: Grid reordering is NOT tracked in undo history per design (it's a layout preference).
+ * @param fromIndex - Current index of the grid to move
+ * @param toIndex - Target index to move the grid to
+ */
+export function reorderGrids(fromIndex: number, toIndex: number): void {
+  if (fromIndex === toIndex) return;
+  if (fromIndex < 0 || fromIndex >= state.gridOrder.length) return;
+  if (toIndex < 0 || toIndex >= state.gridOrder.length) return;
+
+  const newOrder = [...state.gridOrder];
+  const [movedId] = newOrder.splice(fromIndex, 1);
+  newOrder.splice(toIndex, 0, movedId);
+
+  state.gridOrder = newOrder;
+  notifyStateChange();
+}
+
+/**
  * Undo the last action
  */
 export function undo(): void {

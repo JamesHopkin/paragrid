@@ -15,6 +15,7 @@ import {
   importFromText,
   getGridScale,
   setGridScale,
+  reorderGrids,
   undo,
   redo,
   getUndoStackSize,
@@ -149,6 +150,15 @@ function createGridCard(grid: GridDefinition): HTMLElement {
     showGridContextMenu(grid.id, e.clientX, e.clientY);
   });
   header.appendChild(burgerBtn);
+
+  // Enable card reordering via Ctrl/Cmd+drag on header
+  header.style.cursor = 'grab';
+  header.addEventListener('mousedown', (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      startCardReorder(grid.id, e);
+    }
+  });
 
   card.appendChild(header);
 
@@ -441,6 +451,74 @@ function promptRename(gridId: string): void {
       renameGrid(gridId, newId);
     }
   }
+}
+
+/**
+ * Start card reordering (Ctrl/Cmd+drag on header)
+ */
+function startCardReorder(gridId: string, startEvent: MouseEvent): void {
+  const state = getState();
+  const startIndex = state.gridOrder.indexOf(gridId);
+  if (startIndex === -1) return;
+
+  const container = document.getElementById('grids-container');
+  if (!container) return;
+
+  const cards = Array.from(container.querySelectorAll('.grid-card'));
+  const draggedCard = cards[startIndex] as HTMLElement;
+
+  // Add visual feedback
+  draggedCard.style.opacity = '0.5';
+  draggedCard.style.cursor = 'grabbing';
+
+  let currentTargetIndex = startIndex;
+
+  const onMouseMove = (e: MouseEvent) => {
+    // Find which card we're hovering over based on Y position
+    const mouseY = e.clientY;
+
+    for (let i = 0; i < cards.length; i++) {
+      const card = cards[i] as HTMLElement;
+      const rect = card.getBoundingClientRect();
+      const cardMidY = rect.top + rect.height / 2;
+
+      if (mouseY < cardMidY) {
+        currentTargetIndex = i;
+        break;
+      }
+      currentTargetIndex = i; // If past all cards, use last position
+    }
+
+    // Visual feedback: highlight the target position
+    cards.forEach((card, idx) => {
+      const el = card as HTMLElement;
+      if (idx === currentTargetIndex && idx !== startIndex) {
+        el.style.borderTop = '3px solid #4CAF50';
+      } else {
+        el.style.borderTop = '';
+      }
+    });
+  };
+
+  const onMouseUp = () => {
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+
+    // Clear visual feedback
+    draggedCard.style.opacity = '';
+    draggedCard.style.cursor = '';
+    cards.forEach(card => {
+      (card as HTMLElement).style.borderTop = '';
+    });
+
+    // Perform reorder if position changed
+    if (currentTargetIndex !== startIndex) {
+      reorderGrids(startIndex, currentTargetIndex);
+    }
+  };
+
+  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mouseup', onMouseUp);
 }
 
 /**
