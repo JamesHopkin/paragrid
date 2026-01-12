@@ -12,18 +12,15 @@ from fractions import Fraction
 from math import lcm
 from typing import Callable, Iterator, Union
 
-import simple_chalk as chalk  # type: ignore[import-untyped]
+from depth_aware_entry import (
+    calculate_exit_fraction,
+    calculate_entry_position_equivalent_point,
+    calculate_standard_entry_position,
+    should_use_equivalent_point,
+)
+from grid_types import Direction
 
 logger = logging.getLogger(__name__)
-
-
-class Direction(Enum):
-    """Cardinal direction for traversal."""
-
-    N = "N"  # Up (decreasing row)
-    S = "S"  # Down (increasing row)
-    E = "E"  # Right (increasing col)
-    W = "W"  # Left (decreasing col)
 
 
 class RefStrategyType(Enum):
@@ -521,22 +518,13 @@ class Navigator:
             # Capture exit position and fractional position for depth-aware entry
             self.exit_position = (self.current.row, self.current.col)
             self.exit_depth = self.depth
-
-            # Calculate fractional position along the edge (0.0 to 1.0)
-            if self.direction in (Direction.E, Direction.W):
-                # Exiting east or west: position is along north-south axis (row)
-                edge_dimension = grid.rows
-                exit_offset = self.current.row
-            else:  # Direction.N or Direction.S
-                # Exiting north or south: position is along east-west axis (col)
-                edge_dimension = grid.cols
-                exit_offset = self.current.col
-
-            # Calculate fraction (handle single-cell dimension)
-            if edge_dimension > 1:
-                self.exit_fraction = exit_offset / (edge_dimension - 1)
-            else:
-                self.exit_fraction = 0.5  # Default to middle for single-cell dimension
+            self.exit_fraction = calculate_exit_fraction(
+                self.direction,
+                self.current.row,
+                self.current.col,
+                grid.rows,
+                grid.cols,
+            )
 
             # Use iterative approach with cycle detection
             visited_exit_positions: set[tuple[str, int, int]] = set()
@@ -735,72 +723,16 @@ def try_enter(
     cols = grid.cols
 
     # Check if we should use depth-aware equivalent point transfer
-    use_equivalent_point = (
-        current_depth is not None
-        and exit_depth is not None
-        and exit_fraction is not None
-        and current_depth == exit_depth
-    )
-
-    if use_equivalent_point:
+    if should_use_equivalent_point(current_depth, exit_depth, exit_fraction):
         # Use equivalent point transfer - preserve fractional position
-        # Entry direction determines which edge and dimension
-        if direction == Direction.E:
-            # Entering from left edge (col=0)
-            # Position varies along north-south axis (row)
-            entry_dimension = rows
-            if entry_dimension > 1:
-                entry_row = round(exit_fraction * (entry_dimension - 1))
-            else:
-                entry_row = 0
-            return CellPosition(grid_id, entry_row, 0)
-
-        elif direction == Direction.W:
-            # Entering from right edge (col=cols-1)
-            # Position varies along north-south axis (row)
-            entry_dimension = rows
-            if entry_dimension > 1:
-                entry_row = round(exit_fraction * (entry_dimension - 1))
-            else:
-                entry_row = 0
-            return CellPosition(grid_id, entry_row, cols - 1)
-
-        elif direction == Direction.S:
-            # Entering from top edge (row=0)
-            # Position varies along east-west axis (col)
-            entry_dimension = cols
-            if entry_dimension > 1:
-                entry_col = round(exit_fraction * (entry_dimension - 1))
-            else:
-                entry_col = 0
-            return CellPosition(grid_id, 0, entry_col)
-
-        elif direction == Direction.N:
-            # Entering from bottom edge (row=rows-1)
-            # Position varies along east-west axis (col)
-            entry_dimension = cols
-            if entry_dimension > 1:
-                entry_col = round(exit_fraction * (entry_dimension - 1))
-            else:
-                entry_col = 0
-            return CellPosition(grid_id, rows - 1, entry_col)
+        entry_row, entry_col = calculate_entry_position_equivalent_point(
+            direction, exit_fraction, rows, cols
+        )
+        return CellPosition(grid_id, entry_row, entry_col)
 
     # Standard middle-of-edge entry
-    if direction == Direction.E:
-        # Entering from left edge
-        return CellPosition(grid_id, rows // 2, 0)
-    elif direction == Direction.W:
-        # Entering from right edge
-        return CellPosition(grid_id, rows // 2, cols - 1)
-    elif direction == Direction.S:
-        # Entering from top edge
-        return CellPosition(grid_id, 0, cols // 2)
-    elif direction == Direction.N:
-        # Entering from bottom edge
-        return CellPosition(grid_id, rows - 1, cols // 2)
-    else:
-        # Unreachable: Direction enum only has N/S/E/W
-        assert False, f"unreachable: unknown direction {direction}"
+    entry_row, entry_col = calculate_standard_entry_position(direction, rows, cols)
+    return CellPosition(grid_id, entry_row, entry_col)
 
 def push(
     store: GridStore,
