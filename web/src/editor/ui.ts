@@ -931,6 +931,16 @@ export function initializeUI(): void {
       redo();
       return;
     }
+
+    // Ctrl+S / Cmd+S: Save
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      e.preventDefault();
+      const saveBtn = document.getElementById('save-btn') as HTMLButtonElement;
+      if (saveBtn && !saveBtn.disabled) {
+        saveBtn.click(); // Trigger the save button click to reuse its logic
+      }
+      return;
+    }
   });
 
   console.log('🚀 Editor initialized');
