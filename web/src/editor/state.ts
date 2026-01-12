@@ -367,7 +367,7 @@ export function exportToConsole(): void {
  * @param jsonText - JSON5 string containing grid definitions (supports unquoted keys, trailing commas, comments)
  * @throws Error if parsing fails
  */
-export async function importFromText(jsonText: string): Promise<void> {
+export async function importFromText(jsonText: string, saveToUndoStack: boolean = true): Promise<void> {
   // Parse JSON5 (supports unquoted keys, trailing commas, comments, etc.)
   let definitions: Record<string, string>;
   try {
@@ -387,8 +387,10 @@ export async function importFromText(jsonText: string): Promise<void> {
   // Parse grids using the parser
   const gridStore = parseGrids(definitions);
 
-  // Save current state to undo stack
-  saveStateToUndoStack();
+  // Save current state to undo stack (unless this is an initial load)
+  if (saveToUndoStack) {
+    saveStateToUndoStack();
+  }
 
   // Convert parsed grids to editor format
   const newGrids = new Map<string, GridDefinition>();
@@ -711,9 +713,9 @@ export async function loadFromServer(): Promise<{ success: boolean; version: num
       };
     }
 
-    // Import the grids
+    // Import the grids (don't save to undo stack since this is initial load)
     const jsonText = JSON.stringify(result.grids);
-    await importFromText(jsonText);
+    await importFromText(jsonText, false);
 
     currentVersion = result.version;
 
