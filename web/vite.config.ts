@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'path';
 import { viteSingleFile } from 'vite-plugin-singlefile';
+import { gridStorePlugin } from './vite-plugin-grid-store';
 
 export default defineConfig(({ mode }) => {
   // Determine which HTML file to build based on environment variable
@@ -9,7 +10,7 @@ export default defineConfig(({ mode }) => {
     : resolve(__dirname, 'index.html');
 
   return {
-    plugins: [viteSingleFile()],
+    plugins: [gridStorePlugin(), viteSingleFile()],
     test: {
       globals: true,
     },

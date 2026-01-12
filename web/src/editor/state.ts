@@ -25,6 +25,12 @@ let state: EditorState = createInitialState();
 let stateChangeCallbacks: Array<(state: EditorState) => void> = [];
 
 /**
+ * Server sync state
+ */
+let currentVersion = 0; // Track the version we last saved/loaded
+let pollInterval: number | null = null;
+
+/**
  * Undo/Redo history
  * Note: Metadata (zoom/scale) changes are NOT tracked in history per design.
  */
@@ -580,4 +586,185 @@ export function getUndoStackSize(): number {
  */
 export function getRedoStackSize(): number {
   return redoStack.length;
+}
+
+/**
+ * Convert EditorState to server-friendly format
+ */
+function serializeGrids(): Record<string, string> {
+  const exportObj: Record<string, string> = {};
+
+  state.grids.forEach((grid, id) => {
+    const rows: string[] = [];
+
+    for (let r = 0; r < grid.rows; r++) {
+      const row = grid.cells[r].map(cell => {
+        if (cell.type === 'Empty') return '_';
+        if (cell.type === 'Concrete') return cell.id || '?';
+        if (cell.type === 'Ref') {
+          // Primary ref: *gridId, Secondary ref: ~gridId
+          const prefix = cell.isPrimary ? '*' : '~';
+          return `${prefix}${cell.id || '?'}`;
+        }
+        return '?';
+      });
+      rows.push(row.join(' '));
+    }
+
+    exportObj[id] = rows.join('|');
+  });
+
+  return exportObj;
+}
+
+/**
+ * Save current grid state to the server
+ * @returns Promise with the new version number
+ */
+export async function saveToServer(): Promise<{ success: boolean; version: number; error?: string }> {
+  try {
+    const grids = serializeGrids();
+
+    const response = await fetch('/api/grids', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ grids }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const result = await response.json();
+    currentVersion = result.version;
+
+    console.log(`✅ Saved to server (version ${result.version})`);
+
+    return {
+      success: true,
+      version: result.version,
+    };
+  } catch (error) {
+    console.error('Failed to save to server:', error);
+    return {
+      success: false,
+      version: currentVersion,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Load grid state from the server
+ * @returns Promise with success status
+ */
+export async function loadFromServer(): Promise<{ success: boolean; version: number; error?: string }> {
+  try {
+    const response = await fetch('/api/grids');
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    // If we already have this version, no need to reload
+    if (result.version === currentVersion) {
+      return {
+        success: true,
+        version: result.version,
+      };
+    }
+
+    // Import the grids
+    const jsonText = JSON.stringify(result.grids);
+    await importFromText(jsonText);
+
+    currentVersion = result.version;
+
+    console.log(`✅ Loaded from server (version ${result.version})`);
+
+    return {
+      success: true,
+      version: result.version,
+    };
+  } catch (error) {
+    console.error('Failed to load from server:', error);
+    return {
+      success: false,
+      version: currentVersion,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Check if there's a new version available on the server
+ * @returns Promise with version info
+ */
+export async function checkServerVersion(): Promise<{ version: number; hasUpdate: boolean; error?: string }> {
+  try {
+    const response = await fetch('/api/grids/version');
+
+    if (!response.ok) {
+      throw new Error(`Server returned ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    return {
+      version: result.version,
+      hasUpdate: result.version > currentVersion,
+    };
+  } catch (error) {
+    console.error('Failed to check server version:', error);
+    return {
+      version: currentVersion,
+      hasUpdate: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Start polling for server updates
+ * @param intervalMs - Polling interval in milliseconds (default: 2000ms)
+ * @param autoLoad - Automatically load updates when detected (default: true)
+ */
+export function startPolling(intervalMs: number = 2000, autoLoad: boolean = true): void {
+  stopPolling(); // Clear any existing interval
+
+  pollInterval = window.setInterval(async () => {
+    const check = await checkServerVersion();
+
+    if (check.hasUpdate) {
+      console.log(`🔔 New version available on server (v${check.version})`);
+
+      if (autoLoad) {
+        await loadFromServer();
+      }
+    }
+  }, intervalMs);
+
+  console.log(`🔄 Started polling server every ${intervalMs}ms`);
+}
+
+/**
+ * Stop polling for server updates
+ */
+export function stopPolling(): void {
+  if (pollInterval !== null) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+    console.log('⏹️  Stopped polling server');
+  }
+}
+
+/**
+ * Get the current version number
+ */
+export function getCurrentVersion(): number {
+  return currentVersion;
 }

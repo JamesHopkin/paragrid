@@ -1875,13 +1875,88 @@ function createBurgerMenu(config: DemoConfig): void {
   };
 }
 
-// Initialize the demo when the page loads
-document.addEventListener('DOMContentLoaded', () => {
+/**
+ * Server polling state for live updates from editor
+ */
+let currentServerVersion = 0;
+let pollInterval: number | null = null;
+let currentDemo: IsometricDemo | null = null;
+
+/**
+ * Load grids from the dev server
+ */
+async function loadGridsFromServer(): Promise<{ grids: Record<string, string>; version: number } | null> {
+  try {
+    const response = await fetch('/api/grids');
+    if (!response.ok) {
+      console.warn('Server not available, using default grids');
+      return null;
+    }
+    const data = await response.json();
+    return { grids: data.grids, version: data.version };
+  } catch (error) {
+    console.warn('Failed to load from server, using default grids:', error);
+    return null;
+  }
+}
+
+/**
+ * Check if server has a newer version
+ */
+async function checkServerVersion(): Promise<number | null> {
+  try {
+    const response = await fetch('/api/grids/version');
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data.version;
+  } catch (error) {
+    return null;
+  }
+}
+
+/**
+ * Start polling for server updates and reload demo when changes detected
+ */
+function startServerPolling(reloadCallback: () => void, intervalMs: number = 2000): void {
+  if (pollInterval !== null) {
+    return; // Already polling
+  }
+
+  pollInterval = window.setInterval(async () => {
+    const serverVersion = await checkServerVersion();
+    if (serverVersion !== null && serverVersion > currentServerVersion) {
+      console.log(`🔔 New grid data available (v${serverVersion}), reloading...`);
+      currentServerVersion = serverVersion;
+      reloadCallback();
+    }
+  }, intervalMs);
+
+  console.log(`📡 Polling server for updates every ${intervalMs}ms`);
+}
+
+/**
+ * Initialize or reinitialize the demo
+ */
+async function initDemo() {
   const config = parseConfig();
 
-  // Select the scene based on config
-  const sceneData =  (GRIDS as any)[config.scene] || (GRIDS as any)[DEFAULT_GRID_ID]!;
-  const store = parseGrids(sceneData);
+  // Try to load from server first
+  const serverData = await loadGridsFromServer();
+  let store: GridStore;
+
+  if (serverData && Object.keys(serverData.grids).length > 0) {
+    // Use server data
+    console.log(`✅ Loaded grids from server (v${serverData.version})`);
+    currentServerVersion = serverData.version;
+    store = parseGrids(serverData.grids);
+  } else {
+    // Fall back to default grids
+    console.log('📦 Using default built-in grids');
+    const sceneData = (GRIDS as any)[config.scene] || (GRIDS as any)[DEFAULT_GRID_ID]!;
+    store = parseGrids(sceneData);
+  }
 
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
@@ -1907,10 +1982,26 @@ document.addEventListener('DOMContentLoaded', () => {
   // Apply UI configuration
   applyUIConfig(config);
 
-  const demo = new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
+  // Destroy previous demo if it exists
+  if (currentDemo) {
+    // Clean up previous instance (no explicit destroy method, just replace)
+    currentDemo = null;
+  }
+
+  currentDemo = new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
 
   // Create mobile controls if enabled
   if (config.mobile) {
-    createMobileControls(demo);
+    createMobileControls(currentDemo);
   }
+}
+
+// Initialize the demo when the page loads
+document.addEventListener('DOMContentLoaded', async () => {
+  await initDemo();
+
+  // Start polling for updates from the editor
+  startServerPolling(() => {
+    initDemo(); // Reload demo when server updates detected
+  });
 });

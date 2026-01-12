@@ -19,6 +19,7 @@ import {
   redo,
   getUndoStackSize,
   getRedoStackSize,
+  saveToServer,
 } from './state.js';
 import {
   CellContent,
@@ -763,11 +764,30 @@ export function initializeUI(): void {
     });
   }
 
-  // Save button
+  // Save button - saves to Vite dev server
   const saveBtn = document.getElementById('save-btn');
   if (saveBtn) {
-    saveBtn.addEventListener('click', () => {
-      exportToConsole();
+    saveBtn.addEventListener('click', async () => {
+      const originalText = saveBtn.textContent;
+      saveBtn.textContent = 'Saving...';
+      saveBtn.setAttribute('disabled', 'true');
+
+      const result = await saveToServer();
+
+      if (result.success) {
+        saveBtn.textContent = `✓ Saved (v${result.version})`;
+        setTimeout(() => {
+          saveBtn.textContent = originalText;
+          saveBtn.removeAttribute('disabled');
+        }, 1500);
+      } else {
+        saveBtn.textContent = '✗ Failed';
+        console.error('Save failed:', result.error);
+        setTimeout(() => {
+          saveBtn.textContent = originalText;
+          saveBtn.removeAttribute('disabled');
+        }, 2000);
+      }
     });
   }
 
@@ -905,4 +925,7 @@ export function initializeUI(): void {
       return;
     }
   });
+
+  console.log('🚀 Editor initialized');
+  console.log('💾 Save your changes to update connected demo/visualization windows');
 }
