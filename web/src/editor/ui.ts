@@ -20,6 +20,7 @@ import {
   getUndoStackSize,
   getRedoStackSize,
   saveToServer,
+  getHasUnsavedChanges,
 } from './state.js';
 import {
   CellContent,
@@ -44,15 +45,18 @@ interface SelectedCell {
 let selectedCell: SelectedCell | null = null;
 
 /**
- * Update the history status display showing undo/redo availability.
+ * Update the history status display showing undo/redo availability,
+ * and update save button state based on unsaved changes.
  */
 export function updateHistoryStatus(): void {
   const statusEl = document.getElementById('history-status');
   const undoBtn = document.getElementById('undo-btn') as HTMLButtonElement;
   const redoBtn = document.getElementById('redo-btn') as HTMLButtonElement;
+  const saveBtn = document.getElementById('save-btn') as HTMLButtonElement;
 
   const undoCount = getUndoStackSize();
   const redoCount = getRedoStackSize();
+  const hasUnsaved = getHasUnsavedChanges();
 
   if (statusEl) {
     statusEl.textContent = `(${undoCount} undo, ${redoCount} redo)`;
@@ -64,6 +68,9 @@ export function updateHistoryStatus(): void {
   }
   if (redoBtn) {
     redoBtn.disabled = redoCount === 0;
+  }
+  if (saveBtn) {
+    saveBtn.disabled = !hasUnsaved;
   }
 }
 
@@ -778,14 +785,14 @@ export function initializeUI(): void {
         saveBtn.textContent = `✓ Saved (v${result.version})`;
         setTimeout(() => {
           saveBtn.textContent = originalText;
-          saveBtn.removeAttribute('disabled');
+          updateHistoryStatus(); // Update button state based on hasUnsavedChanges
         }, 1500);
       } else {
         saveBtn.textContent = '✗ Failed';
         console.error('Save failed:', result.error);
         setTimeout(() => {
           saveBtn.textContent = originalText;
-          saveBtn.removeAttribute('disabled');
+          updateHistoryStatus(); // Re-enable if there are still unsaved changes
         }, 2000);
       }
     });

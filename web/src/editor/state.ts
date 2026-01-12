@@ -29,6 +29,7 @@ let stateChangeCallbacks: Array<(state: EditorState) => void> = [];
  */
 let currentVersion = 0; // Track the version we last saved/loaded
 let pollInterval: number | null = null;
+let hasUnsavedChanges = false; // Track if there are changes since last save/load
 
 /**
  * Undo/Redo history
@@ -101,6 +102,9 @@ function saveStateToUndoStack(): void {
 
   // Clear redo stack on new action
   redoStack = [];
+
+  // Mark as having unsaved changes
+  hasUnsavedChanges = true;
 }
 
 /**
@@ -554,6 +558,9 @@ export function undo(): void {
   // Restore previous state
   state = undoStack.pop()!;
 
+  // Mark as having unsaved changes
+  hasUnsavedChanges = true;
+
   notifyStateChange();
 }
 
@@ -571,6 +578,9 @@ export function redo(): void {
   // Restore next state
   state = redoStack.pop()!;
 
+  // Mark as having unsaved changes
+  hasUnsavedChanges = true;
+
   notifyStateChange();
 }
 
@@ -586,6 +596,13 @@ export function getUndoStackSize(): number {
  */
 export function getRedoStackSize(): number {
   return redoStack.length;
+}
+
+/**
+ * Check if there are unsaved changes since the last save/load
+ */
+export function getHasUnsavedChanges(): boolean {
+  return hasUnsavedChanges;
 }
 
 /**
@@ -640,6 +657,9 @@ export async function saveToServer(): Promise<{ success: boolean; version: numbe
     const result = await response.json();
     currentVersion = result.version;
 
+    // Clear unsaved changes flag after successful save
+    hasUnsavedChanges = false;
+
     console.log(`✅ Saved to server (version ${result.version})`);
 
     return {
@@ -672,6 +692,8 @@ export async function loadFromServer(): Promise<{ success: boolean; version: num
 
     // If we already have this version, no need to reload
     if (result.version === currentVersion) {
+      // Clear unsaved changes since we're in sync
+      hasUnsavedChanges = false;
       return {
         success: true,
         version: result.version,
@@ -681,6 +703,8 @@ export async function loadFromServer(): Promise<{ success: boolean; version: num
     // If server has no grids (empty object), skip import and keep default state
     if (!result.grids || Object.keys(result.grids).length === 0) {
       currentVersion = result.version;
+      // Clear unsaved changes since we loaded from server
+      hasUnsavedChanges = false;
       return {
         success: true,
         version: result.version,
@@ -692,6 +716,9 @@ export async function loadFromServer(): Promise<{ success: boolean; version: num
     await importFromText(jsonText);
 
     currentVersion = result.version;
+
+    // Clear unsaved changes since we just loaded from server
+    hasUnsavedChanges = false;
 
     console.log(`✅ Loaded from server (version ${result.version})`);
 
