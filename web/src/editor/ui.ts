@@ -474,19 +474,16 @@ function startCardReorder(gridId: string, startEvent: MouseEvent): void {
   let currentTargetIndex = startIndex;
 
   const onMouseMove = (e: MouseEvent) => {
-    // Find which card we're hovering over based on Y position
-    const mouseY = e.clientY;
+    // Find which card we're hovering over using elementFromPoint
+    // This works with multi-column flexbox layouts
+    const elementUnderMouse = document.elementFromPoint(e.clientX, e.clientY);
+    const hoveredCard = elementUnderMouse?.closest('.grid-card') as HTMLElement;
 
-    for (let i = 0; i < cards.length; i++) {
-      const card = cards[i] as HTMLElement;
-      const rect = card.getBoundingClientRect();
-      const cardMidY = rect.top + rect.height / 2;
-
-      if (mouseY < cardMidY) {
-        currentTargetIndex = i;
-        break;
+    if (hoveredCard) {
+      const hoveredIndex = cards.indexOf(hoveredCard);
+      if (hoveredIndex !== -1) {
+        currentTargetIndex = hoveredIndex;
       }
-      currentTargetIndex = i; // If past all cards, use last position
     }
 
     // Visual feedback: highlight the target position
