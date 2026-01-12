@@ -882,8 +882,8 @@ export function initializeUI(): void {
       }
     }
 
-    // Typing: Set cell content
-    if (!isTypingInField && selectedCell) {
+    // Typing: Set cell content (only if no Ctrl/Cmd modifier)
+    if (!isTypingInField && selectedCell && !e.ctrlKey && !e.metaKey) {
       // Numbers: Set concrete cell
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
