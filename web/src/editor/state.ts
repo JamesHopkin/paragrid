@@ -678,6 +678,15 @@ export async function loadFromServer(): Promise<{ success: boolean; version: num
       };
     }
 
+    // If server has no grids (empty object), skip import and keep default state
+    if (!result.grids || Object.keys(result.grids).length === 0) {
+      currentVersion = result.version;
+      return {
+        success: true,
+        version: result.version,
+      };
+    }
+
     // Import the grids
     const jsonText = JSON.stringify(result.grids);
     await importFromText(jsonText);

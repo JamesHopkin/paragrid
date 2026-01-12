@@ -104,10 +104,11 @@ export default defineConfig({
 
 ### Two-Window Workflow
 
-**Editor Window (Write-Only):**
+**Editor Window (Save-Only):**
+- Loads current server state on startup
 - Edit grids visually
 - Click "Save" to push to server
-- No polling, no loading from server
+- No polling after initial load
 
 **Demo Window (Read-Only):**
 - Displays current server state
@@ -201,9 +202,11 @@ The implementation includes helpful console output:
 
 **Editor Window (Browser):**
 ```
-🚀 Editor initialized
+🔄 Loading current state from server...
+✅ Loaded server state (v1)
+🚀 Paragrid Level Editor initialized
 💾 Save your changes to update connected demo/visualization windows
-✅ Saved to server (version 1)
+✅ Saved to server (version 2)
 ```
 
 **Demo Window (Browser):**
@@ -251,9 +254,10 @@ Grid Data: {"grid_1":"1 2|3 4"}
 
 1. `web/vite-plugin-grid-store.ts` - **New file** (Vite middleware plugin)
 2. `web/vite.config.ts` - Added plugin import and registration
-3. `web/src/editor/state.ts` - Added server sync functions (save/load/poll)
+3. `web/src/editor/state.ts` - Added server sync functions (save/load/poll, handles empty state)
 4. `web/src/editor/ui.ts` - Updated save button (editor only saves, no polling)
-5. `web/src/demo-iso.ts` - Added server loading and polling (demo reads and reloads)
+5. `web/src/editor/main.ts` - Load server state on startup
+6. `web/src/demo-iso.ts` - Added server loading and polling (demo reads and reloads)
 
 ## Next Steps
 
