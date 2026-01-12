@@ -28,6 +28,27 @@ const ENTER_EXIT_MOVEMENT_DURATION = 0.7; // 700ms in seconds (a little more tha
 const ENTER_EXIT_CAMERA_DURATION = 0.7; // 700ms in seconds (a little more than 2x regular)
 const RENDER_THRESHOLD = 1/64;
 
+/**
+ * Mutable wrapper for GridStore to allow safe updates without tracking all references.
+ * When the demo reloads, we can update the store reference and all code that accesses
+ * it through this wrapper will automatically use the new store.
+ */
+class GridStoreRef {
+  private _store: GridStore;
+
+  constructor(store: GridStore) {
+    this._store = store;
+  }
+
+  get(): GridStore {
+    return this._store;
+  }
+
+  set(store: GridStore): void {
+    this._store = store;
+  }
+}
+
 const GRIDS = {
   exported: {
   "main": "9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ _ _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ a 9|9 9 9 9 9 9 9 9",
@@ -143,8 +164,8 @@ function parseConfig(): DemoConfig {
  * Interactive demo class.
  */
 class IsometricDemo {
-  private store: GridStore;
-  private readonly originalStore: GridStore;
+  private readonly storeRef: GridStoreRef;
+  private readonly originalStoreRef: GridStoreRef;
   private readonly tagFn: TagFn;
   private readonly playerTag = 'player';
   private statusMessage = 'Ready. Use WASD to move.';
@@ -179,14 +200,14 @@ class IsometricDemo {
   private trackObjectAnimations: boolean = false; // Whether camera should track object animations
 
   constructor(
-    store: GridStore,
+    storeRef: GridStoreRef,
     tagFn: TagFn,
     canvas: HTMLElement,
     statusEl: HTMLElement,
     isFullscreen: boolean = false
   ) {
-    this.store = store;
-    this.originalStore = store;
+    this.storeRef = storeRef;
+    this.originalStoreRef = storeRef; // Both point to the same ref, so updates affect both
     this.tagFn = tagFn;
     this.canvas = canvas;
     this.statusEl = statusEl;
@@ -197,10 +218,10 @@ class IsometricDemo {
     this.updateDimensions();
 
     // Initialize hierarchy helper and camera controller
-    this.hierarchyHelper = new HierarchyHelper(this.store);
+    this.hierarchyHelper = new HierarchyHelper(this.storeRef.get());
     this.cameraController = new ValidatingCameraController(
       new AnimatedParentViewCameraController(this.hierarchyHelper),
-      this.store
+      this.storeRef.get()
     );
 
     // Store initial player position
@@ -227,7 +248,7 @@ class IsometricDemo {
   }
 
   private get playerPosition(): CellPosition | null | undefined {
-    return findTaggedCell(this.store, this.playerTag, this.tagFn);
+    return findTaggedCell(this.storeRef.get(), this.playerTag, this.tagFn);
   }
 
   /**
@@ -546,7 +567,7 @@ class IsometricDemo {
     const path: string[] = [];
 
     // Get all grid IDs from store
-    const gridIds = Object.keys(this.store);
+    const gridIds = Object.keys(this.storeRef.get());
 
     for (const letter of letters) {
       if (letter.length === 0) {
@@ -573,7 +594,7 @@ class IsometricDemo {
     }
 
     // Validate the path is valid (each grid references the next)
-    const scaleResult = getScaleAndOffset(this.store, path);
+    const scaleResult = getScaleAndOffset(this.storeRef.get(), path);
     if (!scaleResult) {
       return {
         success: false,
@@ -625,12 +646,12 @@ class IsometricDemo {
     if (selectedValue === 'animated') {
       this.cameraController = new ValidatingCameraController(
         new AnimatedParentViewCameraController(this.hierarchyHelper),
-        this.store
+        this.storeRef.get()
       );
     } else {
       this.cameraController = new ValidatingCameraController(
         new ParentViewCameraController(this.hierarchyHelper),
-        this.store
+        this.storeRef.get()
       );
     }
 
@@ -696,7 +717,7 @@ class IsometricDemo {
   }
 
   private exportGridStore(): void {
-    const exported = exportGrids(this.store);
+    const exported = exportGrids(this.storeRef.get());
     console.log('Grid Store Export:');
     console.log(JSON.stringify(exported, null, 2));
     console.log('\nParseable format for use with parseGrids():');
@@ -725,7 +746,7 @@ class IsometricDemo {
     }
 
     const result = push(
-      this.store,
+      this.storeRef.get(),
       playerPos,
       direction,
       createRuleSet(),
@@ -745,7 +766,7 @@ class IsometricDemo {
     }
 
     // Success - save current state to undo stack before updating
-    this.undoStack.push(this.store);
+    this.undoStack.push(this.storeRef.get());
     // Limit history size
     if (this.undoStack.length > this.maxHistorySize) {
       this.undoStack.shift(); // Remove oldest entry
@@ -754,10 +775,10 @@ class IsometricDemo {
     this.redoStack = [];
 
     // Update store and get push chain
-    this.store = result.store;
-    this.hierarchyHelper.setStore(this.store); // Update helper with new store
+    this.storeRef.set(result.store);
+    this.hierarchyHelper.setStore(this.storeRef.get()); // Update helper with new store
     if (this.cameraController instanceof ValidatingCameraController) {
-      this.cameraController.setStore(this.store); // Update validating wrapper with new store
+      this.cameraController.setStore(this.storeRef.get()); // Update validating wrapper with new store
     }
     const pushChain = result.chain;
 
@@ -773,7 +794,7 @@ class IsometricDemo {
       // Skip camera controller updates if manual view is active
       if (this.manualViewPath) {
         // Just animate the movements without camera updates
-        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
+        const movements = chainToMovements(this.storeRef.get(), pushChain, this.hierarchyHelper);
         if (movements.length > 0) {
           // Use regular durations for manual view (no enter/exit in this path)
           this.setAnimatorDurations(MOVEMENT_ANIMATION_DURATION, CAMERA_ANIMATION_DURATION);
@@ -821,7 +842,7 @@ class IsometricDemo {
         this.trackObjectAnimations = viewUpdate.trackObjectAnimations ?? false;
 
         // Convert push chain to movements using hierarchy helper
-        const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
+        const movements = chainToMovements(this.storeRef.get(), pushChain, this.hierarchyHelper);
 
         // Handle camera and object animation
         if (viewUpdate.animationStartView && oldViewPath) {
@@ -853,7 +874,7 @@ class IsometricDemo {
       }
 
       // Convert push chain to movements and animate
-      const movements = chainToMovements(this.store, pushChain, this.hierarchyHelper);
+      const movements = chainToMovements(this.storeRef.get(), pushChain, this.hierarchyHelper);
 
       if (movements.length > 0) {
         // Create animations for all movements (regular duration)
@@ -885,11 +906,11 @@ class IsometricDemo {
     this.render(true);
   }
 
-  private reset(): void {
-    this.store = this.originalStore;
-    this.hierarchyHelper.setStore(this.store); // Update helper with reset store
+  public reset(): void {
+    this.storeRef.set(this.originalStoreRef.get());
+    this.hierarchyHelper.setStore(this.storeRef.get()); // Update helper with reset store
     if (this.cameraController instanceof ValidatingCameraController) {
-      this.cameraController.setStore(this.store); // Update validating wrapper with reset store
+      this.cameraController.setStore(this.storeRef.get()); // Update validating wrapper with reset store
     }
     this.statusMessage = 'Grid reset to original state';
     this.isStatusError = false;
@@ -928,14 +949,14 @@ class IsometricDemo {
     this.cancelCurrentAnimation();
 
     // Save current state to redo stack
-    this.redoStack.push(this.store);
+    this.redoStack.push(this.storeRef.get());
 
     // Pop previous state from undo stack
     const previousState = this.undoStack.pop()!;
-    this.store = previousState;
-    this.hierarchyHelper.setStore(this.store); // Update helper with previous store
+    this.storeRef.set(previousState);
+    this.hierarchyHelper.setStore(this.storeRef.get()); // Update helper with previous store
     if (this.cameraController instanceof ValidatingCameraController) {
-      this.cameraController.setStore(this.store); // Update validating wrapper with previous store
+      this.cameraController.setStore(this.storeRef.get()); // Update validating wrapper with previous store
     }
 
     // Update player position tracking
@@ -977,7 +998,7 @@ class IsometricDemo {
     this.cancelCurrentAnimation();
 
     // Save current state to undo stack
-    this.undoStack.push(this.store);
+    this.undoStack.push(this.storeRef.get());
     // Limit history size
     if (this.undoStack.length > this.maxHistorySize) {
       this.undoStack.shift();
@@ -985,10 +1006,10 @@ class IsometricDemo {
 
     // Pop state from redo stack
     const nextState = this.redoStack.pop()!;
-    this.store = nextState;
-    this.hierarchyHelper.setStore(this.store); // Update helper with next store
+    this.storeRef.set(nextState);
+    this.hierarchyHelper.setStore(this.storeRef.get()); // Update helper with next store
     if (this.cameraController instanceof ValidatingCameraController) {
-      this.cameraController.setStore(this.store); // Update validating wrapper with next store
+      this.cameraController.setStore(this.storeRef.get()); // Update validating wrapper with next store
     }
 
     // Update player position tracking
@@ -1039,9 +1060,9 @@ class IsometricDemo {
       );
       if (focusedMovement) {
         // Calculate camera start and end positions based on the grid's movement
-        const scaleResult = getScaleAndOffset(this.store, this.currentViewPath);
+        const scaleResult = getScaleAndOffset(this.storeRef.get(), this.currentViewPath);
         if (scaleResult) {
-          const grid = getGrid(this.store, this.currentViewPath[0]);
+          const grid = getGrid(this.storeRef.get(), this.currentViewPath[0]);
           if (grid) {
             const refX = scaleResult.centerX - grid.cols / 2;
             const refZ = scaleResult.centerY - grid.rows / 2;
@@ -1098,8 +1119,8 @@ class IsometricDemo {
     endViewPath: ViewPath
   ): void {
     // Calculate camera parameters for both views
-    let startCameraParams = calculateCameraForView(this.store, startViewPath, this.zoomMultiplier);
-    const endCameraParams = calculateCameraForView(this.store, endViewPath, this.zoomMultiplier);
+    let startCameraParams = calculateCameraForView(this.storeRef.get(), startViewPath, this.zoomMultiplier);
+    const endCameraParams = calculateCameraForView(this.storeRef.get(), endViewPath, this.zoomMultiplier);
 
     if (!startCameraParams || !endCameraParams) {
       console.warn('Failed to calculate camera positions for animation, falling back to instant transition');
@@ -1145,12 +1166,12 @@ class IsometricDemo {
     if (!playerPos) return;
 
     const gridId = endViewPath[0];
-    const grid = getGrid(this.store, gridId);
+    const grid = getGrid(this.storeRef.get(), gridId);
     if (!grid) return;
 
     // Use endViewPath as focus path for focus metadata computation
     this.currentCellTree = analyze(
-      this.store,
+      this.storeRef.get(),
       gridId,
       grid.cols,
       grid.rows,
@@ -1161,7 +1182,7 @@ class IsometricDemo {
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
-      store: this.store,
+      store: this.storeRef.get(),
       tagFn: this.tagFn
     });
     this.currentScene = result.scene;
@@ -1278,14 +1299,14 @@ class IsometricDemo {
 
     // Get the root grid (first in path)
     const gridId = viewPath[0];
-    const grid = getGrid(this.store, gridId);
+    const grid = getGrid(this.storeRef.get(), gridId);
     if (!grid) {
       console.error(`Rebuild: Grid '${gridId}' not found`);
       return;
     }
 
     // Calculate camera position using scale helper
-    const scaleResult = getScaleAndOffset(this.store, viewPath);
+    const scaleResult = getScaleAndOffset(this.storeRef.get(), viewPath);
     if (!scaleResult) {
       console.error(`Rebuild: Invalid path ${viewPath.join(' → ')}`);
       return;
@@ -1300,7 +1321,7 @@ class IsometricDemo {
     // Phase 1: Analyze grid to build CellTree
     // Use viewPath as focus path for focus metadata computation
     this.currentCellTree = analyze(
-      this.store,
+      this.storeRef.get(),
       gridId,
       grid.cols,
       grid.rows,
@@ -1313,7 +1334,7 @@ class IsometricDemo {
     const result = buildIsometricScene(this.currentCellTree, {
       width: this.renderWidth,
       height: this.renderHeight,
-      store: this.store,
+      store: this.storeRef.get(),
       tagFn: this.tagFn
     });
 
@@ -1365,13 +1386,13 @@ class IsometricDemo {
 
         // Get the root grid (first in path)
         const gridId = viewPath[0];
-        const grid = getGrid(this.store, gridId);
+        const grid = getGrid(this.storeRef.get(), gridId);
         if (!grid) {
           throw new Error(`View path: Grid '${gridId}' not found`);
         }
 
         // Use camera helpers to calculate view
-        const scaleResult = getScaleAndOffset(this.store, viewPath);
+        const scaleResult = getScaleAndOffset(this.storeRef.get(), viewPath);
         if (!scaleResult) {
           throw new Error(`View path: Invalid path ${viewPath.join(' → ')}`);
         }
@@ -1396,7 +1417,7 @@ class IsometricDemo {
         // Phase 1: Analyze grid to build CellTree
         // Use viewPath as focus path for focus metadata computation
         this.currentCellTree = analyze(
-          this.store,
+          this.storeRef.get(),
           gridId,
           grid.cols,
           grid.rows,
@@ -1409,7 +1430,7 @@ class IsometricDemo {
         const result = buildIsometricScene(this.currentCellTree, {
           width: this.renderWidth,
           height: this.renderHeight,
-          store: this.store,
+          store: this.storeRef.get(),
           tagFn: this.tagFn
         });
 
@@ -1485,7 +1506,7 @@ class IsometricDemo {
         <div class="status-line"><strong>Player Position:</strong> ${playerPos.gridId}[${playerPos.row}, ${playerPos.col}]</div>
       `;
 
-      const grid = getGrid(this.store, playerPos.gridId);
+      const grid = getGrid(this.storeRef.get(), playerPos.gridId);
       const cell = grid?.cells[playerPos.row]?.[playerPos.col];
       if (cell && isConcrete(cell)) {
         statusHtml += `
@@ -1881,6 +1902,7 @@ function createBurgerMenu(config: DemoConfig): void {
 let currentServerVersion = 0;
 let pollInterval: number | null = null;
 let currentDemo: IsometricDemo | null = null;
+let storeRef: GridStoreRef | null = null; // Shared mutable reference to grid store
 
 /**
  * Load grids from the dev server
@@ -1958,6 +1980,17 @@ async function initDemo() {
     store = parseGrids(sceneData);
   }
 
+  // If this is a reload (storeRef and demo exist), just update the store reference
+  if (storeRef && currentDemo) {
+    console.log('🔄 Updating grid store reference');
+    storeRef.set(store);
+    currentDemo.reset(); // Reset demo to use new store
+    return;
+  }
+
+  // First time initialization: create store ref and demo
+  storeRef = new GridStoreRef(store);
+
   // Tag function: cell '1' is the player
   const tagFn: TagFn = (cell: Cell) => {
     if (isConcrete(cell)) {
@@ -1982,13 +2015,7 @@ async function initDemo() {
   // Apply UI configuration
   applyUIConfig(config);
 
-  // Destroy previous demo if it exists
-  if (currentDemo) {
-    // Clean up previous instance (no explicit destroy method, just replace)
-    currentDemo = null;
-  }
-
-  currentDemo = new IsometricDemo(store, tagFn, canvas, status, config.fullscreen);
+  currentDemo = new IsometricDemo(storeRef, tagFn, canvas, status, config.fullscreen);
 
   // Create mobile controls if enabled
   if (config.mobile) {
