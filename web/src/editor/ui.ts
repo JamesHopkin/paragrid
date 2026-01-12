@@ -45,6 +45,22 @@ interface SelectedCell {
 let selectedCell: SelectedCell | null = null;
 
 /**
+ * Global zoom multiplier (1x to 5x range)
+ * Applied to all grids in addition to their individual scales
+ */
+const GLOBAL_ZOOM_MIN = 1.0;
+const GLOBAL_ZOOM_MAX = 5.0;
+let globalZoom: number = 1.0;
+
+function getGlobalZoom(): number {
+  return globalZoom;
+}
+
+function setGlobalZoom(zoom: number): void {
+  globalZoom = Math.max(GLOBAL_ZOOM_MIN, Math.min(GLOBAL_ZOOM_MAX, zoom));
+}
+
+/**
  * Update the history status display showing undo/redo availability,
  * and update save button state based on unsaved changes.
  */
@@ -157,14 +173,15 @@ function createGridCard(grid: GridDefinition): HTMLElement {
   table.style.width = `${unscaledWidth}px`;
   table.style.height = `${unscaledHeight}px`;
 
-  // Apply scale transform
-  const scale = getGridScale(grid.id);
-  table.style.transform = `scale(${scale})`;
+  // Apply scale transform (per-grid scale * global zoom)
+  const gridScale = getGridScale(grid.id);
+  const effectiveScale = gridScale * getGlobalZoom();
+  table.style.transform = `scale(${effectiveScale})`;
   table.style.transformOrigin = 'top left';
 
   // Set wrapper size to accommodate scaled content
-  tableWrapper.style.width = `${unscaledWidth * scale}px`;
-  tableWrapper.style.height = `${unscaledHeight * scale}px`;
+  tableWrapper.style.width = `${unscaledWidth * effectiveScale}px`;
+  tableWrapper.style.height = `${unscaledHeight * effectiveScale}px`;
 
   for (let r = 0; r < grid.rows; r++) {
     for (let c = 0; c < grid.cols; c++) {
@@ -445,7 +462,7 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
     // Preview during drag, commit on mouseup
     const startRows = grid.rows;
     const startCols = grid.cols;
-    const scale = getGridScale(gridId);
+    const effectiveScale = getGridScale(gridId) * getGlobalZoom();
 
     // Get the table element for preview updates
     const gridCard = (startEvent.target as HTMLElement).closest('.grid-card');
@@ -471,7 +488,7 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
 
       // Scale the delta to account for visual zoom, then calculate cells
       // If grid is zoomed 2x, 84px of mouse movement = 1 cell
-      const cellSize = 42 * scale; // 40px cell + 2px gap, scaled
+      const cellSize = 42 * effectiveScale; // 40px cell + 2px gap, scaled
       targetCols = Math.max(1, startCols + Math.round(deltaX / cellSize));
       targetRows = Math.max(1, startRows + Math.round(deltaY / cellSize));
 
@@ -523,8 +540,8 @@ function startResize(gridId: string, startEvent: MouseEvent): void {
 
       const wrapper = table.parentElement;
       if (wrapper) {
-        wrapper.style.width = `${unscaledWidth * scale}px`;
-        wrapper.style.height = `${unscaledHeight * scale}px`;
+        wrapper.style.width = `${unscaledWidth * effectiveScale}px`;
+        wrapper.style.height = `${unscaledHeight * effectiveScale}px`;
       }
     };
 
@@ -942,6 +959,28 @@ export function initializeUI(): void {
       return;
     }
   });
+
+  // Mouse wheel: Global zoom (Ctrl/Cmd + wheel to zoom all grids)
+  const gridsContainer = document.getElementById('grids-container');
+  if (gridsContainer) {
+    gridsContainer.addEventListener('wheel', (e) => {
+      // Only handle wheel with Ctrl/Cmd modifier
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+
+        // Normalize wheel delta (different browsers/devices have different scales)
+        const delta = -Math.sign(e.deltaY);
+
+        // Adjust global zoom (0.1 per wheel tick)
+        const currentZoom = getGlobalZoom();
+        const newZoom = currentZoom + delta * 0.1;
+        setGlobalZoom(newZoom);
+
+        // Re-render to apply new zoom
+        renderGrids();
+      }
+    }, { passive: false }); // passive: false to allow preventDefault
+  }
 
   console.log('🚀 Editor initialized');
   console.log('💾 Save your changes to update connected demo/visualization windows');
