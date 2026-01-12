@@ -166,6 +166,7 @@ function parseConfig(): DemoConfig {
 class IsometricDemo {
   private readonly storeRef: GridStoreRef;
   private readonly originalStoreRef: GridStoreRef;
+  private originalStore: GridStore; // Actual original store for reset
   private readonly tagFn: TagFn;
   private readonly playerTag = 'player';
   private statusMessage = 'Ready. Use WASD to move.';
@@ -208,6 +209,7 @@ class IsometricDemo {
   ) {
     this.storeRef = storeRef;
     this.originalStoreRef = storeRef; // Both point to the same ref, so updates affect both
+    this.originalStore = storeRef.get(); // Save actual original store for reset
     this.tagFn = tagFn;
     this.canvas = canvas;
     this.statusEl = statusEl;
@@ -907,7 +909,7 @@ class IsometricDemo {
   }
 
   public reset(): void {
-    this.storeRef.set(this.originalStoreRef.get());
+    this.storeRef.set(this.originalStore);
     this.hierarchyHelper.setStore(this.storeRef.get()); // Update helper with reset store
     if (this.cameraController instanceof ValidatingCameraController) {
       this.cameraController.setStore(this.storeRef.get()); // Update validating wrapper with reset store
@@ -935,6 +937,16 @@ class IsometricDemo {
     this.undoStack = [];
     this.redoStack = [];
     this.render();
+  }
+
+  /**
+   * Update the original store (used when server pushes new grid state).
+   * This sets the new "baseline" that reset() will restore to.
+   */
+  public updateOriginalStore(store: GridStore): void {
+    this.originalStore = store;
+    this.undoStack = []; // Clear history since we have a new baseline
+    this.redoStack = [];
   }
 
   private undo(): void {
@@ -1984,6 +1996,7 @@ async function initDemo() {
   if (storeRef && currentDemo) {
     console.log('🔄 Updating grid store reference');
     storeRef.set(store);
+    currentDemo.updateOriginalStore(store); // Update the baseline for future resets
     currentDemo.reset(); // Reset demo to use new store
     return;
   }
