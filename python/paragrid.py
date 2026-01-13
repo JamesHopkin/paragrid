@@ -665,7 +665,7 @@ class State:
 
     path: list[CellPosition]
     nav: Navigator
-    strategies: list[str]
+    strategies: list[RefStrategyType]
     visited: set[tuple[str, int, int]]  # Track visited positions for cycle detection
 
 
@@ -713,19 +713,6 @@ def get_cell(store: GridStore, pos: CellPosition) -> Cell:
     """
     grid = store[pos.grid_id]
     return grid.cells[pos.row][pos.col]
-
-
-def _strategy_to_str(strat: RefStrategyType) -> str:
-    """Convert RefStrategyType to string for internal use."""
-    if strat == RefStrategyType.PORTAL:
-        return "enter"
-    elif strat == RefStrategyType.SOLID:
-        return "solid"
-    elif strat == RefStrategyType.SWALLOW:
-        return "swallow"
-    else:  # pragma: no cover
-        # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
-        assert_never(strat)
 
 
 def enter(
@@ -849,7 +836,7 @@ def push(
         new_visited = visited | {current_key}
 
         # Compute applicable strategies
-        strategies = []
+        strategies: list[RefStrategyType] = []
 
         # Get S (source) and T (target)
         assert path
@@ -859,16 +846,16 @@ def push(
 
         # Determine available strategies based on rules order
         for strat_type in rules.ref_strategy:
-            strat = _strategy_to_str(strat_type)
-            if strat == "solid":
-                # Check if we can advance (peek ahead)
-                test_nav = nav.clone()
-                if test_nav.try_advance():
-                    strategies.append(strat)  # Only if nav can advance
-            elif strat == "enter" and isinstance(T_cell, Ref):
-                strategies.append(strat)  # Only if T is Ref
-            elif strat == "swallow" and S_cell and isinstance(S_cell, Ref):
-                strategies.append(strat)  # Only if S is Ref
+            match (strat_type, T_cell, S_cell):
+                case (RefStrategyType.SOLID, _, _):
+                    # Check if we can advance (peek ahead)
+                    test_nav = nav.clone()
+                    if test_nav.try_advance():
+                        strategies.append(strat_type)
+                case (RefStrategyType.PORTAL, Ref(), _):
+                    strategies.append(strat_type)
+                case (RefStrategyType.SWALLOW, _, Ref()):
+                    strategies.append(strat_type)
 
         if not strategies:
             return PushFailure("NO_STRATEGY", nav.current, "No applicable strategy available")
@@ -924,20 +911,21 @@ def push(
         strategy = state.strategies.pop(0)
 
         new_path = state.path[:]
-        if strategy == "solid":
-            new_path.append(nav.current)
-            nav.advance()
+        match strategy:
+            case RefStrategyType.SOLID:
+                new_path.append(nav.current)
+                nav.advance()
 
-        elif strategy == "enter":
-            nav.enter(rules)
+            case RefStrategyType.PORTAL:
+                nav.enter(rules)
 
-        elif strategy == "swallow":
-            new_path.append(nav.current)
-            # Swallow: S (last in path) swallows T (current)
-            # Move T into S's referenced grid from opposite direction
-            nav.flip()
-            nav.advance()
-            nav.enter(rules)
+            case RefStrategyType.SWALLOW:
+                new_path.append(nav.current)
+                # Swallow: S (last in path) swallows T (current)
+                # Move T into S's referenced grid from opposite direction
+                nav.flip()
+                nav.advance()
+                nav.enter(rules)
 
         new_state = make_new_state(new_path, nav, state.visited)
 
@@ -1155,40 +1143,41 @@ def push_simple(
         T_cell = current_cell
 
         # Determine first applicable strategy based on rules order
-        selected_strategy = None
+        selected_strategy: RefStrategyType | None = None
         for strat_type in rules.ref_strategy:
-            strat = _strategy_to_str(strat_type)
-            if strat == "solid":
-                # Check if we can advance (peek ahead)
-                test_nav = nav.clone()
-                if test_nav.try_advance():
-                    selected_strategy = strat
+            match (strat_type, T_cell, S_cell):
+                case (RefStrategyType.SOLID, _, _):
+                    # Check if we can advance (peek ahead)
+                    test_nav = nav.clone()
+                    if test_nav.try_advance():
+                        selected_strategy = strat_type
+                        break
+                case (RefStrategyType.PORTAL, Ref(), _):
+                    selected_strategy = strat_type
                     break
-            elif strat == "enter" and isinstance(T_cell, Ref):
-                selected_strategy = strat
-                break
-            elif strat == "swallow" and isinstance(S_cell, Ref):
-                selected_strategy = strat
-                break
+                case (RefStrategyType.SWALLOW, _, Ref()):
+                    selected_strategy = strat_type
+                    break
 
         if not selected_strategy:
             return PushFailure("NO_STRATEGY", nav.current, "No applicable strategy available")
 
         # Execute the selected strategy
-        if selected_strategy == "solid":
-            path.append(nav.current)
-            nav.advance()
+        match selected_strategy:
+            case RefStrategyType.SOLID:
+                path.append(nav.current)
+                nav.advance()
 
-        elif selected_strategy == "enter":
-            nav.enter(rules)
+            case RefStrategyType.PORTAL:
+                nav.enter(rules)
 
-        elif selected_strategy == "swallow":
-            path.append(nav.current)
-            # Swallow: S (last in path) swallows T (current)
-            # Move T into S's referenced grid from opposite direction
-            nav.flip()
-            nav.advance()
-            nav.enter(rules)
+            case RefStrategyType.SWALLOW:
+                path.append(nav.current)
+                # Swallow: S (last in path) swallows T (current)
+                # Move T into S's referenced grid from opposite direction
+                nav.flip()
+                nav.advance()
+                nav.enter(rules)
 
     # Unreachable with reasonable max_depth: should hit Empty, stop tag, or cycle
     return PushFailure("MAX_DEPTH", nav.current, f"Exceeded maximum depth of {max_depth}")  # pragma: no cover
