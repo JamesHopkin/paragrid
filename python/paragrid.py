@@ -22,6 +22,10 @@ from grid_types import Direction
 
 logger = logging.getLogger(__name__)
 
+# Configuration: Sanity check limit for backtracking to prevent hangs
+# Should never be reached in practice with finite grids
+MAX_BACKTRACK_DEPTH = 10000
+
 # Public API
 __all__ = [
     # Imported from grid_types
@@ -622,7 +626,7 @@ class Navigator:
         assert isinstance(cell, Ref)
 
         # Pass depth information for depth-aware entry
-        entry_pos = try_enter(
+        entry_pos = enter(
             self.store,
             cell.grid_id,
             self.direction,
@@ -632,8 +636,6 @@ class Navigator:
             exit_depth=self.exit_depth,
             exit_fraction=self.exit_fraction,
         )
-        if entry_pos is None:
-            return False
 
         self.visited_grids.add(cell.grid_id)
         self.current = entry_pos
@@ -713,7 +715,7 @@ def get_cell(store: GridStore, pos: CellPosition) -> Cell:
     return grid.cells[pos.row][pos.col]
 
 
-def try_enter(
+def enter(
     store: GridStore,
     grid_id: str,
     direction: Direction,
@@ -722,7 +724,7 @@ def try_enter(
     exit_position: tuple[int, int] | None = None,
     exit_depth: int | None = None,
     exit_fraction: float | None = None,
-) -> CellPosition | None:
+) -> CellPosition:
     """
     Determine entry point when entering a grid via a Ref.
 
@@ -753,8 +755,7 @@ def try_enter(
         CellPosition for entry point, or None to deny entry
     """
     # Get the target grid
-    if grid_id not in store:
-        return None
+    assert grid_id in store
 
     grid = store[grid_id]
     rows = grid.rows
@@ -780,7 +781,6 @@ def push(
     rules: RuleSet,
     tag_fn: TagFn | None = None,
     max_depth: int = 1000,
-    max_backtrack_depth: int = 10,
 ) -> GridStore | PushFailure:
     """
     Push cell contents along a path in the given direction (with backtracking).
@@ -800,7 +800,6 @@ def push(
         rules: RuleSet governing Ref handling behavior
         tag_fn: Optional function to tag cells (e.g., for 'stop' tag)
         max_depth: Maximum traversal depth to prevent infinite loops
-        max_backtrack_depth: Maximum number of backtracking attempts (default 10)
 
     Returns:
         New GridStore with pushed contents if successful, PushFailure with reason if push fails
@@ -852,8 +851,9 @@ def push(
         strategies = []
 
         # Get S (source) and T (target)
-        S_pos = path[-1] if path else None
-        S_cell = get_cell(store, S_pos) if S_pos else None
+        assert path
+        S_pos = path[-1]
+        S_cell = get_cell(store, S_pos)
         T_cell = current_cell
 
         # Determine available strategies based on rules order
@@ -901,12 +901,19 @@ def push(
         return apply_push(store, final_path)
 
     decision_stack = [state]
+    backtrack_count = 0
+    last_failure: PushFailure | None = None
 
-    while decision_stack and max_backtrack_depth > 0:
+    while decision_stack:
         state = decision_stack[-1]
         if not state.strategies:
             decision_stack.pop()
-            max_backtrack_depth -= 1
+            backtrack_count += 1
+            # Sanity check: Should never be reached with finite grids
+            assert backtrack_count < MAX_BACKTRACK_DEPTH, (  # pragma: no cover
+                f"Exceeded backtrack depth limit ({MAX_BACKTRACK_DEPTH}). "
+                "This indicates a bug in the push algorithm."
+            )
             continue
 
         # Clone navigator for this attempt
@@ -948,10 +955,10 @@ def push(
             decision_stack.append(new_state)
             continue
 
-    # All strategies exhausted
-    if 'last_failure' in locals():
-        return last_failure
-    return PushFailure("NO_STRATEGY", start, "All backtracking attempts exhausted")
+    # All strategies exhausted - last_failure must have been set
+    # (guaranteed by finite grids and backtrack assertion above)
+    assert last_failure is not None, "Bug: decision_stack empty but no failure recorded"  # pragma: no cover
+    return last_failure
 
 
 def pull(
