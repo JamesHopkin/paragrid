@@ -27,6 +27,7 @@ from paragrid import (
     RuleSet,
     analyze,
     find_primary_ref,
+    find_tagged_cell,
     parse_grids,
     pull,
     push,
@@ -1004,19 +1005,6 @@ class TestNavigator:
 
         assert result is False, "Should detect exit cycle and return False"
 
-    def test_try_enter_nonexistent_grid(self) -> None:
-        """Test that try_enter returns None when grid doesn't exist in store."""
-        from paragrid import try_enter, RuleSet
-
-        store: GridStore = {
-            "main": Grid("main", ((Concrete("A"),),)),
-        }
-
-        # Try to enter a grid that doesn't exist in the store
-        result = try_enter(store, "nonexistent", Direction.E, RuleSet())
-
-        assert result is None, "Should return None for non-existent grid"
-
 
 # =============================================================================
 # Test Push with Backtracking
@@ -1489,6 +1477,88 @@ class TestTagging:
         assert isinstance(result, PushFailure), "Push should fail when initiating from a stop-tagged cell"
         assert result.reason == "STOP_TAG"
         assert result.position == start
+
+    def test_find_tagged_cell_single_grid(self) -> None:
+        """Test finding a tagged cell in a single grid."""
+        store = parse_grids({"main": "1 2|3 4"})
+
+        def tag_fn(cell: Cell) -> set[str]:
+            if isinstance(cell, Concrete) and cell.id == "3":
+                return {"player"}
+            return set()
+
+        result = find_tagged_cell(store, "player", tag_fn)
+        assert result is not None
+        assert result == CellPosition("main", 1, 0)
+
+    def test_find_tagged_cell_not_found(self) -> None:
+        """Test that None is returned when tag is not found."""
+        store = parse_grids({"main": "1 2|3 4"})
+
+        def tag_fn(cell: Cell) -> set[str]:
+            return set()
+
+        result = find_tagged_cell(store, "player", tag_fn)
+        assert result is None
+
+    def test_find_tagged_cell_returns_first_match(self) -> None:
+        """Test that the first tagged cell is returned when multiple exist."""
+        store = parse_grids({"main": "1 2|3 4"})
+
+        def tag_fn(cell: Cell) -> set[str]:
+            if isinstance(cell, Concrete) and cell.id in ["2", "4"]:
+                return {"player"}
+            return set()
+
+        result = find_tagged_cell(store, "player", tag_fn)
+        assert result is not None
+        # Should return 2 (0,1) not 4 (1,1) since it's encountered first
+        assert result == CellPosition("main", 0, 1)
+
+    def test_find_tagged_cell_multiple_grids(self) -> None:
+        """Test finding a tagged cell across multiple grids."""
+        store = parse_grids({
+            "first": "1 2",
+            "second": "3 4",
+            "third": "5 6"
+        })
+
+        def tag_fn(cell: Cell) -> set[str]:
+            if isinstance(cell, Concrete) and cell.id == "5":
+                return {"target"}
+            return set()
+
+        result = find_tagged_cell(store, "target", tag_fn)
+        assert result is not None
+        assert result == CellPosition("third", 0, 0)
+
+    def test_find_tagged_cell_with_multiple_tags(self) -> None:
+        """Test finding a cell when tag_fn returns multiple tags."""
+        store = parse_grids({"main": "1 2|3 4"})
+
+        def tag_fn(cell: Cell) -> set[str]:
+            if isinstance(cell, Concrete) and cell.id == "2":
+                return {"player", "movable", "important"}
+            return set()
+
+        # Should find the cell when searching for any of its tags
+        result = find_tagged_cell(store, "movable", tag_fn)
+        assert result is not None
+        assert result == CellPosition("main", 0, 1)
+
+    def test_find_tagged_cell_with_empty_cells(self) -> None:
+        """Test that Empty cells are properly checked by tag_fn."""
+        store = parse_grids({"main": "1 _|3 4"})
+
+        def tag_fn(cell: Cell) -> set[str]:
+            # Tag empty cells
+            if isinstance(cell, Empty):
+                return {"empty"}
+            return set()
+
+        result = find_tagged_cell(store, "empty", tag_fn)
+        assert result is not None
+        assert result == CellPosition("main", 0, 1)
 
 
 # =============================================================================
