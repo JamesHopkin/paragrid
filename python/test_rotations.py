@@ -132,6 +132,7 @@ class TestVariation:
         )
 
         # If expecting failure, it doesn't need rotation (reason is direction-independent)
+        new_expected: list[tuple[str, int, int, str]] | ExpectedFailure
         if isinstance(self.expected, ExpectedFailure):
             new_expected = self.expected
         else:

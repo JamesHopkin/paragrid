@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 from fractions import Fraction
 from math import lcm
-from typing import Callable, Iterator, Union
+from typing import Callable, Iterator, Union, assert_never
 
 from depth_aware_entry import (
     calculate_exit_fraction,
@@ -21,6 +21,44 @@ from depth_aware_entry import (
 from grid_types import Direction
 
 logger = logging.getLogger(__name__)
+
+# Public API
+__all__ = [
+    # Imported from grid_types
+    "Direction",
+    # Strategy types
+    "RefStrategyType",
+    "RefStrategy",
+    "RuleSet",
+    # Cell types
+    "Empty",
+    "Concrete",
+    "Ref",
+    "Cell",
+    # Grid types
+    "Grid",
+    "GridStore",
+    # Node types
+    "EmptyNode",
+    "CutoffNode",
+    "ConcreteNode",
+    "NestedNode",
+    "RefNode",
+    "CellNode",
+    # Position and tags
+    "CellPosition",
+    "TagFn",
+    # Failure types
+    "PushFailure",
+    # Functions
+    "analyze",
+    "parse_grids",
+    "push",
+    "pull",
+    "push_simple",
+    "find_primary_ref",
+    "find_tagged_cell",
+]
 
 
 class RefStrategyType(Enum):
@@ -421,8 +459,8 @@ def analyze(
 
                     # Wrap in RefNode
                     cols.append(RefNode(grid_id, ref_id, is_primary, content, depth, offset))
-                case _:
-                    raise ValueError(f"Unknown cell type: {cell}")
+                case _: # pragma: no cover
+                    assert_never(cell)
         rows.append(tuple(cols))
 
     # Compute focus metadata for the NestedNode itself
@@ -725,6 +763,7 @@ def try_enter(
     # Check if we should use depth-aware equivalent point transfer
     if should_use_equivalent_point(current_depth, exit_depth, exit_fraction):
         # Use equivalent point transfer - preserve fractional position
+        assert exit_fraction is not None  # Type narrowing: guaranteed by should_use_equivalent_point
         entry_row, entry_col = calculate_entry_position_equivalent_point(
             direction, exit_fraction, rows, cols
         )
@@ -775,9 +814,9 @@ def push(
             return "solid"
         elif strat == RefStrategyType.SWALLOW:
             return "swallow"
-        else:
+        else:  # pragma: no cover
             # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
-            assert False, f"unreachable: unknown strategy type {strat}"
+            assert_never(strat)
 
     def make_new_state(
         path: list[CellPosition], nav: Navigator, visited: set[tuple[str, int, int]]
@@ -1058,9 +1097,9 @@ def push_simple(
             return "solid"
         elif strat == RefStrategyType.SWALLOW:
             return "swallow"
-        else:
+        else:  # pragma: no cover
             # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
-            assert False, f"unreachable: unknown strategy type {strat}"
+            assert_never(strat)
 
     # Check if starting cell has stop tag - stop-tagged cells cannot be pushed
     start_cell = get_cell(store, start)
