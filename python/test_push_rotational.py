@@ -38,7 +38,7 @@ test = RotationalTestCase(
         )
     ]
 )
-run_rotational_test(test, push)
+run_rotational_test(test, [push])
 ```
 
 This single test definition generates 4 test cases testing all directions!
@@ -46,7 +46,7 @@ This single test definition generates 4 test cases testing all directions!
 
 import pytest
 
-from paragrid import Direction, RuleSet, push
+from paragrid import Direction, RuleSet, push, push_simple
 from test_rotations import (
     ExpectedFailure,
     RotationalTestCase,
@@ -79,7 +79,7 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
     def test_push_three_cells(self) -> None:
         """Test pushing 3 cells ending at Empty - all 4 directions."""
@@ -103,7 +103,7 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
     def test_push_stops_at_midway_empty(self) -> None:
         """Test that push stops at Empty and doesn't continue past it."""
@@ -128,7 +128,7 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
     def test_push_2x2_grid_vertical(self) -> None:
         """Test pushing in a 2x2 grid (tests row-wise movement)."""
@@ -152,7 +152,7 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
     def test_push_ref_as_solid(self) -> None:
         """Test push where Ref acts as solid object (SOLID strategy)."""
@@ -180,7 +180,7 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
     def test_push_swallow_into_ref(self) -> None:
         """Test push with swallow behavior (Ref swallows trailing cell)."""
@@ -208,11 +208,12 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
+
+    # below: specifially added to fill coverage gaps
 
     def test_push_with_entry_cycle(self) -> None:
-        """Test that push fails when encountering an entry cycle."""
-        from paragrid import RefStrategy
+        '''may make the test name more generic and cover more with variations'''
 
         test = RotationalTestCase(
             name="push_entry_cycle",
@@ -229,35 +230,50 @@ class TestPushRotational:
             ]
         )
 
-        run_rotational_test(test, push, RuleSet(ref_strategy=RefStrategy.PUSH_FIRST))
+        run_rotational_test(test, [push, push_simple])
 
-    # below: specifially added to fill coverage gaps
-
-    def test_push_entry_cycle(self) -> None:
+    def test_push_with_valid_cycle(self) -> None:
         '''may make the test name more generic and cover more with variations'''
+
         test = RotationalTestCase(
-            name="push_solid_ref",
-            grids={
-                "main": "1 LOCKED _",
-                "LOCKED": "9s"
-            },
+            name="push_entry_cycle",
+            grids={"main": "*main 1 2"},
             variations=[
                 TestVariation(
                     start_grid="main",
                     start_row=0,
-                    start_col=0,
+                    start_col=1,
                     direction=Direction.E,
-                    expected=[
-                        ("main", 0, 0, "_"),
-                        ("main", 0, 1, "1"),
-                        ("main", 0, 2, "LOCKED"),  # Ref pushed as solid
-                        ("LOCKED", 0, 0, "9s"),    # Unchanged
-                    ],
-                    description="push ref as solid object"
+                    expected=[("main", 0, 1, "2")],
+                    description="valid cycle"
                 )
             ]
         )
 
+        run_rotational_test(test, [push, push_simple])
+
+    def test_nowhere_to_go(self) -> None:
+        '''may make the test name more generic and cover more with variations'''
+
+        test = RotationalTestCase(
+            name="push_entry_cycle",
+            grids={"main": "_ 1 2"},
+            variations=[
+                TestVariation(start_grid="main", start_row=0, start_col=2, direction=Direction.E, expected=ExpectedFailure("BLOCKED"), description="edge of grid"),
+                TestVariation(start_grid="main", start_row=0, start_col=1, direction=Direction.E, expected=ExpectedFailure("NO_STRATEGY"), description="push stuck block"),
+            ]
+        )
+
+        run_rotational_test(test, [push, push_simple])
+
+    def test_exit_enter(self) -> None:
+        test = RotationalTestCase(
+            name="exit_enter",
+            grids = 'm:AB\na:1\nb:_',
+            variations=[TestVariation(start_grid="a", expected=[("b", 0, 0, "1")])]
+        )
+
+        run_rotational_test(test, [push, push_simple])
 
 class TestPushRotationalMultiVariation:
     """Tests with multiple variations per rotational case."""
@@ -297,7 +313,7 @@ class TestPushRotationalMultiVariation:
             ]
         )
 
-        run_rotational_test(test, push)
+        run_rotational_test(test, [push, push_simple])
 
 
 if __name__ == "__main__":

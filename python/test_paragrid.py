@@ -1457,6 +1457,8 @@ class TestTagging:
         The '9' cells have stop tags.
         Push east from (0,1) [the stop-tagged '9'] should fail immediately.
         Currently the push succeeds and the '9' moves.
+
+        Tests both push and push_simple implementations.
         """
         store = parse_grids({
             "main": "inner 9|main _",
@@ -1471,12 +1473,18 @@ class TestTagging:
 
         # Push FROM the stop-tagged '9' at (0,1)
         start = CellPosition("main", 0, 1)
-        result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_fn)
 
-        # The push should fail because the starting cell has a stop tag
-        assert isinstance(result, PushFailure), "Push should fail when initiating from a stop-tagged cell"
+        # Test push
+        result = push(store, start, Direction.E, RuleSet(), tag_fn=tag_fn)
+        assert isinstance(result, PushFailure), "push should fail when initiating from a stop-tagged cell"
         assert result.reason == "STOP_TAG"
         assert result.position == start
+
+        # Test push_simple
+        result_simple = push_simple(store, start, Direction.E, RuleSet(), tag_fn=tag_fn)
+        assert isinstance(result_simple, PushFailure), "push_simple should fail when initiating from a stop-tagged cell"
+        assert result_simple.reason == "STOP_TAG"
+        assert result_simple.position == start
 
     def test_find_tagged_cell_single_grid(self) -> None:
         """Test finding a tagged cell in a single grid."""
@@ -2267,346 +2275,101 @@ class TestFocusMetadata:
         assert tree.focus_depth == 0
         assert tree.focus_offset == (0, 0)
 
+    def test_ancestor_without_ref_to_focus_path(self) -> None:
+        """Test ancestor grid that doesn't have a ref to the next grid in focus_path.
+
+        This exercises the case where find_focus_ref_position() returns None (line 239).
+        When the ref position can't be found, offset should be None (line 263).
+        """
+        store = parse_grids({
+            "main": "1 2",  # No ref to "inner" grid
+            "inner": "A",
+            "A": "3 4"
+        })
+        # Focus on ["main", "inner", "A"] but "main" has no ref to "inner"
+        # This will never happen in normal usage, but tests the edge case
+        tree = analyze(
+            store, "main", Fraction(10), Fraction(10),
+            focus_path=["main", "inner", "A"]
+        )
+
+        assert isinstance(tree, NestedNode)
+        # Should still compute depth -2 (ancestor)
+        assert tree.focus_depth == -2
+        # But offset should be None since ref position not found
+        assert tree.focus_offset is None
+
+    def test_focus_on_deeper_descendant_than_current(self) -> None:
+        """Test focus path that's much longer than current path.
+
+        When analyzing grids early in the hierarchy with focus on deep descendants,
+        ensure proper depth and offset computation in find_focus_ref_position.
+        """
+        store = parse_grids({
+            "root": "1 A",
+            "A": "2 B",
+            "B": "3 C",
+            "C": "4 5"
+        })
+        # Focus on deeply nested "C"
+        tree = analyze(
+            store, "root", Fraction(10), Fraction(10),
+            focus_path=["root", "A", "B", "C"]
+        )
+
+        assert isinstance(tree, NestedNode)
+        # "root" is depth -3 (three levels above focus)
+        assert tree.focus_depth == -3
+        # The ref to "A" is at (1, 0), so grid offset at (0, 0) is (-1, 0)
+        assert tree.focus_offset == (-1, 0)
+
+        # Cell at (0, 0) should have offset (-1, 0) relative to ref at (1, 0)
+        assert tree.children[0][0].focus_depth == -3
+        assert tree.children[0][0].focus_offset == (-1, 0)
+
+        # Cell at (1, 0) (where ref is) should have offset (0, 0)
+        assert tree.children[0][1].focus_depth == -3
+        assert tree.children[0][1].focus_offset == (0, 0)
+
+    def test_focus_with_non_prefix_paths(self) -> None:
+        """Test that when current_path doesn't share prefix with focus_path, metadata is None.
+
+        This tests the path divergence case more thoroughly.
+        """
+        store = parse_grids({
+            "main": "A B",
+            "A": "C 1",
+            "B": "D 2",
+            "C": "5",
+            "D": "6"
+        })
+        # Focus on ["main", "A", "C"]
+        tree = analyze(
+            store, "main", Fraction(10), Fraction(10),
+            focus_path=["main", "A", "C"]
+        )
+
+        # Navigate to grid "D" via B
+        assert isinstance(tree, NestedNode)
+        ref_b = tree.children[0][1]
+        assert isinstance(ref_b, RefNode)
+        b_content = ref_b.content
+        assert isinstance(b_content, NestedNode)
+
+        # Grid "B" diverges from focus path
+        assert b_content.focus_depth is None
+
+        # Grid "D" inside "B" also diverges
+        ref_d = b_content.children[0][0]
+        assert isinstance(ref_d, RefNode)
+        d_content = ref_d.content
+        assert isinstance(d_content, NestedNode)
+        assert d_content.focus_depth is None
+        assert d_content.focus_offset is None
+
 
 # =============================================================================
 # Test Depth-Aware Entry Strategy
 # =============================================================================
 
 
-class TestDepthAwareEntry:
-    """Tests for depth-aware entry strategy with equivalent point transfer."""
-
-    def test_equivalent_point_transfer_across_refs(self) -> None:
-        """Test that entry point preserves fractional position when exiting one ref and entering another."""
-        # Main has two refs A and B side by side, both occupying 5 rows
-        # A is a single-column grid (forces immediate exit east)
-        # Push from inside A (at row 0), exit, and enter B - should enter B at row 0, not middle
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-            )),
-            "A": Grid("A", (
-                (Concrete("X"),),  # X at A[0,0] (top row, only column)
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("c"),),
-                (Concrete("d"),),
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-                (Empty(), Concrete("4")),
-                (Empty(), Concrete("5")),
-            )),
-        }
-
-        # Push eastward from A[0,0] (row 0 of A)
-        # Path: A[0,0] -> [hit east edge, exit A] -> main[0,1] (Ref B) -> [enter B] -> B[0,0]
-        # Equivalent point: exited at fraction 0.0 (row 0 of 5), enter at fraction 0.0 (row 0 of 5)
-        result = push(
-            store,
-            CellPosition("A", 0, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-
-        # The entry should be at B[0,0] (top row), not B[2,0] (middle row)
-        # Verify by checking where X ended up in grid B
-        new_store = result
-        grid_b = new_store["B"]
-        # X should be at row 0, column 0 (equivalent point transfer - same depth)
-        assert isinstance(grid_b.cells[0][0], Concrete)
-        assert grid_b.cells[0][0].id == "X"
-
-    def test_standard_entry_when_no_prior_exit(self) -> None:
-        """Test that standard middle-of-edge entry is used when entering without prior exit."""
-        # When entering a ref directly from main (no prior exit at same depth)
-        # Should use standard middle-of-edge entry
-        store = parse_grids({
-            "main": "9 A _|_ _ _|_ _ _",
-            "A": "1 2 3|4 5 6|7 8 9"
-        })
-
-        # Push eastward from main[0,0] (row 0)
-        # No prior exit, so use standard middle entry
-        result = push(
-            store,
-            CellPosition("main", 0, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-
-        # When entering A from main (no prior exit), use standard middle entry
-        # A has 3 rows, so middle is row 1
-        new_store = result
-        grid_a = new_store["A"]
-        # 9 should be at row 1 (middle, standard entry)
-        assert isinstance(grid_a.cells[1][0], Concrete)
-        assert grid_a.cells[1][0].id == "9"
-
-    def test_equivalent_point_bottom_row(self) -> None:
-        """Test equivalent point transfer from bottom row."""
-        # Push from bottom row of A, should enter B at bottom row
-        # A is a single-column grid (forces immediate exit east)
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-                (Empty(), Empty()),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("c"),),
-                (Concrete("d"),),
-                (Concrete("X"),),  # X at A[4,0] (bottom row, only column)
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-                (Empty(), Concrete("4")),
-                (Empty(), Concrete("5")),
-            )),
-        }
-
-        # Push eastward from A[4,0] (bottom row of A)
-        # Path: A[4,0] -> [hit east edge, exit A] -> main[0,1] (Ref B) -> [enter B] -> B[4,0]
-        # Equivalent point: exited at fraction 1.0 (row 4 of 5), enter at fraction 1.0 (row 4 of 5)
-        result = push(
-            store,
-            CellPosition("A", 4, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-
-        # X should enter B at bottom row (row 4), not middle (row 2)
-        new_store = result
-        grid_b = new_store["B"]
-        assert isinstance(grid_b.cells[4][0], Concrete)
-        assert grid_b.cells[4][0].id == "X"
-
-    def test_equivalent_point_4_to_2_rows(self) -> None:
-        """Test equivalent point transfer from 4-row grid to 2-row grid (multiple)."""
-        # A has 4 rows, B has 2 rows
-        # Exit from row 3 (bottom) of A = fraction 1.0
-        # Should enter B at row 1 (bottom) = round(1.0 * 1) = 1
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("c"),),
-                (Concrete("X"),),  # X at A[3,0] (bottom row)
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 3, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 1.0 maps to row 1 in 2-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[1][0], Concrete)
-        assert grid_b.cells[1][0].id == "X"
-
-    def test_equivalent_point_2_to_4_rows(self) -> None:
-        """Test equivalent point transfer from 2-row grid to 4-row grid (reverse multiple)."""
-        # A has 2 rows, B has 4 rows
-        # Exit from row 1 (bottom) of A = fraction 1.0
-        # Should enter B at row 3 (bottom) = round(1.0 * 3) = 3
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("X"),),  # X at A[1,0] (bottom row)
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-                (Empty(), Concrete("4")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 1, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 1.0 maps to row 3 in 4-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[3][0], Concrete)
-        assert grid_b.cells[3][0].id == "X"
-
-    def test_equivalent_point_3_to_5_rows(self) -> None:
-        """Test equivalent point transfer from 3-row grid to 5-row grid (unrelated)."""
-        # A has 3 rows, B has 5 rows
-        # Exit from row 2 (bottom) of A = fraction 1.0
-        # Should enter B at row 4 (bottom) = round(1.0 * 4) = 4
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("X"),),  # X at A[2,0] (bottom row)
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-                (Empty(), Concrete("4")),
-                (Empty(), Concrete("5")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 2, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 1.0 maps to row 4 in 5-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[4][0], Concrete)
-        assert grid_b.cells[4][0].id == "X"
-
-    def test_equivalent_point_5_to_3_rows(self) -> None:
-        """Test equivalent point transfer from 5-row grid to 3-row grid (reverse unrelated)."""
-        # A has 5 rows, B has 3 rows
-        # Exit from row 4 (bottom) of A = fraction 1.0
-        # Should enter B at row 2 (bottom) = round(1.0 * 2) = 2
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("c"),),
-                (Concrete("d"),),
-                (Concrete("X"),),  # X at A[4,0] (bottom row)
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 4, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 1.0 maps to row 2 in 3-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[2][0], Concrete)
-        assert grid_b.cells[2][0].id == "X"
-
-    def test_equivalent_point_3_to_5_middle_row(self) -> None:
-        """Test equivalent point transfer from middle row with unrelated dimensions."""
-        # A has 3 rows, B has 5 rows
-        # Exit from row 1 (middle) of A = fraction 0.5
-        # Should enter B at row 2 (middle) = round(0.5 * 4) = 2
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("X"),),  # X at A[1,0] (middle row)
-                (Concrete("c"),),
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-                (Empty(), Concrete("4")),
-                (Empty(), Concrete("5")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 1, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 0.5 maps to row 2 in 5-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[2][0], Concrete)
-        assert grid_b.cells[2][0].id == "X"
-
-    def test_equivalent_point_5_to_3_middle_row(self) -> None:
-        """Test equivalent point transfer from middle row, reverse direction."""
-        # A has 5 rows, B has 3 rows
-        # Exit from row 2 (middle) of A = fraction 0.5
-        # Should enter B at row 1 (middle) = round(0.5 * 2) = 1
-        store: GridStore = {
-            "main": Grid("main", (
-                (Ref("A"), Ref("B")),
-            )),
-            "A": Grid("A", (
-                (Concrete("a"),),
-                (Concrete("b"),),
-                (Concrete("X"),),  # X at A[2,0] (middle row)
-                (Concrete("d"),),
-                (Concrete("e"),),
-            )),
-            "B": Grid("B", (
-                (Empty(), Concrete("1")),
-                (Empty(), Concrete("2")),
-                (Empty(), Concrete("3")),
-            )),
-        }
-
-        result = push(
-            store,
-            CellPosition("A", 2, 0),
-            Direction.E,
-            RuleSet(ref_strategy=RefStrategy.TRY_ENTER_FIRST)
-        )
-
-        assert not isinstance(result, PushFailure)
-        # Fraction 0.5 maps to row 1 in 3-row grid
-        grid_b = result["B"]
-        assert isinstance(grid_b.cells[1][0], Concrete)
-        assert grid_b.cells[1][0].id == "X"

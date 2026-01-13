@@ -19,8 +19,9 @@ from paragrid import (
     PushFailure,
     Ref,
     RuleSet,
-    parse_grids,
 )
+
+from grid_parser import parse_grids, parse_grids_concise
 
 
 # =============================================================================
@@ -28,20 +29,32 @@ from paragrid import (
 # =============================================================================
 
 
-def rotate_grid_string_90(grid_str: str) -> str:
+def rotate_grid_90(grid: Grid) -> Grid:
     """
-    Rotate a grid string 90° clockwise.
+    Rotate a Grid 90° clockwise.
 
-    Example:
-        "1 2|3 4" -> "3 1|4 2"
+    In an N×M grid rotated 90° clockwise, it becomes M×N.
+    Position (row, col) → (col, N - 1 - row)
     """
-    rows = grid_str.split('|')
-    cells = [row.split() for row in rows]
+    original_rows = grid.rows
+    original_cols = grid.cols
 
-    # Transpose and reverse rows for 90° clockwise rotation
-    # This is equivalent to: rotate_90 = reverse_rows(transpose(grid))
-    rotated = list(zip(*cells[::-1]))
-    return '|'.join(' '.join(row) for row in rotated)
+    # Create new cells array with swapped dimensions
+    new_cells: list[list[Cell]] = [[None] * original_rows for _ in range(original_cols)]  # type: ignore
+
+    for row in range(original_rows):
+        for col in range(original_cols):
+            new_row = col
+            new_col = original_rows - 1 - row
+            new_cells[new_row][new_col] = grid.cells[row][col]
+
+    # Convert to tuple of tuples for frozen Grid
+    return Grid(grid.id, tuple(tuple(row) for row in new_cells))
+
+
+def rotate_grid_store_90(store: GridStore) -> GridStore:
+    """Rotate all grids in a GridStore 90° clockwise."""
+    return {grid_id: rotate_grid_90(grid) for grid_id, grid in store.items()}
 
 
 def rotate_direction_90(direction: Direction) -> Direction:
@@ -55,18 +68,16 @@ def rotate_direction_90(direction: Direction) -> Direction:
     return rotation_map[direction]
 
 
-def get_grid_dimensions(grid_str: str) -> tuple[int, int]:
-    """Get (rows, cols) from a grid string."""
-    rows = grid_str.split('|')
-    cells = [row.split() for row in rows]
-    return len(cells), len(cells[0]) if cells else 0
+def get_grid_store_dimensions(store: GridStore) -> dict[str, tuple[int, int]]:
+    """Get dimensions for all grids in a GridStore."""
+    return {grid_id: (grid.rows, grid.cols) for grid_id, grid in store.items()}
 
 
 def rotate_position_90(
     grid_id: str,
     row: int,
     col: int,
-    original_dimensions: dict[str, tuple[int, int]]
+    store: GridStore
 ) -> tuple[int, int]:
     """
     Rotate a position 90° clockwise within its grid.
@@ -78,25 +89,16 @@ def rotate_position_90(
         grid_id: ID of the grid containing this position
         row: Original row index
         col: Original column index
-        original_dimensions: Dict mapping grid_id to (rows, cols) before rotation
+        store: GridStore containing the grid (before rotation)
 
     Returns:
         (new_row, new_col) after rotation
     """
-    original_rows, original_cols = original_dimensions[grid_id]
+    grid = store[grid_id]
+    original_rows = grid.rows
     new_row = col
     new_col = original_rows - 1 - row
     return new_row, new_col
-
-
-def rotate_grids_90(grids: dict[str, str]) -> dict[str, str]:
-    """Rotate all grids in a definition dict 90° clockwise."""
-    return {grid_id: rotate_grid_string_90(grid_str) for grid_id, grid_str in grids.items()}
-
-
-def get_all_dimensions(grids: dict[str, str]) -> dict[str, tuple[int, int]]:
-    """Get dimensions for all grids in a definition dict."""
-    return {grid_id: get_grid_dimensions(grid_str) for grid_id, grid_str in grids.items()}
 
 
 # =============================================================================
@@ -116,19 +118,20 @@ class ExpectedFailure:
 class TestVariation:
     """A single test variation with start position, direction, and expected results."""
 
-    start_grid: str
-    start_row: int
-    start_col: int
-    direction: Direction
     expected: list[tuple[str, int, int, str]] | ExpectedFailure  # Success: cell list, Failure: reason
+
+    start_grid: str
+    start_row: int = 0
+    start_col: int = 0
+    direction: Direction = Direction.E
     description: str = ""
 
     __test__ = False
 
-    def rotate_90(self, dimensions: dict[str, tuple[int, int]]) -> "TestVariation":
+    def rotate_90(self, store: GridStore) -> "TestVariation":
         """Create a new TestVariation rotated 90° clockwise."""
         new_row, new_col = rotate_position_90(
-            self.start_grid, self.start_row, self.start_col, dimensions
+            self.start_grid, self.start_row, self.start_col, store
         )
 
         # If expecting failure, it doesn't need rotation (reason is direction-independent)
@@ -138,7 +141,7 @@ class TestVariation:
         else:
             new_expected = []
             for grid_id, row, col, content in self.expected:
-                exp_row, exp_col = rotate_position_90(grid_id, row, col, dimensions)
+                exp_row, exp_col = rotate_position_90(grid_id, row, col, store)
                 new_expected.append((grid_id, exp_row, exp_col, content))
 
         return TestVariation(
@@ -178,32 +181,39 @@ class RotationalTestCase:
     """
 
     name: str
-    grids: dict[str, str]
+    grids: dict[str, str] | str
     variations: list[TestVariation]
+    store: GridStore = None  # type: ignore  # Initialized in __post_init__
 
-    def get_all_rotations(self) -> list[tuple[int, dict[str, str], TestVariation]]:
+    def __post_init__(self) -> None:
+        """Parse grids into GridStore on construction."""
+        if isinstance(self.grids, dict):
+            object.__setattr__(self, 'store', parse_grids(self.grids))
+        else:
+            object.__setattr__(self, 'store', parse_grids_concise(self.grids))
+
+    def get_all_rotations(self) -> list[tuple[int, GridStore, TestVariation]]:
         """
         Generate all 4 rotations of this test case.
 
         Returns:
-            List of (rotation_degrees, grids, variation) tuples
+            List of (rotation_degrees, store, variation) tuples
         """
         results = []
 
-        current_grids = self.grids
+        current_store = self.store
         current_variations = self.variations
 
         for rotation in [0, 90, 180, 270]:
             for variation in current_variations:
-                results.append((rotation, current_grids, variation))
+                results.append((rotation, current_store, variation))
 
             if rotation < 270:  # Don't rotate after the last iteration
-                # Get dimensions BEFORE rotation for position calculation
-                old_dims = get_all_dimensions(current_grids)
-                # Rotate for next iteration (but don't mutate original)
-                current_grids = rotate_grids_90(current_grids)
-                # Rotate all variations using OLD dimensions (create new list)
-                current_variations = [v.rotate_90(old_dims) for v in current_variations]
+                # Rotate store for next iteration (using current store BEFORE rotation)
+                old_store = current_store
+                current_store = rotate_grid_store_90(current_store)
+                # Rotate all variations using OLD store (create new list)
+                current_variations = [v.rotate_90(old_store) for v in current_variations]
 
         return results
 
@@ -215,7 +225,7 @@ class RotationalTestCase:
 
 def run_rotational_test(
     test_case: RotationalTestCase,
-    operation: Callable[[GridStore, CellPosition, Direction, RuleSet], GridStore | object],
+    operations: list[Callable[[GridStore, CellPosition, Direction, RuleSet], GridStore | object]],
     rules: RuleSet | None = None,
     assert_fn: Callable[[GridStore, list[tuple[str, int, int, str]]], None] | None = None
 ) -> None:
@@ -236,39 +246,37 @@ def run_rotational_test(
 
     rotations = test_case.get_all_rotations()
 
-    for rotation, grids, variation in rotations:
-        # Parse the rotated grids
-        store = parse_grids(grids)
+    for operation in operations:
+        for rotation, store, variation in rotations:
+            # Execute the operation on the rotated store
+            start = CellPosition(variation.start_grid, variation.start_row, variation.start_col)
+            result = operation(store, start, variation.direction, rules)
 
-        # Execute the operation
-        start = CellPosition(variation.start_grid, variation.start_row, variation.start_col)
-        result = operation(store, start, variation.direction, rules)
+            # Check if expecting failure
+            if isinstance(variation.expected, ExpectedFailure):
+                # Expecting a failure
+                assert isinstance(result, PushFailure), (
+                    f"{test_case.name} at {rotation}° - {variation.description}: "
+                    f"Expected failure with reason '{variation.expected.reason}', but operation succeeded"
+                )
+                assert result.reason == variation.expected.reason, (
+                    f"{test_case.name} at {rotation}° - {variation.description}: "
+                    f"Expected failure reason '{variation.expected.reason}', got '{result.reason}'"
+                )
+            else:
+                # Expecting success - verify it's a successful result (dict)
+                assert isinstance(result, dict), (
+                    f"{test_case.name} at {rotation}° - {variation.description}: "
+                    f"Operation failed with {result}"
+                )
 
-        # Check if expecting failure
-        if isinstance(variation.expected, ExpectedFailure):
-            # Expecting a failure
-            assert isinstance(result, PushFailure), (
-                f"{test_case.name} at {rotation}° - {variation.description}: "
-                f"Expected failure with reason '{variation.expected.reason}', but operation succeeded"
-            )
-            assert result.reason == variation.expected.reason, (
-                f"{test_case.name} at {rotation}° - {variation.description}: "
-                f"Expected failure reason '{variation.expected.reason}', got '{result.reason}'"
-            )
-        else:
-            # Expecting success - verify it's a successful result (dict)
-            assert isinstance(result, dict), (
-                f"{test_case.name} at {rotation}° - {variation.description}: "
-                f"Operation failed with {result}"
-            )
-
-            # Run assertions
-            try:
-                assert_fn(result, variation.expected)
-            except AssertionError as e:
-                raise AssertionError(
-                    f"{test_case.name} at {rotation}° - {variation.description}: {e}"
-                ) from e
+                # Run assertions
+                try:
+                    assert_fn(result, variation.expected)
+                except AssertionError as e:
+                    raise AssertionError(
+                        f"{test_case.name} at {rotation}° - {variation.description}: {e}"
+                    ) from e
 
 
 def default_assert_cells(

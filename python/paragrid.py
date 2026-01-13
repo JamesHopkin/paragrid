@@ -12,13 +12,20 @@ from fractions import Fraction
 from math import lcm
 from typing import Callable, Iterator, Union, assert_never
 
-from depth_aware_entry import (
-    calculate_exit_fraction,
-    calculate_entry_position_equivalent_point,
-    calculate_standard_entry_position,
-    should_use_equivalent_point,
+from ancestor_entry import (
+    compute_exit_ancestor_fraction,
+    compute_entry_from_ancestor_fraction,
 )
-from grid_types import Direction
+from grid_parser import parse_grids, parse_grids_concise
+from grid_types import (
+    Cell,
+    Concrete,
+    Direction,
+    Empty,
+    Grid,
+    GridStore,
+    Ref,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +64,7 @@ __all__ = [
     # Functions
     "analyze",
     "parse_grids",
+    "parse_grids_concise",
     "push",
     "pull",
     "push_simple",
@@ -114,156 +122,6 @@ class RuleSet:
     ref_strategy: RefStrategyOrder = RefStrategy.DEFAULT
 
 
-# =============================================================================
-# Data Structures: Grid Definition
-# =============================================================================
-
-
-@dataclass(frozen=True)
-class Empty:
-    """An empty cell."""
-
-    pass
-
-
-@dataclass(frozen=True)
-class Concrete:
-    """A cell containing a concrete value."""
-
-    id: str
-
-
-@dataclass(frozen=True)
-class Ref:
-    """A cell referencing another grid."""
-
-    grid_id: str
-    is_primary: bool | None = None  # None = auto-determine, True/False = explicit
-
-
-Cell = Empty | Concrete | Ref
-
-
-@dataclass(frozen=True)
-class Grid:
-    """A 2D grid of cells."""
-
-    id: str
-    cells: tuple[tuple[Cell, ...], ...]
-
-    @property
-    def rows(self) -> int:
-        return len(self.cells)
-
-    @property
-    def cols(self) -> int:
-        return len(self.cells[0]) if self.cells else 0
-
-
-GridStore = dict[str, Grid]
-
-
-def parse_grids(definitions: dict[str, str]) -> GridStore:
-    """
-    Parse grid definitions from a compact string format.
-
-    Format:
-    - Rows separated by |
-    - Cells separated by spaces
-    - Cell type determined by FIRST CHARACTER (allows multi-character content/refs):
-      * First char is digit (0-9): Concrete cell with entire string as content
-        Examples: "1" -> Concrete("1"), "123abc" -> Concrete("123abc")
-      * First char is letter (a-zA-Z): Ref cell with entire string as grid_id (auto-determined primary)
-        Examples: "A" -> Ref("A"), "Main" -> Ref("Main"), "Grid2" -> Ref("Grid2")
-      * First char is '*': Primary ref, remainder is grid_id (must have at least 1 char after *)
-        Examples: "*A" -> Ref("A", is_primary=True), "*Main" -> Ref("Main", is_primary=True)
-      * First char is '~': Secondary ref, remainder is grid_id (must have at least 1 char after ~)
-        Examples: "~A" -> Ref("A", is_primary=False), "~Grid2" -> Ref("Grid2", is_primary=False)
-      * Underscore only (_): Empty cell
-      * Empty string (from multiple adjacent spaces): Empty cell
-
-    Example:
-        {
-            "main": "123 abc|xyz *Main",
-            "Main": "5|6"
-        }
-        Creates:
-        - Grid "main": 2x2 with [Concrete("123"), Concrete("abc")], [Concrete("xyz"), Ref("Main", is_primary=True)]
-        - Grid "Main": 2x1 with [Concrete("5")], [Concrete("6")]
-
-    Args:
-        definitions: Dict mapping grid_id to string definition
-
-    Returns:
-        GridStore with parsed grids
-    """
-    store: GridStore = {}
-
-    for grid_id, definition in definitions.items():
-        # Split into rows
-        row_strings = definition.split("|")
-        rows: list[tuple[Cell, ...]] = []
-
-        for row_idx, row_str in enumerate(row_strings):
-            # Split by single space to get individual cells
-            # Multiple spaces = multiple empty cells
-            cell_strings = row_str.split(" ")
-            cells: list[Cell] = []
-
-            for col_idx, cell_str in enumerate(cell_strings):
-                if not cell_str:  # Empty string from split = Empty cell
-                    cells.append(Empty())
-                elif cell_str == "_":  # Explicit empty marker
-                    cells.append(Empty())
-                elif cell_str[0].isdigit():  # First char is digit = Concrete
-                    cells.append(Concrete(cell_str))
-                elif cell_str[0].isalpha():  # First char is letter = Ref (auto-determined)
-                    cells.append(Ref(cell_str, is_primary=None))
-                elif cell_str.startswith("*") and len(cell_str) >= 2:
-                    # *... = Primary ref (rest is grid_id)
-                    cells.append(Ref(cell_str[1:], is_primary=True))
-                elif cell_str.startswith("~") and len(cell_str) >= 2:
-                    # ~... = Secondary ref (rest is grid_id)
-                    cells.append(Ref(cell_str[1:], is_primary=False))
-                else:
-                    # Provide detailed error information
-                    error_msg = (
-                        f"Invalid cell string: '{cell_str}'\n"
-                        f"  Grid: '{grid_id}'\n"
-                        f"  Row {row_idx}: \"{row_str}\"\n"
-                        f"  Position: column {col_idx}\n"
-                        f"  Valid formats:\n"
-                        f"    - Digit start (0-9...): Concrete cell (e.g., '1', '123abc')\n"
-                        f"    - Letter start (a-zA-Z...): Ref cell (e.g., 'A', 'Main')\n"
-                        f"    - '*' prefix: Primary ref (e.g., '*A', '*Main')\n"
-                        f"    - '~' prefix: Secondary ref (e.g., '~A', '~Main')\n"
-                        f"    - '_': Empty cell\n"
-                        f"    - Empty string (multiple spaces): Empty cell"
-                    )
-                    raise ValueError(error_msg)
-
-            rows.append(tuple(cells))
-
-        # Validate all rows have same length
-        if rows:
-            cols = len(rows[0])
-            mismatched = [(i, len(row)) for i, row in enumerate(rows) if len(row) != cols]
-            if mismatched:
-                error_msg = (
-                    f"Inconsistent row lengths in grid '{grid_id}'\n"
-                    f"  Expected: {cols} columns (from row 0)\n"
-                    f"  Mismatched rows:\n"
-                )
-                for row_idx, actual_cols in mismatched:
-                    error_msg += f"    Row {row_idx}: {actual_cols} columns - \"{row_strings[row_idx]}\"\n"
-                error_msg += f"  All rows must have the same number of cells"
-                raise ValueError(error_msg)
-
-        # Create Grid
-        grid = Grid(grid_id, tuple(rows))
-        store[grid_id] = grid
-
-    return store
 
 
 # =============================================================================
@@ -365,13 +223,18 @@ def analyze(
     # Helper function to find ref position for depth -1 offset computation
     def find_focus_ref_position() -> tuple[int, int] | None:
         """Find the position of the ref cell that leads toward the focused grid."""
-        # Invariant: current_path is always initialized (lines 321-324)
-        # focus_path is checked by caller (compute_focus_metadata line 348)
+        # Invariant: current_path is always initialized (lines 218-221)
+        # focus_path is checked by caller (compute_focus_metadata line 246)
         assert focus_path is not None and current_path is not None, "unreachable: paths initialized before helper call"
-        if len(current_path) >= len(focus_path):
-            return None
-        if focus_path[: len(current_path)] != current_path:
-            return None
+
+        # Caller guarantees len(current_path) < len(focus_path) (line 253)
+        if len(current_path) >= len(focus_path):  # pragma: no cover
+            assert_never("Unreachable: caller checks len(current_path) < len(focus_path)")
+
+        # Caller guarantees focus_path[:len(current_path)] == current_path (line 255)
+        if focus_path[: len(current_path)] != current_path:  # pragma: no cover
+            assert_never("Unreachable: caller checks paths match as prefix")
+
         # We're an ancestor - find the ref to the next grid in focus_path
         next_grid_id = focus_path[len(current_path)]
         for r, row in enumerate(grid.cells):
@@ -514,11 +377,9 @@ class Navigator:
         self.direction = direction
         self.visited_grids: set[str] = set()  # For exit cycle detection
 
-        # Depth-aware entry tracking
-        self.depth: int = 0  # enters - exits
+        # Ancestor-based entry tracking
+        self.exit_grid_id: str | None = None  # Grid we exited from (for ancestor mapping)
         self.exit_position: tuple[int, int] | None = None  # (row, col) when last exit occurred
-        self.exit_depth: int | None = None  # depth at which last exit occurred
-        self.exit_fraction: float | None = None  # fractional position (0.0-1.0) along edge when exiting
 
         # Direction deltas
         self.deltas = {
@@ -532,11 +393,9 @@ class Navigator:
         """Create a copy for backtracking."""
         nav = Navigator(self.store, self.current, self.direction)
         nav.visited_grids = self.visited_grids.copy()
-        # Copy depth tracking state
-        nav.depth = self.depth
+        # Copy ancestor-based entry state
+        nav.exit_grid_id = self.exit_grid_id
         nav.exit_position = self.exit_position
-        nav.exit_depth = self.exit_depth
-        nav.exit_fraction = self.exit_fraction
         return nav
 
     def try_advance(self) -> bool:
@@ -557,16 +416,9 @@ class Navigator:
         # Check bounds
         if next_row < 0 or next_row >= grid.rows or next_col < 0 or next_col >= grid.cols:
             # Hit edge - try to exit through cascading parent grids
-            # Capture exit position and fractional position for depth-aware entry
+            # Capture exit position and grid for ancestor-based entry
+            self.exit_grid_id = self.current.grid_id
             self.exit_position = (self.current.row, self.current.col)
-            self.exit_depth = self.depth
-            self.exit_fraction = calculate_exit_fraction(
-                self.direction,
-                self.current.row,
-                self.current.col,
-                grid.rows,
-                grid.cols,
-            )
 
             # Use iterative approach with cycle detection
             visited_exit_positions: set[tuple[str, int, int]] = set()
@@ -576,9 +428,6 @@ class Navigator:
                 primary_ref = find_primary_ref(self.store, current_grid_id)
                 if primary_ref is None:
                     return False  # Hit root edge
-
-                # Exit through primary ref - decrement depth
-                self.depth -= 1
 
                 parent_grid_id, parent_row, parent_col = primary_ref
 
@@ -619,28 +468,67 @@ class Navigator:
     def try_enter(self, rules: RuleSet) -> bool:
         """
         Try to enter the Ref at current position from the current direction.
-        Increments depth on successful entry and passes depth-aware entry parameters.
+        Uses ancestor-based entry mapping when exit info is available.
         Returns False if can't enter.
         """
         cell = get_cell(self.store, self.current)
         assert isinstance(cell, Ref)
 
-        # Pass depth information for depth-aware entry
-        entry_pos = enter(
-            self.store,
-            cell.grid_id,
-            self.direction,
-            rules,
-            current_depth=self.depth + 1,  # What depth will be after entering
-            exit_position=self.exit_position,
-            exit_depth=self.exit_depth,
-            exit_fraction=self.exit_fraction,
-        )
+        # Use ancestor-based entry if we have exit information
+        if self.exit_grid_id is not None and self.exit_position is not None:
+            # Current position is the Ref cell - its grid is the common ancestor
+            ancestor_grid_id = self.current.grid_id
+
+            # Determine dimension based on direction
+            # E/W movement: position varies along N-S axis (rows)
+            # N/S movement: position varies along E-W axis (cols)
+            dimension_attr = 'rows' if self.direction in (Direction.E, Direction.W) else 'cols'
+            exit_index = self.exit_position[0] if dimension_attr == 'rows' else self.exit_position[1]
+
+            # Map exit position up to ancestor
+            exit_fraction, _ = compute_exit_ancestor_fraction(
+                self.store,
+                find_primary_ref,
+                self.exit_grid_id,
+                exit_index,
+                dimension_attr,
+                stop_at_ancestor=ancestor_grid_id,
+            )
+
+            # Map down from ancestor to target grid
+            entry_index = compute_entry_from_ancestor_fraction(
+                self.store,
+                find_primary_ref,
+                cell.grid_id,
+                exit_fraction,
+                dimension_attr,
+                ancestor_grid_id=ancestor_grid_id,
+            )
+
+            # Construct entry position based on direction
+            if self.direction == Direction.E:
+                entry_row, entry_col = entry_index, 0
+            elif self.direction == Direction.W:
+                target_grid = self.store[cell.grid_id]
+                entry_row, entry_col = entry_index, target_grid.cols - 1
+            elif self.direction == Direction.S:
+                entry_row, entry_col = 0, entry_index
+            else:  # Direction.N
+                target_grid = self.store[cell.grid_id]
+                entry_row, entry_col = target_grid.rows - 1, entry_index
+
+            entry_pos = CellPosition(cell.grid_id, entry_row, entry_col)
+        else:
+            # Fall back to standard middle-of-edge entry
+            entry_pos = enter(
+                self.store,
+                cell.grid_id,
+                self.direction,
+                rules,
+            )
 
         self.visited_grids.add(cell.grid_id)
         self.current = entry_pos
-        # Increment depth after successful entry
-        self.depth += 1
         return True
 
     def enter(self, rules: RuleSet) -> None:
@@ -720,20 +608,9 @@ def enter(
     grid_id: str,
     direction: Direction,
     rules: RuleSet,
-    current_depth: int | None = None,
-    exit_position: tuple[int, int] | None = None,
-    exit_depth: int | None = None,
-    exit_fraction: float | None = None,
 ) -> CellPosition:
     """
-    Determine entry point when entering a grid via a Ref.
-
-    Returns the CellPosition to enter at, or None to deny entry.
-
-    Entry Strategy:
-    - If current_depth == exit_depth (entering at same depth as last exit):
-      Use equivalent point transfer - preserve fractional position along edge
-    - Otherwise: Use standard middle-of-edge entry
+    Determine entry point when entering a grid via a Ref (standard middle-of-edge).
 
     Standard Entry Convention:
     - East (from left): (rows // 2, 0) — middle of left edge
@@ -746,32 +623,24 @@ def enter(
         grid_id: ID of the grid to enter
         direction: Direction of entry
         rules: RuleSet governing entry behavior (currently unused)
-        current_depth: Current depth (enters - exits), for depth-aware entry
-        exit_position: (row, col) of last exit position, for debugging/logging
-        exit_depth: Depth at which last exit occurred
-        exit_fraction: Fractional position (0.0-1.0) along edge when exiting
 
     Returns:
-        CellPosition for entry point, or None to deny entry
+        CellPosition for entry point
     """
-    # Get the target grid
-    assert grid_id in store
-
     grid = store[grid_id]
     rows = grid.rows
     cols = grid.cols
 
-    # Check if we should use depth-aware equivalent point transfer
-    if should_use_equivalent_point(current_depth, exit_depth, exit_fraction):
-        # Use equivalent point transfer - preserve fractional position
-        assert exit_fraction is not None  # Type narrowing: guaranteed by should_use_equivalent_point
-        entry_row, entry_col = calculate_entry_position_equivalent_point(
-            direction, exit_fraction, rows, cols
-        )
-        return CellPosition(grid_id, entry_row, entry_col)
-
     # Standard middle-of-edge entry
-    entry_row, entry_col = calculate_standard_entry_position(direction, rows, cols)
+    if direction == Direction.E:
+        entry_row, entry_col = rows // 2, 0
+    elif direction == Direction.W:
+        entry_row, entry_col = rows // 2, cols - 1
+    elif direction == Direction.S:
+        entry_row, entry_col = 0, cols // 2
+    else:  # Direction.N
+        entry_row, entry_col = rows - 1, cols // 2
+
     return CellPosition(grid_id, entry_row, entry_col)
 
 def push(
