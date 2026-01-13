@@ -715,6 +715,19 @@ def get_cell(store: GridStore, pos: CellPosition) -> Cell:
     return grid.cells[pos.row][pos.col]
 
 
+def _strategy_to_str(strat: RefStrategyType) -> str:
+    """Convert RefStrategyType to string for internal use."""
+    if strat == RefStrategyType.PORTAL:
+        return "enter"
+    elif strat == RefStrategyType.SOLID:
+        return "solid"
+    elif strat == RefStrategyType.SWALLOW:
+        return "swallow"
+    else:  # pragma: no cover
+        # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
+        assert_never(strat)
+
+
 def enter(
     store: GridStore,
     grid_id: str,
@@ -805,18 +818,6 @@ def push(
         New GridStore with pushed contents if successful, PushFailure with reason if push fails
     """
 
-    def strategy_to_str(strat: RefStrategyType) -> str:
-        """Convert RefStrategyType to string for internal use."""
-        if strat == RefStrategyType.PORTAL:
-            return "enter"
-        elif strat == RefStrategyType.SOLID:
-            return "solid"
-        elif strat == RefStrategyType.SWALLOW:
-            return "swallow"
-        else:  # pragma: no cover
-            # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
-            assert_never(strat)
-
     def make_new_state(
         path: list[CellPosition], nav: Navigator, visited: set[tuple[str, int, int]]
     ) -> State | str | PushFailure:
@@ -858,7 +859,7 @@ def push(
 
         # Determine available strategies based on rules order
         for strat_type in rules.ref_strategy:
-            strat = strategy_to_str(strat_type)
+            strat = _strategy_to_str(strat_type)
             if strat == "solid":
                 # Check if we can advance (peek ahead)
                 test_nav = nav.clone()
@@ -1095,19 +1096,6 @@ def push_simple(
     Returns:
         New GridStore with pushed contents if successful, PushFailure with reason if push fails
     """
-
-    def strategy_to_str(strat: RefStrategyType) -> str:
-        """Convert RefStrategyType to string for internal use."""
-        if strat == RefStrategyType.PORTAL:
-            return "enter"
-        elif strat == RefStrategyType.SOLID:
-            return "solid"
-        elif strat == RefStrategyType.SWALLOW:
-            return "swallow"
-        else:  # pragma: no cover
-            # Unreachable: RefStrategyType enum only has PORTAL/SOLID/SWALLOW
-            assert_never(strat)
-
     # Check if starting cell has stop tag - stop-tagged cells cannot be pushed
     start_cell = get_cell(store, start)
     if tag_fn is not None and "stop" in tag_fn(start_cell):
@@ -1115,14 +1103,17 @@ def push_simple(
 
     # Initialize navigator
     nav = Navigator(store, start, direction)
+
+    # Initialize path and visited tracking
     path: list[CellPosition] = [start]
     visited: set[tuple[str, int, int]] = {(start.grid_id, start.row, start.col)}
-    depth = 0
 
     # Try to advance to first position
     if not nav.try_advance():
         return PushFailure("BLOCKED", start, "Cannot advance from start position (hit edge)")
 
+    # Build path using first applicable strategy at each step
+    depth = 0
     while depth < max_depth:
         depth += 1
 
@@ -1154,17 +1145,19 @@ def push_simple(
             else:
                 return PushFailure("PATH_CYCLE", nav.current, "Path cycled to non-start position")
 
+        # Add current position to visited set
         visited.add(current_key)
 
         # Get S (source) and T (target)
-        S_pos = path[-1] if path else None
-        S_cell = get_cell(store, S_pos) if S_pos else None
+        assert path  # Path always contains at least start
+        S_pos = path[-1]
+        S_cell = get_cell(store, S_pos)
         T_cell = current_cell
 
         # Determine first applicable strategy based on rules order
         selected_strategy = None
         for strat_type in rules.ref_strategy:
-            strat = strategy_to_str(strat_type)
+            strat = _strategy_to_str(strat_type)
             if strat == "solid":
                 # Check if we can advance (peek ahead)
                 test_nav = nav.clone()
@@ -1174,7 +1167,7 @@ def push_simple(
             elif strat == "enter" and isinstance(T_cell, Ref):
                 selected_strategy = strat
                 break
-            elif strat == "swallow" and S_cell and isinstance(S_cell, Ref):
+            elif strat == "swallow" and isinstance(S_cell, Ref):
                 selected_strategy = strat
                 break
 
@@ -1197,7 +1190,8 @@ def push_simple(
             nav.advance()
             nav.enter(rules)
 
-    return PushFailure("MAX_DEPTH", nav.current, f"Exceeded maximum depth of {max_depth}")
+    # Unreachable with reasonable max_depth: should hit Empty, stop tag, or cycle
+    return PushFailure("MAX_DEPTH", nav.current, f"Exceeded maximum depth of {max_depth}")  # pragma: no cover
 
 
 def apply_push(
