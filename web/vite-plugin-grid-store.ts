@@ -14,6 +14,12 @@ export function gridStorePlugin(): Plugin {
     timestamp: Date.now(),
   };
 
+  // Log initial grid store on server start
+  console.log('\n🚀 Grid Store Initialized (v' + state.version + ')');
+  console.log('Timestamp:', new Date(state.timestamp).toISOString());
+  console.log('Grid Data:', state.grids);
+  console.log('---\n');
+
   return {
     name: 'vite-plugin-grid-store',
     configureServer(server: ViteDevServer) {
@@ -36,6 +42,11 @@ export function gridStorePlugin(): Plugin {
 
         if (req.method === 'GET' && req.url === '/api/grids') {
           // Return current grid state with version
+          console.log('\n📤 Grid Store Requested (v' + state.version + ')');
+          console.log('Timestamp:', new Date(state.timestamp).toISOString());
+          console.log('Grid Data:', state.grids);
+          console.log('---\n');
+
           res.setHeader('Content-Type', 'application/json');
           res.statusCode = 200;
           res.end(JSON.stringify({

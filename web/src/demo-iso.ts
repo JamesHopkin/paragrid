@@ -1976,20 +1976,70 @@ function startServerPolling(reloadCallback: () => void, intervalMs: number = 200
 async function initDemo() {
   const config = parseConfig();
 
-  // Try to load from server first
-  const serverData = await loadGridsFromServer();
+  // Check if scene parameter was explicitly provided in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const hasSceneParam = urlParams.has('scene');
+
+  // If scene parameter is present, always use that scene and push to server
+  // Otherwise, try to load from server first
   let store: GridStore;
 
-  if (serverData && Object.keys(serverData.grids).length > 0) {
-    // Use server data
-    console.log(`✅ Loaded grids from server (v${serverData.version})`);
-    currentServerVersion = serverData.version;
-    store = parseGrids(serverData.grids);
-  } else {
-    // Fall back to default grids
-    console.log('📦 Using default built-in grids');
+  if (hasSceneParam) {
+    // Use the requested scene and push to server
+    console.log(`📦 Loading built-in scene: ${config.scene}`);
     const sceneData = (GRIDS as any)[config.scene] || (GRIDS as any)[DEFAULT_GRID_ID]!;
     store = parseGrids(sceneData);
+
+    // Push scene data to server so it appears in server console
+    try {
+      const response = await fetch('/api/grids', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ grids: sceneData }),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        currentServerVersion = result.version;
+        console.log(`📤 Pushed scene to server (v${result.version})`);
+      }
+    } catch (error) {
+      console.warn('Failed to push scene to server:', error);
+    }
+  } else {
+    // No scene parameter - try to load from server first
+    const serverData = await loadGridsFromServer();
+
+    if (serverData && Object.keys(serverData.grids).length > 0) {
+      // Use server data
+      console.log(`✅ Loaded grids from server (v${serverData.version})`);
+      currentServerVersion = serverData.version;
+      store = parseGrids(serverData.grids);
+    } else {
+      // Fall back to default grids
+      console.log(`📦 Using default built-in scene: ${DEFAULT_GRID_ID}`);
+      const sceneData = (GRIDS as any)[DEFAULT_GRID_ID]!;
+      store = parseGrids(sceneData);
+
+      // Push initial scene data to server so it appears in server console
+      try {
+        const response = await fetch('/api/grids', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ grids: sceneData }),
+        });
+        if (response.ok) {
+          const result = await response.json();
+          currentServerVersion = result.version;
+          console.log(`📤 Pushed default scene to server (v${result.version})`);
+        }
+      } catch (error) {
+        console.warn('Failed to push initial scene to server:', error);
+      }
+    }
   }
 
   // If this is a reload (storeRef and demo exist), just update the store reference
