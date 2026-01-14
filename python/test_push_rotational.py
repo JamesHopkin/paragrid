@@ -266,15 +266,6 @@ class TestPushRotational:
 
         run_rotational_test(test, [push, push_simple])
 
-    def test_exit_enter(self) -> None:
-        test = RotationalTestCase(
-            name="exit_enter",
-            grids = 'm:AB\na:1\nb:_',
-            variations=[TestVariation(start_grid="a", expected=[("b", 0, 0, "1")])]
-        )
-
-        run_rotational_test(test, [push, push_simple])
-
 class TestPushRotationalMultiVariation:
     """Tests with multiple variations per rotational case."""
 
@@ -315,6 +306,69 @@ class TestPushRotationalMultiVariation:
 
         run_rotational_test(test, [push, push_simple])
 
+class TestTranfer:
+
+    def test_exit_enter(self) -> None:
+        test = RotationalTestCase(
+            name="exit_enter",
+            grids = 'm:AB\na:1\nb:_',
+            variations=[TestVariation(start_grid="a", expected=[("b", 0, 0, "1")])]
+        )
+
+        run_rotational_test(test, [push, push_simple])
+
+    def test_scaled_transfer(self) -> None:
+        """Test that padding doesn't affect position transfer between grids."""
+
+        # Original: 3 rows in main, b/d have 2 cells
+        test = RotationalTestCase(
+            name="scaled_transfer_original",
+            grids = {"main":"_ 9 _|_ *b *d|_ _ _","b":"*c|_","c":"_|1|_","e":"_|_|_|_|_","d":"*e|_"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+        # Variation 1: Minimal padding - 1 row in main, b/d have 1 cell
+        test = RotationalTestCase(
+            name="scaled_transfer_minimal",
+            grids = {"main":"_ *b *d|_ _ _","b":"*c","c":"_|1|_","e":"_|_|_|_|_","d":"*e"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+        # Variation 2: No padding in main (2 rows), b/d have 2 cells
+        test = RotationalTestCase(
+            name="scaled_transfer_no_main_padding",
+            grids = {"main":"_ *b *d|_ _ _","b":"*c|_","c":"_|1|_","e":"_|_|_|_|_","d":"*e|_"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+        # Variation 3: More padding - 5 rows in main, b/d have 3 cells
+        test = RotationalTestCase(
+            name="scaled_transfer_more_padding",
+            grids = {"main":"_ 9 _|_ 9 _|_ *b *d|_ _ _|_ _ _","b":"_|*c|_","c":"_|1|_","e":"_|_|_|_|_","d":"_|*e|_"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+        # Variation 4: Even more padding - 7 rows in main, b/d have 4 cells
+        test = RotationalTestCase(
+            name="scaled_transfer_max_padding",
+            grids = {"main":"_ 9 _|_ 9 _|_ 9 _|_ *b *d|_ _ _|_ _ _|_ _ _","b":"_|_|*c|_","c":"_|1|_","e":"_|_|_|_|_","d":"_|_|*e|_"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+        # Variation 5: Asymmetric padding in main (refs not in middle), b/d have 3 cells
+        test = RotationalTestCase(
+            name="scaled_transfer_asymmetric",
+            grids = {"main":"_ 9 _|_ *b *d|_ _ _|_ _ _|_ _ _","b":"_|*c|_","c":"_|1|_","e":"_|_|_|_|_","d":"_|*e|_"},
+            variations=[TestVariation(start_grid="c", start_row=1, expected=[("e", 2, 0, "1")])]
+        )
+        run_rotational_test(test, [push, push_simple])
+
+    
 
 if __name__ == "__main__":
     # Run the tests

@@ -229,11 +229,11 @@ def analyze(
 
         # Caller guarantees len(current_path) < len(focus_path) (line 253)
         if len(current_path) >= len(focus_path):  # pragma: no cover
-            assert_never("Unreachable: caller checks len(current_path) < len(focus_path)")
+            assert False, "Unreachable: caller checks len(current_path) < len(focus_path)"
 
         # Caller guarantees focus_path[:len(current_path)] == current_path (line 255)
         if focus_path[: len(current_path)] != current_path:  # pragma: no cover
-            assert_never("Unreachable: caller checks paths match as prefix")
+            assert False, "Unreachable: caller checks paths match as prefix"
 
         # We're an ancestor - find the ref to the next grid in focus_path
         next_grid_id = focus_path[len(current_path)]
@@ -380,6 +380,7 @@ class Navigator:
         # Ancestor-based entry tracking
         self.exit_grid_id: str | None = None  # Grid we exited from (for ancestor mapping)
         self.exit_position: tuple[int, int] | None = None  # (row, col) when last exit occurred
+        self.ancestor_grid_id_for_entry: str | None = None  # Ancestor grid where we landed after exit
 
         # Direction deltas
         self.deltas = {
@@ -396,6 +397,7 @@ class Navigator:
         # Copy ancestor-based entry state
         nav.exit_grid_id = self.exit_grid_id
         nav.exit_position = self.exit_position
+        nav.ancestor_grid_id_for_entry = self.ancestor_grid_id_for_entry
         return nav
 
     def try_advance(self) -> bool:
@@ -452,11 +454,17 @@ class Navigator:
                 ):
                     # Successfully exited to valid position
                     self.current = CellPosition(parent_grid_id, exit_row, exit_col)
+                    # Remember this ancestor for entry calculations
+                    self.ancestor_grid_id_for_entry = parent_grid_id
                     return True
 
                 # Cascading exit - continue from parent
                 current_grid_id = parent_grid_id
 
+        # Normal advance (didn't hit edge) - clear exit info since it's no longer relevant
+        self.exit_grid_id = None
+        self.exit_position = None
+        self.ancestor_grid_id_for_entry = None
         self.current = CellPosition(self.current.grid_id, next_row, next_col)
         return True
 
@@ -476,8 +484,9 @@ class Navigator:
 
         # Use ancestor-based entry if we have exit information
         if self.exit_grid_id is not None and self.exit_position is not None:
-            # Current position is the Ref cell - its grid is the common ancestor
-            ancestor_grid_id = self.current.grid_id
+            # Use the ancestor grid where we landed after exit (not current.grid_id which changes with portals)
+            assert self.ancestor_grid_id_for_entry is not None, "ancestor_grid_id_for_entry must be set when exit info is available"
+            ancestor_grid_id = self.ancestor_grid_id_for_entry
 
             # Determine dimension based on direction
             # E/W movement: position varies along N-S axis (rows)

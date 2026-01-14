@@ -9,7 +9,7 @@ import type { GridStore } from '../core/types.js';
 import { isRef } from '../core/types.js';
 import type { RuleSet } from '../operations/rules.js';
 import { getCellAtPosition, findPrimaryRef } from '../utils/immutable.js';
-import { tryEnter, type DepthAwareEntryOptions } from './try-enter.js';
+import { tryEnter, type AncestorBasedEntryOptions } from './try-enter.js';
 
 /**
  * Type of transition that occurred during the last navigation operation.
@@ -51,17 +51,14 @@ export class Navigator {
   /** For 'enter' transitions, whether entry was via non-primary reference */
   private lastEnterViaNonPrimary: boolean | null;
 
-  /** Depth-aware entry tracking: net level of nesting (enters - exits) */
-  private depth: number;
+  /** Ancestor-based entry tracking: Grid we exited from (for ancestor mapping) */
+  private exitGridId: string | null;
 
-  /** Depth-aware entry tracking: (row, col) when last exit occurred */
+  /** Ancestor-based entry tracking: (row, col) when last exit occurred */
   private exitPosition: [number, number] | null;
 
-  /** Depth-aware entry tracking: depth at which last exit occurred */
-  private exitDepth: number | null;
-
-  /** Depth-aware entry tracking: fractional position (0.0-1.0) along edge when exiting */
-  private exitFraction: number | null;
+  /** Ancestor-based entry tracking: Ancestor grid where we landed after exit */
+  private ancestorGridIdForEntry: string | null;
 
   constructor(store: GridStore, position: CellPosition, direction: Direction) {
     this.store = store;
@@ -71,11 +68,10 @@ export class Navigator {
     this.lastTransitionType = null;
     this.lastEnterViaNonPrimary = null;
 
-    // Depth-aware entry tracking
-    this.depth = 0;
+    // Ancestor-based entry tracking
+    this.exitGridId = null;
     this.exitPosition = null;
-    this.exitDepth = null;
-    this.exitFraction = null;
+    this.ancestorGridIdForEntry = null;
 
     this.deltas = {
       [Direction.N]: [-1, 0],
@@ -109,11 +105,10 @@ export class Navigator {
     nav.visitedGrids = new Set(this.visitedGrids);
     nav.lastTransitionType = this.lastTransitionType;
     nav.lastEnterViaNonPrimary = this.lastEnterViaNonPrimary;
-    // Copy depth tracking state
-    nav.depth = this.depth;
+    // Copy ancestor-based entry state
+    nav.exitGridId = this.exitGridId;
     nav.exitPosition = this.exitPosition;
-    nav.exitDepth = this.exitDepth;
-    nav.exitFraction = this.exitFraction;
+    nav.ancestorGridIdForEntry = this.ancestorGridIdForEntry;
     return nav;
   }
 
@@ -139,25 +134,9 @@ export class Navigator {
     // Check bounds
     if (nextRow < 0 || nextRow >= grid.rows || nextCol < 0 || nextCol >= grid.cols) {
       // Hit edge - try to exit through cascading parent grids
-      // Capture exit position and fractional position for depth-aware entry
+      // Capture exit position and grid for ancestor-based entry
+      this.exitGridId = this.current.gridId;
       this.exitPosition = [this.current.row, this.current.col];
-      this.exitDepth = this.depth;
-
-      // Calculate fractional position along the edge (0.0 to 1.0)
-      let edgeDimension: number;
-      let exitOffset: number;
-      if (this.direction === Direction.E || this.direction === Direction.W) {
-        // Exiting east or west: position is along north-south axis (row)
-        edgeDimension = grid.rows;
-        exitOffset = this.current.row;
-      } else {
-        // Exiting north or south: position is along east-west axis (col)
-        edgeDimension = grid.cols;
-        exitOffset = this.current.col;
-      }
-
-      // Calculate fraction (handle single-cell dimension)
-      this.exitFraction = edgeDimension > 1 ? exitOffset / (edgeDimension - 1) : 0.5;
 
       // Use iterative approach with cycle detection
       const visitedExitPositions = new Set<string>();
@@ -168,9 +147,6 @@ export class Navigator {
         if (!primaryRef) {
           return false; // Hit root edge
         }
-
-        // Exit through primary ref - decrement depth
-        this.depth -= 1;
 
         const [parentGridId, parentRow, parentCol] = primaryRef;
 
@@ -197,6 +173,8 @@ export class Navigator {
           // Successfully exited to valid position
           this.current = new CellPosition(parentGridId, exitRow, exitCol);
           this.lastTransitionType = 'exit';
+          // Remember this ancestor for entry calculations
+          this.ancestorGridIdForEntry = parentGridId;
           return true;
         }
 
@@ -205,7 +183,10 @@ export class Navigator {
       }
     }
 
-    // Move within same grid
+    // Normal advance (didn't hit edge) - clear exit info since it's no longer relevant
+    this.exitGridId = null;
+    this.exitPosition = null;
+    this.ancestorGridIdForEntry = null;
     this.current = new CellPosition(this.current.gridId, nextRow, nextCol);
     this.lastTransitionType = 'move';
     return true;
@@ -235,22 +216,21 @@ export class Navigator {
       return false;
     }
 
-    // Pass depth information for depth-aware entry
-    const depthOptions: DepthAwareEntryOptions = {
-      currentDepth: this.depth + 1, // What depth will be after entering
-      exitDepth: this.exitDepth ?? undefined,
-      exitFraction: this.exitFraction ?? undefined,
+    // Pass ancestor-based entry information
+    const ancestorOptions: AncestorBasedEntryOptions = {
+      exitGridId: this.exitGridId ?? undefined,
+      exitPosition: this.exitPosition ?? undefined,
+      // Use the ancestor grid where we landed after exit (not current.gridId which changes with portals)
+      ancestorGridId: this.ancestorGridIdForEntry ?? undefined,
     };
 
-    const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, depthOptions);
+    const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, ancestorOptions);
     if (!entryPos) {
       return false;
     }
 
     this.visitedGrids.add(cell.gridId);
     this.current = entryPos;
-    // Increment depth after successful entry
-    this.depth += 1;
     this.lastTransitionType = 'enter';
     // Capture whether this was via a non-primary reference
     this.lastEnterViaNonPrimary = cell.isPrimary === false;
@@ -295,22 +275,21 @@ export class Navigator {
 
       visitedGrids.add(cell.gridId);
 
-      // Pass depth information for depth-aware entry
-      const depthOptions: DepthAwareEntryOptions = {
-        currentDepth: this.depth + 1,
-        exitDepth: this.exitDepth ?? undefined,
-        exitFraction: this.exitFraction ?? undefined,
+      // Pass ancestor-based entry information
+      const ancestorOptions: AncestorBasedEntryOptions = {
+        exitGridId: this.exitGridId ?? undefined,
+        exitPosition: this.exitPosition ?? undefined,
+        // Use the ancestor grid where we landed after exit (not current.gridId which changes with portals)
+        ancestorGridId: this.ancestorGridIdForEntry ?? undefined,
       };
 
       // Try to enter this Ref (call standalone function directly)
-      const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, depthOptions);
+      const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, ancestorOptions);
       if (!entryPos) {
         return false;
       }
 
       this.current = entryPos;
-      // Increment depth after successful entry
-      this.depth += 1;
     }
   }
 

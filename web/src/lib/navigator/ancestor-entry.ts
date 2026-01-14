@@ -1,0 +1,216 @@
+/**
+ * Ancestor-based entry position calculation.
+ *
+ * Uses floating-point arithmetic to map exit positions through common ancestors,
+ * enabling consistent cross-depth entry without tracking depth state.
+ */
+
+import type { GridStore } from '../core/types.js';
+
+/** Type alias for find_primary_ref function */
+export type FindPrimaryRefFn = (store: GridStore, gridId: string) => [string, number, number] | undefined;
+
+/**
+ * Compute the fractional position of a cell's center along a dimension.
+ *
+ * Cell centers are evenly spaced within [0, 1], positioned at (i+1)/(N+1) for i=0..N-1.
+ *
+ * @param cellIndex - 0-based index of the cell
+ * @param dimension - Total number of cells in this dimension
+ * @returns Number in [0, 1] representing center position
+ *
+ * @example
+ * ```
+ * computeCellCenterFraction(0, 1) // 0.5 (center of only cell)
+ * computeCellCenterFraction(0, 3) // 0.25 (first third)
+ * computeCellCenterFraction(1, 3) // 0.5 (middle)
+ * computeCellCenterFraction(2, 3) // 0.75 (last third)
+ * ```
+ */
+export function computeCellCenterFraction(cellIndex: number, dimension: number): number {
+  return (cellIndex + 1) / (dimension + 1);
+}
+
+/**
+ * Map a fractional position within a child grid through its parent cell.
+ *
+ * The child grid occupies a single cell in the parent, uniformly spanning [i/n, (i+1)/n].
+ * Maps child's [0, 1] space to this parent cell interval.
+ *
+ * @param localFraction - Position within child (0.0 to 1.0)
+ * @param parentCellIndex - Which parent cell contains this child
+ * @param parentDimension - Number of cells in parent along this axis
+ * @returns Number in parent's coordinate system
+ */
+export function mapFractionThroughParent(
+  localFraction: number,
+  parentCellIndex: number,
+  parentDimension: number
+): number {
+  return (localFraction + parentCellIndex) / parentDimension;
+}
+
+/**
+ * Map a position in parent coordinate space to child coordinate space.
+ *
+ * Inverse of mapFractionThroughParent.
+ *
+ * @param parentFraction - Position in parent's coordinate system
+ * @param parentCellIndex - Which parent cell contains the child
+ * @param parentDimension - Number of cells in parent along this axis
+ * @returns Number in child's [0, 1] coordinate system
+ * @throws Error if result is out of valid range [0, 1]
+ */
+export function mapFractionToChild(
+  parentFraction: number,
+  parentCellIndex: number,
+  parentDimension: number
+): number {
+  const local = parentFraction * parentDimension - parentCellIndex;
+
+  // Assert result is in valid range [0, 1]
+  if (local < 0 || local > 1) {
+    throw new Error(
+      `Mapped fraction ${local} out of range [0, 1]. ` +
+        `parentFraction=${parentFraction}, parentCellIndex=${parentCellIndex}, ` +
+        `parentDimension=${parentDimension}`
+    );
+  }
+
+  return local;
+}
+
+/**
+ * Convert a fractional position to a cell index using floor.
+ *
+ * @param fraction - Position in [0, 1]
+ * @param dimension - Number of cells
+ * @returns Cell index (0-based), clamped to [0, dimension-1]
+ */
+export function fractionToCellIndex(fraction: number, dimension: number): number {
+  // Convert fraction to cell index: floor(f * n)
+  // Clamp to valid range to handle f = 1.0 edge case
+  const index = Math.floor(fraction * dimension);
+  return Math.min(index, dimension - 1);
+}
+
+/**
+ * Compute the fractional position of a cell along an edge, in ancestor coordinates.
+ *
+ * Cascades up through parent grids, transforming the position at each level.
+ *
+ * @param store - Grid store
+ * @param findPrimaryRefFn - Function to find primary ref (returns [parentId, row, col] | null)
+ * @param gridId - ID of the grid we're exiting from
+ * @param cellIndex - Cell index (row or col) we're exiting from
+ * @param dimensionAttr - 'rows' or 'cols'
+ * @param stopAtAncestor - Optional ancestor ID to stop at (if undefined, goes to root)
+ * @returns [fraction in ancestor coordinates, ancestor_grid_id]
+ */
+export function computeExitAncestorFraction(
+  store: GridStore,
+  findPrimaryRefFn: FindPrimaryRefFn,
+  gridId: string,
+  cellIndex: number,
+  dimensionAttr: 'rows' | 'cols',
+  stopAtAncestor?: string
+): [number, string] {
+  const currentGrid = store[gridId];
+  const dimension = currentGrid[dimensionAttr];
+  let fraction = computeCellCenterFraction(cellIndex, dimension);
+  let currentGridId = gridId;
+
+  // Cascade up through parents, transforming fraction
+  while (true) {
+    // Stop if we reached the target ancestor
+    if (stopAtAncestor !== undefined && currentGridId === stopAtAncestor) {
+      return [fraction, currentGridId];
+    }
+
+    const ref = findPrimaryRefFn(store, currentGridId);
+    if (!ref) {
+      // Reached root - if we were looking for a specific ancestor, this is an error
+      if (stopAtAncestor !== undefined) {
+        throw new Error(
+          `Grid '${stopAtAncestor}' is not an ancestor of '${gridId}'`
+        );
+      }
+      return [fraction, currentGridId];
+    }
+
+    const [parentGridId, refRow, refCol] = ref;
+    const parentGrid = store[parentGridId];
+    const parentDimension = parentGrid[dimensionAttr];
+
+    // Transform fraction through parent
+    const parentCellIndex = dimensionAttr === 'rows' ? refRow : refCol;
+    fraction = mapFractionThroughParent(fraction, parentCellIndex, parentDimension);
+
+    currentGridId = parentGridId;
+  }
+}
+
+/**
+ * Compute entry cell index by mapping from ancestor fraction down to target grid.
+ *
+ * @param store - Grid store
+ * @param findPrimaryRefFn - Function to find primary ref (returns [parentId, row, col] | null)
+ * @param targetGridId - Grid to enter
+ * @param ancestorFraction - Position in ancestor's coordinate system
+ * @param dimensionAttr - 'rows' or 'cols'
+ * @param ancestorGridId - Optional ancestor grid ID to start from (if undefined, starts from root)
+ * @returns Cell index to enter
+ */
+export function computeEntryFromAncestorFraction(
+  store: GridStore,
+  findPrimaryRefFn: FindPrimaryRefFn,
+  targetGridId: string,
+  ancestorFraction: number,
+  dimensionAttr: 'rows' | 'cols',
+  ancestorGridId?: string
+): number {
+  // Build path from target to root (or specified ancestor)
+  const path: Array<[string, [string, number, number]]> = [];
+  let current = targetGridId;
+
+  while (true) {
+    // Stop if we reached the specified ancestor
+    if (ancestorGridId !== undefined && current === ancestorGridId) {
+      break;
+    }
+
+    const ref = findPrimaryRefFn(store, current);
+    if (!ref) {
+      // Reached root - if we were looking for a specific ancestor, this is an error
+      if (ancestorGridId !== undefined) {
+        throw new Error(
+          `Grid '${ancestorGridId}' is not an ancestor of '${targetGridId}'`
+        );
+      }
+      break;
+    }
+
+    const [parentGridId, refRow, refCol] = ref;
+    path.push([current, ref]);
+    current = parentGridId;
+  }
+
+  // Reverse to go from ancestor down to target
+  path.reverse();
+
+  // Transform fraction down through hierarchy
+  let fraction = ancestorFraction;
+  for (const [gridId, [parentGridId, refRow, refCol]] of path) {
+    const parentGrid = store[parentGridId];
+    const parentDimension = parentGrid[dimensionAttr];
+
+    // Map from parent space to child space
+    const parentCellIndex = dimensionAttr === 'rows' ? refRow : refCol;
+    fraction = mapFractionToChild(fraction, parentCellIndex, parentDimension);
+  }
+
+  // Convert fraction to cell index in target grid
+  const targetGrid = store[targetGridId];
+  const dimension = targetGrid[dimensionAttr];
+  return fractionToCellIndex(fraction, dimension);
+}

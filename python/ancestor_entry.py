@@ -38,42 +38,6 @@ def compute_cell_center_fraction(cell_index: int, dimension: int) -> Fraction:
     return Fraction(cell_index + 1, dimension + 1)
 
 
-def compute_cell_extent(cell_index: int, dimension: int) -> tuple[Fraction, Fraction]:
-    """
-    Compute the extent (start, end) of a cell in continuous [0, 1] coordinate space.
-
-    Cell boundaries are midpoints between adjacent centers, with edges at 0 and 1.
-
-    Args:
-        cell_index: 0-based cell index
-        dimension: Total number of cells
-
-    Returns:
-        (start, end) fractions in [0, 1]
-    """
-    if dimension == 1:
-        return (Fraction(0), Fraction(1))
-
-    # Cell centers are at (i+1)/(N+1)
-    if cell_index == 0:
-        start = Fraction(0)
-    else:
-        # Midpoint between centers at i/(N+1) and (i+1)/(N+1)
-        center_prev = Fraction(cell_index, dimension + 1)
-        center_curr = Fraction(cell_index + 1, dimension + 1)
-        start = (center_prev + center_curr) / 2
-
-    if cell_index == dimension - 1:
-        end = Fraction(1)
-    else:
-        # Midpoint between centers at (i+1)/(N+1) and (i+2)/(N+1)
-        center_curr = Fraction(cell_index + 1, dimension + 1)
-        center_next = Fraction(cell_index + 2, dimension + 1)
-        end = (center_curr + center_next) / 2
-
-    return (start, end)
-
-
 def map_fraction_through_parent(
     local_fraction: Fraction,
     parent_cell_index: int,
@@ -82,8 +46,8 @@ def map_fraction_through_parent(
     """
     Map a fractional position within a child grid through its parent cell.
 
-    The child grid occupies a single cell in the parent. Maps child's [0, 1]
-    space linearly to parent cell's extent.
+    The child grid occupies a single cell in the parent, uniformly spanning [i/n, (i+1)/n].
+    Maps child's [0, 1] space to this parent cell interval.
 
     Args:
         local_fraction: Position within child (0.0 to 1.0)
@@ -93,8 +57,7 @@ def map_fraction_through_parent(
     Returns:
         Fraction in parent's coordinate system
     """
-    cell_start, cell_end = compute_cell_extent(parent_cell_index, parent_dimension)
-    return cell_start + local_fraction * (cell_end - cell_start)
+    return (local_fraction + parent_cell_index) / parent_dimension
 
 
 def map_fraction_to_child(
@@ -115,48 +78,33 @@ def map_fraction_to_child(
     Returns:
         Fraction in child's [0, 1] coordinate system
     """
-    cell_start, cell_end = compute_cell_extent(parent_cell_index, parent_dimension)
-    extent = cell_end - cell_start
+    local = parent_fraction * parent_dimension - parent_cell_index
 
-    if extent == 0:
-        return Fraction(1, 2)  # Single point, map to center
+    # Assert result is in valid range [0, 1]
+    assert 0 <= local <= 1, (
+        f"Mapped fraction {local} out of range [0, 1]. "
+        f"parent_fraction={parent_fraction}, parent_cell_index={parent_cell_index}, "
+        f"parent_dimension={parent_dimension}"
+    )
 
-    local = (parent_fraction - cell_start) / extent
-
-    # Clamp to [0, 1]
-    if local < 0:
-        return Fraction(0)
-    if local > 1:
-        return Fraction(1)
     return local
 
 
-def find_nearest_cell(fraction: Fraction, dimension: int) -> int:
+def fraction_to_cell_index(fraction: Fraction, dimension: int) -> int:
     """
-    Find the cell index whose center is nearest to the given fraction.
+    Convert a fractional position to a cell index using floor.
 
     Args:
         fraction: Position in [0, 1]
         dimension: Number of cells
 
     Returns:
-        Cell index (0-based)
+        Cell index (0-based), clamped to [0, dimension-1]
     """
-    if dimension == 1:
-        return 0
-
-    # Find cell with nearest center
-    best_index = 0
-    best_distance = abs(fraction - compute_cell_center_fraction(0, dimension))
-
-    for i in range(dimension):
-        center = compute_cell_center_fraction(i, dimension)
-        distance = abs(fraction - center)
-        if distance < best_distance:
-            best_distance = distance
-            best_index = i
-
-    return best_index
+    # Convert fraction to cell index: floor(f * n)
+    # Clamp to valid range to handle f = 1.0 edge case
+    index = int(fraction * dimension)
+    return min(index, dimension - 1)
 
 
 def compute_exit_ancestor_fraction(
@@ -247,6 +195,10 @@ def compute_entry_from_ancestor_fraction(
 
         ref = find_primary_ref_fn(store, current)
         if ref is None:
+            if ancestor_grid_id is not None:  # pragma: no cover
+                raise AssertionError(
+                    f"Grid '{ancestor_grid_id}' is not an ancestor of '{target_grid_id}'"
+                )
             break
 
         parent_grid_id, ref_row, ref_col = ref
@@ -266,7 +218,7 @@ def compute_entry_from_ancestor_fraction(
         parent_cell_index = ref_row if dimension_attr == 'rows' else ref_col
         fraction = map_fraction_to_child(fraction, parent_cell_index, parent_dimension)
 
-    # Find nearest cell in target grid
+    # Convert fraction to cell index in target grid
     target_grid = store[target_grid_id]
     dimension = getattr(target_grid, dimension_attr)
-    return find_nearest_cell(fraction, dimension)
+    return fraction_to_cell_index(fraction, dimension)
