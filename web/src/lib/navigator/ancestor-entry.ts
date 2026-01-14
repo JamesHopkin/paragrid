@@ -3,6 +3,17 @@
  *
  * Uses floating-point arithmetic to map exit positions through common ancestors,
  * enabling consistent cross-depth entry without tracking depth state.
+ *
+ * IMPORTANT: This module is intentionally brittle and relies on strong guarantees
+ * provided by the push algorithm:
+ *
+ * 1. Both functions are always called with ancestor parameters specified
+ *    (stopAtAncestor/ancestorGridId are never undefined in practice)
+ * 2. The specified ancestor is guaranteed to exist in the ancestry chain
+ * 3. The push algorithm ensures these invariants before calling these functions
+ *
+ * The "reached root" error cases are defensive checks that should never execute
+ * in correct usage. They throw errors to catch API misuse during development.
  */
 
 import type { GridStore } from '../core/types.js';

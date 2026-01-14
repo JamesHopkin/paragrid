@@ -3,6 +3,17 @@ Ancestor-based entry position calculation.
 
 Uses rational arithmetic to map exit positions through common ancestors,
 enabling consistent cross-depth entry without tracking depth state.
+
+IMPORTANT: This module is intentionally brittle and relies on strong guarantees
+provided by the push algorithm:
+
+1. Both functions are always called with ancestor parameters specified
+   (stop_at_ancestor/ancestor_grid_id are never None in practice)
+2. The specified ancestor is guaranteed to exist in the ancestry chain
+3. The push algorithm ensures these invariants before calling these functions
+
+The "reached root" cases are defensive checks that should never execute in correct
+usage. They include assertions to catch API misuse during development.
 """
 
 from __future__ import annotations
@@ -143,8 +154,10 @@ def compute_exit_ancestor_fraction(
             return fraction, current_grid_id
 
         ref = find_primary_ref_fn(store, current_grid_id)
-        if ref is None:
-            # Reached root
+        if ref is None:  # pragma: no cover
+            # Reached root - should be unreachable since caller always passes stop_at_ancestor
+            assert stop_at_ancestor is None, \
+                f"stop_at_ancestor '{stop_at_ancestor}' not found in ancestry of '{grid_id}'"
             return fraction, current_grid_id
 
         parent_grid_id, ref_row, ref_col = ref
@@ -194,11 +207,10 @@ def compute_entry_from_ancestor_fraction(
             break
 
         ref = find_primary_ref_fn(store, current)
-        if ref is None:
-            if ancestor_grid_id is not None:  # pragma: no cover
-                raise AssertionError(
-                    f"Grid '{ancestor_grid_id}' is not an ancestor of '{target_grid_id}'"
-                )
+        if ref is None:  # pragma: no cover
+            # Reached root - should be unreachable since caller always passes ancestor_grid_id
+            assert ancestor_grid_id is None, \
+                f"ancestor_grid_id '{ancestor_grid_id}' is not an ancestor of '{target_grid_id}'"
             break
 
         parent_grid_id, ref_row, ref_col = ref
