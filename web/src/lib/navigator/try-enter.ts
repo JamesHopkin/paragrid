@@ -83,7 +83,7 @@ export function tryEnter(
       exitGridId!,
       exitIndex,
       dimensionAttr,
-      ancestorGridId
+      ancestorGridId!
     );
 
     // Map down from ancestor to target grid
@@ -93,7 +93,7 @@ export function tryEnter(
       gridId,
       exitFraction,
       dimensionAttr,
-      ancestorGridId
+      ancestorGridId!
     );
 
     // Construct entry position based on direction

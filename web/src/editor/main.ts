@@ -1,22 +1,38 @@
+/// <reference path="./global.d.ts" />
 /**
  * Main entry point for the Paragrid Level Editor
  */
 
-import { onStateChange, loadFromServer, getState } from './state.js';
+import { onStateChange, initializeStorage, loadFromStorage, getState } from './state.js';
 import { renderGrids, initializeUI, updateHistoryStatus, selectCellByCoords } from './ui.js';
+import { createStorageAdapter, LocalStorageAdapter } from './storage.js';
+
+// Check if we should force localStorage mode (set via build config or URL parameter)
+const urlParams = new URLSearchParams(window.location.search);
+const forceLocalStorage = urlParams.has('standalone') ||
+                         (typeof __PARAGRID_STANDALONE__ !== 'undefined' && __PARAGRID_STANDALONE__ === true);
 
 /**
  * Initialize the editor
  */
 async function init(): Promise<void> {
-  // Try to load current state from server
-  console.log('🔄 Loading current state from server...');
-  const result = await loadFromServer();
+  // Create and initialize storage adapter
+  console.log('🔧 Initializing storage...');
+  const adapter = await createStorageAdapter(forceLocalStorage);
+  initializeStorage(adapter);
+
+  // Try to load current state from storage
+  console.log('🔄 Loading current state...');
+  const result = await loadFromStorage();
 
   if (result.success) {
-    console.log(`✅ Loaded server state (v${result.version})`);
+    if (result.version !== undefined) {
+      console.log(`✅ Loaded state (version ${result.version})`);
+    } else {
+      console.log('✅ Loaded state');
+    }
   } else {
-    console.log('📦 Server not available, using default state');
+    console.log('📦 No saved state found, using default');
   }
 
   // Set up state change listener to re-render and update history
@@ -39,6 +55,13 @@ async function init(): Promise<void> {
   }
 
   console.log('🚀 Paragrid Level Editor initialized');
+
+  if (adapter instanceof LocalStorageAdapter) {
+    console.log('💾 Using localStorage - click Save button to persist changes');
+    console.log('🔄 Multi-tab sync enabled - saved changes will sync across browser tabs');
+  } else {
+    console.log('💾 Using server storage - click Save button to persist changes');
+  }
 }
 
 // Start the editor when DOM is ready

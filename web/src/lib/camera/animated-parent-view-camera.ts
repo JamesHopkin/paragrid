@@ -98,21 +98,34 @@ export class AnimatedParentViewCameraController implements CameraController {
 
   /**
    * Find the lowest common ancestor of two grids.
+   * Includes cycle detection to prevent infinite loops.
    */
   private findCommonAncestor(gridA: string, gridB: string): string | null {
     const ancestorsA = new Set<string>();
     let current: string | null = gridA;
 
+    // Build set of ancestors from gridA, with cycle detection
     while (current !== null) {
+      if (ancestorsA.has(current)) {
+        // Cycle detected, stop here
+        break;
+      }
       ancestorsA.add(current);
       current = this.helper.getParent(current);
     }
 
+    // Walk up from gridB to find common ancestor, with cycle detection
+    const visitedB = new Set<string>();
     current = gridB;
     while (current !== null) {
+      if (visitedB.has(current)) {
+        // Cycle detected, no common ancestor found
+        break;
+      }
       if (ancestorsA.has(current)) {
         return current;
       }
+      visitedB.add(current);
       current = this.helper.getParent(current);
     }
 
