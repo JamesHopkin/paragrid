@@ -124,7 +124,7 @@ def compute_exit_ancestor_fraction(
     grid_id: str,
     cell_index: int,
     dimension_attr: str,  # 'rows' or 'cols'
-    stop_at_ancestor: str | None = None,
+    stop_at_ancestor: str,
 ) -> tuple[Fraction, str]:
     """
     Compute the fractional position of a cell along an edge, in ancestor coordinates.
@@ -137,7 +137,7 @@ def compute_exit_ancestor_fraction(
         grid_id: ID of the grid we're exiting from
         cell_index: Cell index (row or col) we're exiting from
         dimension_attr: 'rows' or 'cols'
-        stop_at_ancestor: Optional ancestor ID to stop at (if None, goes to root)
+        stop_at_ancestor: Ancestor ID to stop at (must be in ancestry chain)
 
     Returns:
         (fraction in ancestor coordinates, ancestor_grid_id)
@@ -150,15 +150,15 @@ def compute_exit_ancestor_fraction(
     # Cascade up through parents, transforming fraction
     while True:
         # Stop if we reached the target ancestor
-        if stop_at_ancestor is not None and current_grid_id == stop_at_ancestor:
+        if current_grid_id == stop_at_ancestor:
             return fraction, current_grid_id
 
         ref = find_primary_ref_fn(store, current_grid_id)
         if ref is None:  # pragma: no cover
-            # Reached root - should be unreachable since caller always passes stop_at_ancestor
-            assert stop_at_ancestor is None, \
+            # Should be unreachable - caller must ensure stop_at_ancestor is in ancestry chain
+            raise AssertionError(
                 f"stop_at_ancestor '{stop_at_ancestor}' not found in ancestry of '{grid_id}'"
-            return fraction, current_grid_id
+            )
 
         parent_grid_id, ref_row, ref_col = ref
         parent_grid = store[parent_grid_id]
@@ -181,7 +181,7 @@ def compute_entry_from_ancestor_fraction(
     target_grid_id: str,
     ancestor_fraction: Fraction,
     dimension_attr: str,  # 'rows' or 'cols'
-    ancestor_grid_id: str | None = None,
+    ancestor_grid_id: str,
 ) -> int:
     """
     Compute entry cell index by mapping from ancestor fraction down to target grid.
@@ -192,26 +192,26 @@ def compute_entry_from_ancestor_fraction(
         target_grid_id: Grid to enter
         ancestor_fraction: Position in ancestor's coordinate system
         dimension_attr: 'rows' or 'cols'
-        ancestor_grid_id: Optional ancestor grid ID to start from (if None, starts from root)
+        ancestor_grid_id: Ancestor grid ID to start from (must be in ancestry chain)
 
     Returns:
         Cell index to enter
     """
-    # Build path from target to root (or specified ancestor)
+    # Build path from target to specified ancestor
     path: list[tuple[str, tuple[str, int, int]]] = []
     current = target_grid_id
 
     while True:
         # Stop if we reached the specified ancestor
-        if ancestor_grid_id is not None and current == ancestor_grid_id:
+        if current == ancestor_grid_id:
             break
 
         ref = find_primary_ref_fn(store, current)
         if ref is None:  # pragma: no cover
-            # Reached root - should be unreachable since caller always passes ancestor_grid_id
-            assert ancestor_grid_id is None, \
+            # Should be unreachable - caller must ensure ancestor_grid_id is in ancestry chain
+            raise AssertionError(
                 f"ancestor_grid_id '{ancestor_grid_id}' is not an ancestor of '{target_grid_id}'"
-            break
+            )
 
         parent_grid_id, ref_row, ref_col = ref
         path.append((current, ref))

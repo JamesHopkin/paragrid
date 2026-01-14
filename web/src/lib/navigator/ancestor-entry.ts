@@ -115,7 +115,7 @@ export function fractionToCellIndex(fraction: number, dimension: number): number
  * @param gridId - ID of the grid we're exiting from
  * @param cellIndex - Cell index (row or col) we're exiting from
  * @param dimensionAttr - 'rows' or 'cols'
- * @param stopAtAncestor - Optional ancestor ID to stop at (if undefined, goes to root)
+ * @param stopAtAncestor - Ancestor ID to stop at (must be in ancestry chain)
  * @returns [fraction in ancestor coordinates, ancestor_grid_id]
  */
 export function computeExitAncestorFraction(
@@ -124,7 +124,7 @@ export function computeExitAncestorFraction(
   gridId: string,
   cellIndex: number,
   dimensionAttr: 'rows' | 'cols',
-  stopAtAncestor?: string
+  stopAtAncestor: string
 ): [number, string] {
   const currentGrid = store[gridId];
   const dimension = currentGrid[dimensionAttr];
@@ -134,19 +134,16 @@ export function computeExitAncestorFraction(
   // Cascade up through parents, transforming fraction
   while (true) {
     // Stop if we reached the target ancestor
-    if (stopAtAncestor !== undefined && currentGridId === stopAtAncestor) {
+    if (currentGridId === stopAtAncestor) {
       return [fraction, currentGridId];
     }
 
     const ref = findPrimaryRefFn(store, currentGridId);
     if (!ref) {
-      // Reached root - if we were looking for a specific ancestor, this is an error
-      if (stopAtAncestor !== undefined) {
-        throw new Error(
-          `Grid '${stopAtAncestor}' is not an ancestor of '${gridId}'`
-        );
-      }
-      return [fraction, currentGridId];
+      // Should be unreachable - caller must ensure stopAtAncestor is in ancestry chain
+      throw new Error(
+        `stopAtAncestor '${stopAtAncestor}' not found in ancestry of '${gridId}'`
+      );
     }
 
     const [parentGridId, refRow, refCol] = ref;
@@ -169,7 +166,7 @@ export function computeExitAncestorFraction(
  * @param targetGridId - Grid to enter
  * @param ancestorFraction - Position in ancestor's coordinate system
  * @param dimensionAttr - 'rows' or 'cols'
- * @param ancestorGridId - Optional ancestor grid ID to start from (if undefined, starts from root)
+ * @param ancestorGridId - Ancestor grid ID to start from (must be in ancestry chain)
  * @returns Cell index to enter
  */
 export function computeEntryFromAncestorFraction(
@@ -178,27 +175,24 @@ export function computeEntryFromAncestorFraction(
   targetGridId: string,
   ancestorFraction: number,
   dimensionAttr: 'rows' | 'cols',
-  ancestorGridId?: string
+  ancestorGridId: string
 ): number {
-  // Build path from target to root (or specified ancestor)
+  // Build path from target to specified ancestor
   const path: Array<[string, [string, number, number]]> = [];
   let current = targetGridId;
 
   while (true) {
     // Stop if we reached the specified ancestor
-    if (ancestorGridId !== undefined && current === ancestorGridId) {
+    if (current === ancestorGridId) {
       break;
     }
 
     const ref = findPrimaryRefFn(store, current);
     if (!ref) {
-      // Reached root - if we were looking for a specific ancestor, this is an error
-      if (ancestorGridId !== undefined) {
-        throw new Error(
-          `Grid '${ancestorGridId}' is not an ancestor of '${targetGridId}'`
-        );
-      }
-      break;
+      // Should be unreachable - caller must ensure ancestorGridId is in ancestry chain
+      throw new Error(
+        `ancestorGridId '${ancestorGridId}' is not an ancestor of '${targetGridId}'`
+      );
     }
 
     const [parentGridId, refRow, refCol] = ref;
