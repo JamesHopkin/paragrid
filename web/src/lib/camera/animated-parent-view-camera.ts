@@ -47,7 +47,14 @@ export class AnimatedParentViewCameraController implements CameraController {
       }
     }
 
-    // Base everything on fromViewPath, so we don't briefly show the background before zooming in
+    // INTENTION: Use fromViewPath as the base for animation to ensure all necessary
+    // ancestor grids are visible at animation start. Using toViewPath directly could
+    // cause outer recursive grids to be missing if the animation assumes a deeper
+    // zoom level than we currently have.
+    //
+    // FIX: For exit/enter scenarios, find the common ancestor, preserve the full
+    // fromViewPath depth up to that ancestor, then append the path to toGridId.
+    // Example: viewing r->r->a->b, exit to a then enter c gives r->r->a->c (not r->a->c)
     const fromViewPath = buildViewPath(this.helper, fromGridId);
 
     if (fromGridId === toGridId) {
@@ -61,13 +68,55 @@ export class AnimatedParentViewCameraController implements CameraController {
       };
     }
 
-    const gridsDownToTo = this.helper.getAncestorChain(toGridId, fromGridId);
+    // Find the common ancestor (the grid that contains both from and to)
+    const toViewPath = buildViewPath(this.helper, toGridId);
+    const commonAncestor = this.helper.getParent(fromGridId) === this.helper.getParent(toGridId)
+      ? this.helper.getParent(fromGridId)
+      : this.findCommonAncestor(fromGridId, toGridId);
+
+    if (!commonAncestor) {
+      // Shouldn't happen in valid hierarchy, fall back to simple approach
+      return {
+        targetView: toViewPath,
+        animationStartView: fromViewPath
+      };
+    }
+
+    // Find where common ancestor appears in fromViewPath and trim there
+    const ancestorIndex = fromViewPath.lastIndexOf(commonAncestor);
+    const baseViewPath = fromViewPath.slice(0, ancestorIndex + 1);
+
+    // Get path from common ancestor down to target
+    const gridsDownToTo = this.helper.getAncestorChain(toGridId, commonAncestor);
     gridsDownToTo.reverse();
 
     return {
-      targetView: [...fromViewPath, ...gridsDownToTo],
+      targetView: [...baseViewPath, ...gridsDownToTo],
       animationStartView: fromViewPath
     };
+  }
+
+  /**
+   * Find the lowest common ancestor of two grids.
+   */
+  private findCommonAncestor(gridA: string, gridB: string): string | null {
+    const ancestorsA = new Set<string>();
+    let current: string | null = gridA;
+
+    while (current !== null) {
+      ancestorsA.add(current);
+      current = this.helper.getParent(current);
+    }
+
+    current = gridB;
+    while (current !== null) {
+      if (ancestorsA.has(current)) {
+        return current;
+      }
+      current = this.helper.getParent(current);
+    }
+
+    return null;
   }
 
   /**
