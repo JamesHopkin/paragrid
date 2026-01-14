@@ -2,7 +2,7 @@
  * Interactive isometric demo with WASD navigation.
  */
 
-import { parseGrids, exportGrids } from './lib/parser/parser.js';
+import { parseGrids, exportGrids, makeUniqueIdGenerator, getCoreId } from './lib/parser/parser.js';
 import type { GridStore, Grid } from './lib/core/types.js';
 import type { Cell } from './lib/core/types.js';
 import { Concrete, isConcrete, getGrid } from './lib/core/types.js';
@@ -1917,9 +1917,76 @@ let currentDemo: IsometricDemo | null = null;
 let storeRef: GridStoreRef | null = null; // Shared mutable reference to grid store
 
 /**
+ * Check if we should attempt server communication
+ * Returns false when running from file:// protocol or in standalone mode
+ */
+function shouldUseServer(): boolean {
+  // Skip server if running from file:// protocol
+  if (window.location.protocol === 'file:') {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Load grids from localStorage (shared with editor)
+ * Uses the same storage format as the level editor
+ */
+function loadGridsFromLocalStorage(): { grids: Record<string, string>; version: number } | null {
+  try {
+    const STORAGE_KEY = 'paragrid-editor-state';
+    const VERSION_KEY = 'paragrid-editor-version';
+
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const storedVersion = localStorage.getItem(VERSION_KEY);
+
+    if (!stored) {
+      return null;
+    }
+
+    const state = JSON.parse(stored);
+    const version = storedVersion ? parseInt(storedVersion, 10) : 0;
+
+    // Convert editor state to parseable grid format
+    const grids: Record<string, string> = {};
+
+    for (const [gridId, gridData] of Object.entries(state.grids as any)) {
+      const grid = gridData as any;
+      const rows: string[] = [];
+
+      for (let r = 0; r < grid.rows; r++) {
+        const row = grid.cells[r].map((cell: any) => {
+          if (cell.type === 'Empty') return '_';
+          if (cell.type === 'Concrete') return cell.id || '?';
+          if (cell.type === 'Ref') {
+            // Primary ref: *gridId, Secondary ref: ~gridId
+            const prefix = cell.isPrimary ? '*' : '~';
+            return `${prefix}${cell.id || '?'}`;
+          }
+          return '?';
+        });
+        rows.push(row.join(' '));
+      }
+
+      grids[gridId] = rows.join('|');
+    }
+
+    console.log(`💾 Loaded from localStorage (version ${version})`);
+    return { grids, version };
+  } catch (error) {
+    console.warn('Failed to load from localStorage:', error);
+    return null;
+  }
+}
+
+/**
  * Load grids from the dev server
  */
 async function loadGridsFromServer(): Promise<{ grids: Record<string, string>; version: number } | null> {
+  if (!shouldUseServer()) {
+    return null;
+  }
+
   try {
     const response = await fetch('/api/grids');
     if (!response.ok) {
@@ -1938,6 +2005,10 @@ async function loadGridsFromServer(): Promise<{ grids: Record<string, string>; v
  * Check if server has a newer version
  */
 async function checkServerVersion(): Promise<number | null> {
+  if (!shouldUseServer()) {
+    return null;
+  }
+
   try {
     const response = await fetch('/api/grids/version');
     if (!response.ok) {
@@ -1982,47 +2053,34 @@ async function initDemo() {
 
   // If scene parameter is present, always use that scene and push to server
   // Otherwise, try to load from server first
+  // Tag function: cell '1' is the player, cell '9' is stop
+  // Uses getCoreId to extract original value (handles both "1" and "1@grid:row:col")
+  const tagFn: TagFn = (cell: Cell) => {
+    if (isConcrete(cell)) {
+      const coreId = getCoreId(cell.id);
+      if (coreId === '1') {
+        return new Set(['player']);
+      }
+      if (coreId === '9') {
+        return new Set(['stop']);
+      }
+    }
+    return new Set();
+  };
+
+  // Create unique ID generator that preserves player and stop cells
+  const concreteIdFn = makeUniqueIdGenerator(tagFn, new Set(['player', 'stop']));
+
   let store: GridStore;
 
   if (hasSceneParam) {
     // Use the requested scene and push to server
     console.log(`📦 Loading built-in scene: ${config.scene}`);
     const sceneData = (GRIDS as any)[config.scene] || (GRIDS as any)[DEFAULT_GRID_ID]!;
-    store = parseGrids(sceneData);
+    store = parseGrids(sceneData, concreteIdFn);
 
     // Push scene data to server so it appears in server console
-    try {
-      const response = await fetch('/api/grids', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ grids: sceneData }),
-      });
-      if (response.ok) {
-        const result = await response.json();
-        currentServerVersion = result.version;
-        console.log(`📤 Pushed scene to server (v${result.version})`);
-      }
-    } catch (error) {
-      console.warn('Failed to push scene to server:', error);
-    }
-  } else {
-    // No scene parameter - try to load from server first
-    const serverData = await loadGridsFromServer();
-
-    if (serverData && Object.keys(serverData.grids).length > 0) {
-      // Use server data
-      console.log(`✅ Loaded grids from server (v${serverData.version})`);
-      currentServerVersion = serverData.version;
-      store = parseGrids(serverData.grids);
-    } else {
-      // Fall back to default grids
-      console.log(`📦 Using default built-in scene: ${DEFAULT_GRID_ID}`);
-      const sceneData = (GRIDS as any)[DEFAULT_GRID_ID]!;
-      store = parseGrids(sceneData);
-
-      // Push initial scene data to server so it appears in server console
+    if (shouldUseServer()) {
       try {
         const response = await fetch('/api/grids', {
           method: 'POST',
@@ -2034,10 +2092,53 @@ async function initDemo() {
         if (response.ok) {
           const result = await response.json();
           currentServerVersion = result.version;
-          console.log(`📤 Pushed default scene to server (v${result.version})`);
+          console.log(`📤 Pushed scene to server (v${result.version})`);
         }
       } catch (error) {
-        console.warn('Failed to push initial scene to server:', error);
+        console.warn('Failed to push scene to server:', error);
+      }
+    }
+  } else {
+    // No scene parameter - try multiple sources in priority order
+    let loadedData: { grids: Record<string, string>; version: number } | null = null;
+
+    // In standalone mode, try localStorage first
+    if (!shouldUseServer()) {
+      loadedData = loadGridsFromLocalStorage();
+    } else {
+      // With server available, try server first
+      loadedData = await loadGridsFromServer();
+    }
+
+    if (loadedData && Object.keys(loadedData.grids).length > 0) {
+      // Use loaded data (from localStorage or server)
+      console.log(`✅ Loaded grids (v${loadedData.version})`);
+      currentServerVersion = loadedData.version;
+      store = parseGrids(loadedData.grids, concreteIdFn);
+    } else {
+      // Fall back to default grids
+      console.log(`📦 Using default built-in scene: ${DEFAULT_GRID_ID}`);
+      const sceneData = (GRIDS as any)[DEFAULT_GRID_ID]!;
+      store = parseGrids(sceneData, concreteIdFn);
+
+      // Push initial scene data to server so it appears in server console
+      if (shouldUseServer()) {
+        try {
+          const response = await fetch('/api/grids', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ grids: sceneData }),
+          });
+          if (response.ok) {
+            const result = await response.json();
+            currentServerVersion = result.version;
+            console.log(`📤 Pushed default scene to server (v${result.version})`);
+          }
+        } catch (error) {
+          console.warn('Failed to push initial scene to server:', error);
+        }
       }
     }
   }
@@ -2053,19 +2154,6 @@ async function initDemo() {
 
   // First time initialization: create store ref and demo
   storeRef = new GridStoreRef(store);
-
-  // Tag function: cell '1' is the player
-  const tagFn: TagFn = (cell: Cell) => {
-    if (isConcrete(cell)) {
-      if (cell.id === '1') {
-        return new Set(['player']);
-      }
-      if (cell.id === '9') {
-        return new Set(['stop']);
-      }
-    }
-    return new Set();
-  };
 
   const canvas = document.getElementById('canvas');
   const status = document.getElementById('status');
@@ -2090,8 +2178,27 @@ async function initDemo() {
 document.addEventListener('DOMContentLoaded', async () => {
   await initDemo();
 
-  // Start polling for updates from the editor
-  startServerPolling(() => {
-    initDemo(); // Reload demo when server updates detected
-  });
+  // Start polling for updates from the editor (only if server is available)
+  if (shouldUseServer()) {
+    startServerPolling(() => {
+      initDemo(); // Reload demo when server updates detected
+    });
+  } else {
+    // In standalone mode, watch for localStorage changes from editor
+    console.log('📴 Running in standalone mode - watching localStorage for changes');
+
+    window.addEventListener('storage', (event) => {
+      // Only respond to changes to the editor state key from OTHER tabs
+      if (event.key === 'paragrid-editor-state' && event.newValue) {
+        const storedVersion = localStorage.getItem('paragrid-editor-version');
+        const newVersion = storedVersion ? parseInt(storedVersion, 10) : 0;
+
+        if (newVersion > currentServerVersion) {
+          console.log(`🔔 Grid data updated from editor (v${newVersion}), reloading...`);
+          currentServerVersion = newVersion;
+          initDemo();
+        }
+      }
+    });
+  }
 });
