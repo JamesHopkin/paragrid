@@ -41,6 +41,7 @@ import type { TagFn } from '../tagging/types.js';
 import { Concrete, isRef, getGrid, getCell } from '../core/types.js';
 import { getGridColor } from './colors.js';
 import { analyze } from '../analyzer/index.js';
+import { getCoreId } from '../parser/parser.js';
 
 /**
  * Compute the layer for a cell based on its focus metadata.
@@ -59,7 +60,7 @@ function computeFocusLayer(
   node: CellNode
 ): number | undefined {
   // Only apply to cells in the immediate parent grid of the focused grid
-  if (node.focusDepth !== -1 || !node.focusOffset) {
+  if (node.focusDepth >= 0 || !node.focusOffset) {
     return undefined;
   }
 
@@ -287,15 +288,7 @@ export function renderIsometric(
     height
   });
 
-  // Configure layer opacity: layer 1 and layers >= 200 should be 50% transparent
-  const layerConfig = (layer: number) => {
-    if (layer === 1 || layer >= 200) {
-      return { opacity: 0.5 };
-    }
-    return { opacity: 1.0 };
-  };
-
-  renderer.render(screenSpace, { layers: layerConfig });
+  renderer.render(screenSpace);
 
   return { scene };
 }
@@ -426,8 +419,14 @@ function getStopBlockColor(floorColor: string): string {
 /**
  * Get model type, y offset, and color for a concrete cell based on its ID.
  * Alternates between cubes and pyramids, keeping the current colors for each index.
+ *
+ * Uses the core ID (without unique suffix) for color/shape mapping so that
+ * all instances of the same value get the same appearance.
  */
 function getCellColor(cellId: string): { model: 'cube' | 'pyramid'; yOffset: number; color: string } {
+  // Extract core ID (e.g., "2" from "2@grid:0:1")
+  const coreId = getCoreId(cellId);
+
   const colors: Record<string, string> = {
     '1': '#ffb3ba', // Light red/pink
     '2': '#bae1ff', // Light blue
@@ -439,10 +438,10 @@ function getCellColor(cellId: string): { model: 'cube' | 'pyramid'; yOffset: num
     '8': '#d4f4dd', // Light green
   };
 
-  const color = colors[cellId] || getGridColor(cellId);
+  const color = colors[coreId] || getGridColor(coreId);
 
-  // Alternate between cube and pyramid based on cell ID
-  const cellNum = parseInt(cellId, 10);
+  // Alternate between cube and pyramid based on core ID
+  const cellNum = parseInt(coreId, 10);
   const model = isNaN(cellNum) || cellNum % 2 === 1 ? 'cube' : 'pyramid';
 
   // Different y offsets for cube vs pyramid
