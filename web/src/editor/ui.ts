@@ -20,7 +20,7 @@ import {
   redo,
   getUndoStackSize,
   getRedoStackSize,
-  saveToServer,
+  saveToStorage,
   getHasUnsavedChanges,
 } from './state.js';
 import {
@@ -874,7 +874,7 @@ export function initializeUI(): void {
     });
   }
 
-  // Save button - saves to Vite dev server
+  // Save button - saves to configured storage
   const saveBtn = document.getElementById('save-btn');
   if (saveBtn) {
     saveBtn.addEventListener('click', async () => {
@@ -882,10 +882,11 @@ export function initializeUI(): void {
       saveBtn.textContent = 'Saving...';
       saveBtn.setAttribute('disabled', 'true');
 
-      const result = await saveToServer();
+      const result = await saveToStorage();
 
       if (result.success) {
-        saveBtn.textContent = `✓ Saved (v${result.version})`;
+        const versionText = result.version !== undefined ? ` (v${result.version})` : '';
+        saveBtn.textContent = `✓ Saved${versionText}`;
         setTimeout(() => {
           saveBtn.textContent = originalText;
           updateHistoryStatus(); // Update button state based on hasUnsavedChanges

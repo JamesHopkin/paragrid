@@ -4,6 +4,7 @@
 
 import JSON5 from 'json5';
 import { EditorState, GridDefinition, CellContent, createEmptyGrid } from './types.js';
+import { StorageAdapter } from './storage.js';
 
 /**
  * Creates the initial editor state with a single 5x5 empty grid
@@ -30,6 +31,11 @@ let stateChangeCallbacks: Array<(state: EditorState) => void> = [];
 let currentVersion = 0; // Track the version we last saved/loaded
 let pollInterval: number | null = null;
 let hasUnsavedChanges = false; // Track if there are changes since last save/load
+
+/**
+ * Storage adapter (can be localStorage or server)
+ */
+let storageAdapter: StorageAdapter | null = null;
 
 /**
  * Undo/Redo history
@@ -310,6 +316,96 @@ export function getGridsAvailableForPrimaryRef(): Set<string> {
   });
 
   return available;
+}
+
+/**
+ * Initialize storage adapter
+ */
+export function initializeStorage(adapter: StorageAdapter): void {
+  storageAdapter = adapter;
+
+  // Set up cross-tab sync if adapter supports it
+  if (adapter.onExternalChange) {
+    adapter.onExternalChange((newState) => {
+      // Update state without triggering undo/redo
+      state = newState;
+      hasUnsavedChanges = false;
+      notifyStateChange();
+    });
+  }
+
+  console.log('💾 Storage initialized');
+}
+
+/**
+ * Save current state using the configured storage adapter
+ */
+export async function saveToStorage(): Promise<{ success: boolean; version?: number; error?: string }> {
+  if (!storageAdapter) {
+    return {
+      success: false,
+      error: 'Storage adapter not initialized',
+    };
+  }
+
+  try {
+    const result = await storageAdapter.save(state);
+
+    if (result.success) {
+      hasUnsavedChanges = false;
+      if (result.version !== undefined) {
+        currentVersion = result.version;
+      }
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Failed to save to storage:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+/**
+ * Load state using the configured storage adapter
+ */
+export async function loadFromStorage(): Promise<{ success: boolean; version?: number; error?: string }> {
+  if (!storageAdapter) {
+    return {
+      success: false,
+      error: 'Storage adapter not initialized',
+    };
+  }
+
+  try {
+    const result = await storageAdapter.load();
+
+    if (result.success && result.state) {
+      // Update state without adding to undo history
+      state = result.state;
+      hasUnsavedChanges = false;
+
+      if (result.version !== undefined) {
+        currentVersion = result.version;
+      }
+
+      notifyStateChange();
+    }
+
+    return {
+      success: result.success,
+      version: result.version,
+      error: result.error,
+    };
+  } catch (error) {
+    console.error('Failed to load from storage:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 /**
