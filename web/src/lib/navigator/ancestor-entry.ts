@@ -162,50 +162,39 @@ export function computeExitAncestorFraction(
  * Compute entry cell index by mapping from ancestor fraction down to target grid.
  *
  * @param store - Grid store
- * @param findPrimaryRefFn - Function to find primary ref (returns [parentId, row, col] | null)
  * @param targetGridId - Grid to enter
  * @param ancestorFraction - Position in ancestor's coordinate system
  * @param dimensionAttr - 'rows' or 'cols'
- * @param ancestorGridId - Ancestor grid ID to start from (must be in ancestry chain)
+ * @param ancestorGridId - Ancestor grid ID to start from
+ * @param refChain - Explicit chain of refs from ancestor to target [parent_grid_id, ref_row, ref_col, child_grid_id]
  * @returns Cell index to enter
  */
 export function computeEntryFromAncestorFraction(
   store: GridStore,
-  findPrimaryRefFn: FindPrimaryRefFn,
   targetGridId: string,
   ancestorFraction: number,
   dimensionAttr: 'rows' | 'cols',
-  ancestorGridId: string
+  ancestorGridId: string,
+  refChain: Array<[string, number, number, string]>
 ): number {
-  // Build path from target to specified ancestor
-  const path: Array<[string, [string, number, number]]> = [];
-  let current = targetGridId;
+  // The refChain should start from ancestor and lead to target
+  // Each entry is [parent_grid_id, ref_row, ref_col, child_grid_id]
 
-  while (true) {
-    // Stop if we reached the specified ancestor
-    if (current === ancestorGridId) {
-      break;
+  // Verify the chain starts at ancestor and ends at target
+  if (refChain.length > 0) {
+    const firstParent = refChain[0][0];
+    const lastChild = refChain[refChain.length - 1][3];
+    if (firstParent !== ancestorGridId) {
+      throw new Error(`Chain starts at ${firstParent}, expected ${ancestorGridId}`);
     }
-
-    const ref = findPrimaryRefFn(store, current);
-    if (!ref) {
-      // Should be unreachable - caller must ensure ancestorGridId is in ancestry chain
-      throw new Error(
-        `ancestorGridId '${ancestorGridId}' is not an ancestor of '${targetGridId}'`
-      );
+    if (lastChild !== targetGridId) {
+      throw new Error(`Chain ends at ${lastChild}, expected ${targetGridId}`);
     }
-
-    const [parentGridId, refRow, refCol] = ref;
-    path.push([current, ref]);
-    current = parentGridId;
   }
-
-  // Reverse to go from ancestor down to target
-  path.reverse();
 
   // Transform fraction down through hierarchy
   let fraction = ancestorFraction;
-  for (const [gridId, [parentGridId, refRow, refCol]] of path) {
+  for (const [parentGridId, refRow, refCol, childGridId] of refChain) {
     const parentGrid = store[parentGridId];
     const parentDimension = parentGrid[dimensionAttr];
 

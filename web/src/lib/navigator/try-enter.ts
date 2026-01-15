@@ -22,6 +22,10 @@ export interface AncestorBasedEntryOptions {
   exitPosition?: [number, number];
   /** Common ancestor grid ID (typically the Ref's parent grid) */
   ancestorGridId?: string;
+  /** Explicit ref chain from ancestor (array of [parent_grid_id, ref_row, ref_col, child_grid_id]) */
+  refChainFromAncestor?: Array<[string, number, number, string]>;
+  /** Current ref position we're entering through [grid_id, row, col] */
+  currentRefPosition?: [string, number, number];
 }
 
 /**
@@ -68,7 +72,7 @@ export function tryEnter(
     options?.ancestorGridId !== undefined;
 
   if (useAncestorMapping) {
-    const { exitGridId, exitPosition, ancestorGridId } = options!;
+    const { exitGridId, exitPosition, ancestorGridId, refChainFromAncestor, currentRefPosition } = options!;
 
     // Determine dimension based on direction
     // E/W movement: position varies along N-S axis (rows)
@@ -86,14 +90,20 @@ export function tryEnter(
       ancestorGridId!
     );
 
-    // Map down from ancestor to target grid
+    // Build the complete ref chain: existing chain + current ref we're entering
+    const completeRefChain: Array<[string, number, number, string]> = [
+      ...(refChainFromAncestor ?? []),
+      [currentRefPosition![0], currentRefPosition![1], currentRefPosition![2], gridId],
+    ];
+
+    // Map down from ancestor to target grid using the explicit ref chain
     const entryIndex = computeEntryFromAncestorFraction(
       store,
-      findPrimaryRef,
       gridId,
       exitFraction,
       dimensionAttr,
-      ancestorGridId!
+      ancestorGridId!,
+      completeRefChain
     );
 
     // Construct entry position based on direction

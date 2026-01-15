@@ -60,6 +60,9 @@ export class Navigator {
   /** Ancestor-based entry tracking: Ancestor grid where we landed after exit */
   private ancestorGridIdForEntry: string | null;
 
+  /** Ancestor-based entry tracking: Explicit ref chain from ancestor (parent_grid_id, ref_row, ref_col, child_grid_id) */
+  private refChainFromAncestor: Array<[string, number, number, string]>;
+
   constructor(store: GridStore, position: CellPosition, direction: Direction) {
     this.store = store;
     this.current = position.clone();
@@ -72,6 +75,7 @@ export class Navigator {
     this.exitGridId = null;
     this.exitPosition = null;
     this.ancestorGridIdForEntry = null;
+    this.refChainFromAncestor = [];
 
     this.deltas = {
       [Direction.N]: [-1, 0],
@@ -109,6 +113,7 @@ export class Navigator {
     nav.exitGridId = this.exitGridId;
     nav.exitPosition = this.exitPosition;
     nav.ancestorGridIdForEntry = this.ancestorGridIdForEntry;
+    nav.refChainFromAncestor = [...this.refChainFromAncestor];
     return nav;
   }
 
@@ -175,6 +180,8 @@ export class Navigator {
           this.lastTransitionType = 'exit';
           // Remember this ancestor for entry calculations
           this.ancestorGridIdForEntry = parentGridId;
+          // Clear ref chain since we're now at the ancestor level
+          this.refChainFromAncestor = [];
           return true;
         }
 
@@ -222,6 +229,9 @@ export class Navigator {
       exitPosition: this.exitPosition ?? undefined,
       // Use the ancestor grid where we landed after exit (not current.gridId which changes with portals)
       ancestorGridId: this.ancestorGridIdForEntry ?? undefined,
+      // Pass the current ref chain and the ref we're about to enter
+      refChainFromAncestor: this.refChainFromAncestor,
+      currentRefPosition: [this.current.gridId, this.current.row, this.current.col],
     };
 
     const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, ancestorOptions);
@@ -230,6 +240,19 @@ export class Navigator {
     }
 
     this.visitedGrids.add(cell.gridId);
+
+    // Update ref chain to include the ref we just entered
+    // (but only if we used ancestor-based entry - otherwise keep chain as-is for future use)
+    if (this.exitGridId !== null && this.exitPosition !== null) {
+      // Capture current ref position before updating this.current
+      this.refChainFromAncestor.push([
+        this.current.gridId,
+        this.current.row,
+        this.current.col,
+        cell.gridId,
+      ]);
+    }
+
     this.current = entryPos;
     this.lastTransitionType = 'enter';
     // Capture whether this was via a non-primary reference
@@ -281,12 +304,26 @@ export class Navigator {
         exitPosition: this.exitPosition ?? undefined,
         // Use the ancestor grid where we landed after exit (not current.gridId which changes with portals)
         ancestorGridId: this.ancestorGridIdForEntry ?? undefined,
+        // Pass the current ref chain and the ref we're about to enter
+        refChainFromAncestor: this.refChainFromAncestor,
+        currentRefPosition: [this.current.gridId, this.current.row, this.current.col],
       };
 
       // Try to enter this Ref (call standalone function directly)
       const entryPos = tryEnter(this.store, cell.gridId, this.direction, rules, ancestorOptions);
       if (!entryPos) {
         return false;
+      }
+
+      // Update ref chain to include the ref we just entered
+      // (but only if we used ancestor-based entry)
+      if (this.exitGridId !== null && this.exitPosition !== null) {
+        this.refChainFromAncestor.push([
+          this.current.gridId,
+          this.current.row,
+          this.current.col,
+          cell.gridId,
+        ]);
       }
 
       this.current = entryPos;
