@@ -40,11 +40,17 @@ export class LocalStorageAdapter implements StorageAdapter {
       // Convert state to serializable format
       const serialized = this.serializeState(state);
 
-      // Save to localStorage
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(serialized));
+      // Save to localStorage (version first to avoid race condition in event listeners)
       localStorage.setItem(this.VERSION_KEY, this.version.toString());
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(serialized));
 
       console.log(`💾 Saved to localStorage (version ${this.version})`);
+
+      // Log parseable grid format (like dev server does)
+      const parseableFormat = this.serializeToParseableFormat(state);
+      console.log('Grid Data (parseable format):');
+      console.log(JSON.stringify(parseableFormat, null, 2));
+      console.log('---\n');
 
       return {
         success: true,
@@ -155,6 +161,35 @@ export class LocalStorageAdapter implements StorageAdapter {
       nextGridId: serialized.nextGridId,
       metadata,
     };
+  }
+
+  /**
+   * Convert EditorState to parseable format (same as ServerStorageAdapter)
+   */
+  private serializeToParseableFormat(state: EditorState): Record<string, string> {
+    const exportObj: Record<string, string> = {};
+
+    state.grids.forEach((grid, id) => {
+      const rows: string[] = [];
+
+      for (let r = 0; r < grid.rows; r++) {
+        const row = grid.cells[r].map(cell => {
+          if (cell.type === 'Empty') return '_';
+          if (cell.type === 'Concrete') return cell.id || '?';
+          if (cell.type === 'Ref') {
+            // Primary ref: *gridId, Secondary ref: ~gridId
+            const prefix = cell.isPrimary ? '*' : '~';
+            return `${prefix}${cell.id || '?'}`;
+          }
+          return '?';
+        });
+        rows.push(row.join(' '));
+      }
+
+      exportObj[id] = rows.join('|');
+    });
+
+    return exportObj;
   }
 }
 
@@ -394,11 +429,8 @@ export class ServerStorageAdapter implements StorageAdapter {
       }
     }
 
-    // Calculate nextGridId
-    const nextGridId = Math.max(...newGridOrder.map(id => {
-      const match = id.match(/grid_(\d+)/);
-      return match ? parseInt(match[1], 10) : 0;
-    }), 0) + 1;
+    // nextGridId is kept for backward compatibility but not used for naming anymore
+    const nextGridId = newGridOrder.length + 1;
 
     return {
       grids: newGrids,

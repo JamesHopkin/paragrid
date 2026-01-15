@@ -7,15 +7,42 @@ import { EditorState, GridDefinition, CellContent, createEmptyGrid } from './typ
 import { StorageAdapter } from './storage.js';
 
 /**
+ * Get the next available single lowercase letter grid ID
+ */
+function getNextAvailableGridId(state: EditorState): string {
+  const letters = 'abcdefghijklmnopqrstuvwxyz';
+  const usedIds = new Set(state.gridOrder);
+
+  // Find first available single letter
+  for (const letter of letters) {
+    if (!usedIds.has(letter)) {
+      return letter;
+    }
+  }
+
+  // If all single letters are used, use double letters (aa, ab, ac, etc.)
+  for (let i = 0; i < letters.length; i++) {
+    for (let j = 0; j < letters.length; j++) {
+      const id = letters[i] + letters[j];
+      if (!usedIds.has(id)) {
+        return id;
+      }
+    }
+  }
+
+  throw new Error('Too many grids created (all IDs a-z and aa-zz are used)');
+}
+
+/**
  * Creates the initial editor state with a single 5x5 empty grid
  */
 export function createInitialState(): EditorState {
-  const initialGrid = createEmptyGrid('grid_1', 5, 5);
+  const initialGrid = createEmptyGrid('a', 5, 5);
   return {
-    grids: new Map([['grid_1', initialGrid]]),
-    gridOrder: ['grid_1'],
+    grids: new Map([['a', initialGrid]]),
+    gridOrder: ['a'],
     nextGridId: 2,
-    metadata: new Map([['grid_1', { scale: 1.0 }]]),
+    metadata: new Map([['a', { scale: 1.0 }]]),
   };
 }
 
@@ -119,7 +146,7 @@ function saveStateToUndoStack(): void {
 export function addGrid(): void {
   saveStateToUndoStack();
 
-  const newId = `grid_${state.nextGridId}`;
+  const newId = getNextAvailableGridId(state);
   const newGrid = createEmptyGrid(newId, 5, 5);
 
   state.grids.set(newId, newGrid);
@@ -168,7 +195,7 @@ export function duplicateGrid(gridId: string): void {
 
   saveStateToUndoStack();
 
-  const newId = `grid_${state.nextGridId}`;
+  const newId = getNextAvailableGridId(state);
   state.nextGridId++;
 
   // Deep copy the grid
@@ -611,10 +638,8 @@ export async function importFromText(jsonText: string, saveToUndoStack: boolean 
   // Update state
   state.grids = newGrids;
   state.gridOrder = newGridOrder;
-  state.nextGridId = Math.max(...newGridOrder.map(id => {
-    const match = id.match(/grid_(\d+)/);
-    return match ? parseInt(match[1], 10) : 0;
-  }), 0) + 1;
+  // nextGridId is kept for backward compatibility but not used for naming anymore
+  state.nextGridId = newGridOrder.length + 1;
   state.metadata = newMetadata;
 
   notifyStateChange();
