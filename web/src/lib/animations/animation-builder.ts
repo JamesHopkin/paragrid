@@ -148,11 +148,11 @@ export function chainToMovements(
                         nextEntry.transition === 'exit';
 
     // Skip object animations for non-primary reference transitions
-    // - For enter: check if viaNonPrimaryReference is true
+    // - For enter: check if lastTeleportToGrid is set (teleport occurred)
     // - For exit: check if the destination ref cell is non-primary
     if (isEnterExit) {
-      if (nextEntry.transition === 'enter' && nextEntry.viaNonPrimaryReference === true) {
-        continue; // Skip animation for enter via non-primary reference
+      if (nextEntry.transition === 'enter' && nextEntry.lastTeleportToGrid !== undefined) {
+        continue; // Skip animation for enter via non-primary reference (teleport)
       }
       if (nextEntry.transition === 'exit') {
         // Check if exiting through a non-primary reference

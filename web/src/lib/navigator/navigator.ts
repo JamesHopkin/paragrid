@@ -48,8 +48,8 @@ export class Navigator {
   /** Type of the last navigation operation performed */
   private lastTransitionType: NavigatorTransition;
 
-  /** For 'enter' transitions, whether entry was via non-primary reference */
-  private lastEnterViaNonPrimary: boolean | null;
+  /** For 'enter' transitions, the target grid ID of the last non-primary ref encountered, if any */
+  private lastTeleportToGrid: string | null;
 
   /** Ancestor-based entry tracking: Grid we exited from (for ancestor mapping) */
   private exitGridId: string | null;
@@ -69,7 +69,7 @@ export class Navigator {
     this.direction = direction;
     this.visitedGrids = new Set();
     this.lastTransitionType = null;
-    this.lastEnterViaNonPrimary = null;
+    this.lastTeleportToGrid = null;
 
     // Ancestor-based entry tracking
     this.exitGridId = null;
@@ -93,12 +93,12 @@ export class Navigator {
   }
 
   /**
-   * Get whether the last 'enter' transition was via a non-primary reference.
+   * Get the target grid ID of the last non-primary ref encountered during the last 'enter' transition.
    * Only meaningful when getLastTransition() returns 'enter'.
-   * @returns true if via non-primary ref, false if via primary ref, null if not applicable
+   * @returns grid ID where the last teleport occurred, or null if no teleport or not applicable
    */
-  getLastEnterViaNonPrimary(): boolean | null {
-    return this.lastEnterViaNonPrimary;
+  getLastTeleportToGrid(): string | null {
+    return this.lastTeleportToGrid;
   }
 
   /**
@@ -108,7 +108,7 @@ export class Navigator {
     const nav = new Navigator(this.store, this.current, this.direction);
     nav.visitedGrids = new Set(this.visitedGrids);
     nav.lastTransitionType = this.lastTransitionType;
-    nav.lastEnterViaNonPrimary = this.lastEnterViaNonPrimary;
+    nav.lastTeleportToGrid = this.lastTeleportToGrid;
     // Copy ancestor-based entry state
     nav.exitGridId = this.exitGridId;
     nav.exitPosition = this.exitPosition;
@@ -129,7 +129,7 @@ export class Navigator {
   tryAdvance(): boolean {
     // Clear visited grids and enter metadata when advancing
     this.visitedGrids.clear();
-    this.lastEnterViaNonPrimary = null;
+    this.lastTeleportToGrid = null;
 
     const [dr, dc] = this.deltas[this.direction];
     const grid = this.store[this.current.gridId];
@@ -255,8 +255,10 @@ export class Navigator {
 
     this.current = entryPos;
     this.lastTransitionType = 'enter';
-    // Capture whether this was via a non-primary reference
-    this.lastEnterViaNonPrimary = cell.isPrimary === false;
+    // Track the last non-primary ref target in the chain
+    if (cell.isPrimary === false) {
+      this.lastTeleportToGrid = cell.gridId;
+    }
     return true;
   }
 

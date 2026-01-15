@@ -58,45 +58,45 @@ const GRIDS = {
 },
 
   swap: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
+    main: "9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ 1 _ 2 _ 9|9 _ main _ _ *inner _ 9|" + 
+          "9 _ _ _ _ _ _ _|9 _ _ _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9",
+    inner: "9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9",
   },
   swapEdited: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main _ _ *inner _ 1|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ _ _ _ a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: 'b _ _|_ _ _|_ 9 _',
-    b: '_ _ _|_ _ _|_ 9 _'
+    main: "9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ _ _ _ 2 _ 9|9 _ main _ _ *inner _ 1|" + 
+          "9 _ _ _ _ _ _ _|9 _ _ _ _ _ a 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9",
+    inner: "9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9",
+    a: "b _ _|_ _ _|_ 9 _",
+    b: "_ _ _|_ _ _|_ 9 _"
   },
 
   indirectSelfRef: {
-    main: '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ a 9|9 _ _ _ _ *inner _ 9|' + 
-          '9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9',
-    a: '_ main *b|_ 9 _|_ ~b 9',
-    b: '_ 4 _|_ 1 _|_ _ 9'
+    main: "9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ a 9|9 _ _ _ _ *inner _ 9|" + 
+          "9 _ _ _ _ _ _ _|9 _ _ 3 _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9",
+    inner: "9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9",
+    a: "_ main *b|_ 9 _|_ ~b 9",
+    b: "_ 4 _|_ 1 _|_ _ 9"
   },
 
   simple5x5: {
-    main: '9 9 _ 9 9|9 1 _ _ 9|_ _ inner _ _|9 _ _ _ 9|9 9 _ 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|_ _ _ _ _|9 _ _ _ 9|9 9 _ 9 9'
+    main: "9 9 _ 9 9|9 1 _ _ 9|_ _ inner _ _|9 _ _ _ 9|9 9 _ 9 9",
+    inner: "9 9 _ 9 9|9 _ _ _ 9|_ _ _ _ _|9 _ _ _ 9|9 9 _ 9 9"
   },
 
   secondaryToSelfRef: {
-    main: '9 9 _ 9 9|9 _ _ _ 9|_ _ _ 1 _|9 _ _ ~inner 9|9 9 _ 9 9',
-    inner: '9 9 _ 9 9|9 _ _ _ 9|_ _ *inner _ _|9 _ _ _ 9|9 9 _ 9 9'
+    main: "9 9 _ 9 9|9 _ _ _ 9|_ _ _ 1 _|9 _ _ ~inner 9|9 9 _ 9 9",
+    inner: "9 9 _ 9 9|9 _ _ _ 9|_ _ *inner _ _|9 _ _ _ 9|9 9 _ 9 9"
   },
 
-  simple: { main: '1 _ _|_ 9 _|_ _ 2' },
+  simple: { main: "1 _ _|_ 9 _|_ _ 2" },
   doubleExit: {
-    main: '_ _ _|a 2 1|_ _ _',
-    a: 'b _ _|_ _ _|_ _ _',
-    b: '_ _ _|_ _ _|_ _ _' },
+    main: "_ _ _|a 2 1|_ _ _",
+    a: "b _ _|_ _ _|_ _ _",
+    b: "_ _ _|_ _ _|_ _ _" },
 
   exitEnter: {
-    main: '_ _ 9|_ a b|1 _ _',
-    a: '_ b|_ _', b: '2 _|_ _'
+    main: "_ _ 9|_ a b|1 _ _",
+    a: "_ b|_ _", b: "2 _|_ _"
   },
 
   tricky: {
@@ -811,14 +811,14 @@ class IsometricDemo {
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
-          // Get the viaNonPrimaryReference flag from the chain entry metadata
-          const viaNonPrimaryReference = pushChain[1].viaNonPrimaryReference ?? false;
+          // Check if a teleport occurred (lastTeleportToGrid will be set to the grid ID)
+          const teleportOccurred = pushChain[1].lastTeleportToGrid !== undefined;
 
           viewUpdate = this.safeCallCamera(
             () => this.cameraController.onPlayerEnter(
               playerPos.gridId,
               newPos.gridId,
-              viaNonPrimaryReference
+              teleportOccurred
             ),
             'player enter'
           );
@@ -2188,10 +2188,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('📴 Running in standalone mode - watching localStorage for changes');
 
     window.addEventListener('storage', (event) => {
+      console.log('📡 Storage event received:', event.key);
+
       // Only respond to changes to the editor state key from OTHER tabs
       if (event.key === 'paragrid-editor-state' && event.newValue) {
         const storedVersion = localStorage.getItem('paragrid-editor-version');
         const newVersion = storedVersion ? parseInt(storedVersion, 10) : 0;
+
+        console.log(`📊 Version check: current=${currentServerVersion}, new=${newVersion}`);
 
         if (newVersion > currentServerVersion) {
           console.log(`🔔 Grid data updated from editor (v${newVersion}), reloading...`);

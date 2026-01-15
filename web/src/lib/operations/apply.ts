@@ -15,23 +15,23 @@ import type { PushChain, PushResult, TransitionType } from './push.js';
  * Example: [A, B, C] -> [C, A, B]
  *
  * @param store - The grid store containing all grids
- * @param path - List of [position, original_cell, transition, viaNonPrimaryReference?] tuples representing the push path
+ * @param path - List of [position, original_cell, transition, lastTeleportToGrid?] tuples representing the push path
  * @returns PushResult with updated GridStore and the push chain
  */
 export function applyPush(
   store: GridStore,
-  path: ReadonlyArray<readonly [CellPosition, Cell, TransitionType, boolean?]>
+  path: ReadonlyArray<readonly [CellPosition, Cell, TransitionType, string?]>
 ): PushResult {
   if (path.length === 0) {
     return { store, chain: [] };
   }
 
   // Convert path to PushChain format
-  const chain: PushChain = path.map(([position, cell, transition, viaNonPrimaryReference]) => ({
+  const chain: PushChain = path.map(([position, cell, transition, lastTeleportToGrid]) => ({
     position,
     cell,
     transition,
-    ...(viaNonPrimaryReference !== undefined && { viaNonPrimaryReference }),
+    ...(lastTeleportToGrid !== undefined && { lastTeleportToGrid }),
   }));
 
   // Extract cells and rotate: [c1, c2, c3] -> [c3, c1, c2]
