@@ -235,6 +235,132 @@ CellPosition = (grid_id, row, col)
 
 When the dimension is even, round down (use integer division). For example, a 4-row grid entered from the East enters at row 2 (index counting from 0).
 
+### Ancestor-Based Entry Strategy
+
+**Motivation**: The standard middle-of-edge entry works for simple cases, but doesn't preserve positional continuity when exiting one grid and immediately entering another. When pushing through multiple grids, we want top-row exits to lead to top-row entries, bottom to bottom, etc., creating smooth spatial flow.
+
+**Concept**: Track the exit position when leaving a grid, then map that position through a common ancestor coordinate system to determine the entry position in the target grid. This creates consistent positional alignment without needing depth tracking.
+
+#### Cell Center Positioning Model
+
+The algorithm uses a **center-based positioning model** with rational arithmetic:
+
+- **Cell centers** are positioned at `(i+1)/(N+1)` for cell index `i` in dimension `N`
+- **Cell boundaries** are at the midpoints between adjacent centers, with edges at 0 and 1
+- Uses `Fraction` for exact arithmetic (no floating point errors)
+
+**Examples**:
+- 1 cell: center at 1/2, occupies [0, 1]
+- 2 cells: centers at 1/3, 2/3; boundaries at [0, 1/2], [1/2, 1]
+- 3 cells: centers at 1/4, 2/4, 3/4; boundaries at [0, 3/8], [3/8, 5/8], [5/8, 1]
+- 5 cells: centers at 1/6, 2/6, 3/6, 4/6, 5/6
+
+This model creates **unequal cell heights** (outer cells are taller than inner cells), but ensures consistent fractional positioning across different grid sizes.
+
+#### Algorithm
+
+When exiting a grid and entering a Ref in the same traversal:
+
+1. **Capture exit state** (during `try_advance()`):
+   - Store `exit_grid_id` (which grid we exited from)
+   - Store `exit_position` (row, col) at exit
+
+2. **Compute common ancestor** (during `try_enter()`):
+   - Navigator is positioned at the Ref cell after advancing
+   - The Ref's parent grid (`current.grid_id`) is the common ancestor
+
+3. **Map exit position up to ancestor**:
+   - Start with exit cell center in exit grid's coordinate space
+   - For each parent level: map child [0,1] space → parent cell extent
+   - Stop when reaching common ancestor grid
+
+4. **Map ancestor position down to target**:
+   - Start with position in ancestor's coordinate space
+   - For each child level: map parent cell extent → child [0,1] space
+   - Find nearest cell center in target grid
+
+**Worked example**: Exit from C[1] (middle of 3 rows) → enter E (5 rows), both nested at depth 2
+
+```
+Root (1 row × 2 cols):
+┌───────┬───────┐
+│ Ref(B)│ Ref(D)│
+└───────┴───────┘
+
+Grid B (2 rows):        Grid D (2 rows):
+┌───────┐               ┌───────┐
+│ Ref(C)│ ← row 0       │ Ref(E)│ ← row 0
+├───────┤               ├───────┤
+│ Empty │ ← row 1       │ Empty │ ← row 1
+└───────┘               └───────┘
+
+Grid C (3 rows):        Grid E (5 rows):
+┌─────┐                 ┌─────┐
+│  X  │ ← row 0 (1/4)   │  1  │ ← row 0 (1/6)
+├─────┤                 ├─────┤
+│  Y  │ ← row 1 (2/4)   │  2  │ ← row 1 (2/6)
+├─────┤                 ├─────┤
+│  Z  │ ← row 2 (3/4)   │  3  │ ← row 2 (3/6) ← entry!
+└─────┘                 ├─────┤
+                        │  4  │ ← row 3 (4/6)
+                        ├─────┤
+                        │  5  │ ← row 4 (5/6)
+                        └─────┘
+```
+
+**Calculation**:
+1. Exit C[1]: center at 2/4 = 1/2 in C's space
+2. Map to B: C occupies B[0], which spans [0, 1/2] in B's space
+   - C's [0, 1] → B's [0, 1/2]
+   - C's 1/2 → B's 1/4
+3. Map to Root: B occupies Root[0] (entire row), spans [0, 1]
+   - B's [0, 1] → Root's [0, 1]
+   - B's 1/4 → Root's 1/4
+4. Common ancestor: Root (containing both Ref(B) and Ref(D))
+5. Map to D: D occupies Root[0] (entire row), spans [0, 1]
+   - Root's [0, 1] → D's [0, 1]
+   - Root's 1/4 → D's 1/4
+6. Map to E: E occupies D[0], which spans [0, 1/2] in D's space
+   - D's [0, 1/2] → E's [0, 1]
+   - D's 1/4 → E's 1/2
+7. Find nearest cell in E: 1/2 is closest to E[2] center (3/6 = 1/2)
+8. **Result**: Enter at E[2] (middle row)
+
+**Key properties**:
+- **No depth tracking**: Uses grid hierarchy, not enter/exit counts
+- **Works across any depth difference**: Same-level, cross-level, and mismatched depths
+- **Exact arithmetic**: Uses `Fraction` for perfect reproducibility
+- **Common ancestor optimization**: Only maps through necessary ancestor chain
+- **Fallback**: Uses standard middle-of-edge when no exit info available
+
+#### Implementation Notes
+
+**Navigator state**:
+- `exit_grid_id: str | None` — Grid we exited from
+- `exit_position: tuple[int, int] | None` — (row, col) at exit
+
+**Entry logic** (in `try_enter()`):
+```python
+if exit_grid_id is not None and exit_position is not None:
+    # Current position is the Ref - its grid is common ancestor
+    ancestor_grid_id = current.grid_id
+
+    # Map exit position up to ancestor
+    exit_fraction = compute_exit_ancestor_fraction(
+        store, exit_grid_id, exit_index, dimension_attr,
+        stop_at_ancestor=ancestor_grid_id
+    )
+
+    # Map down from ancestor to target
+    entry_index = compute_entry_from_ancestor_fraction(
+        store, target_grid_id, exit_fraction, dimension_attr,
+        ancestor_grid_id=ancestor_grid_id
+    )
+else:
+    # No exit info - use standard middle-of-edge entry
+    entry_index = standard_entry(...)
+```
+
 ### Teleport Semantics
 
 When exiting a grid via a **secondary** reference:

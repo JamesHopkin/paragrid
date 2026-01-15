@@ -39,3 +39,15 @@
 - Run tests with: `python/venv/bin/python -m pytest python/test_paragrid.py` (or use the activated venv)
 
 **iso-render Library**: The `iso-render` library code is located at `../ts-poly/` (relative to this project root). This is used for the isometric 3D rendering.
+
+## Test Coverage
+
+**Goal**: Maintain 100% test coverage on `paragrid.py`.
+
+**Philosophy**: Tests should be realistic scenarios that naturally exercise the code paths, not contrived tests that merely hit branches. When adding new features:
+- Write tests that represent actual use cases
+- Focus on behavior verification, not implementation details
+- If a branch is hard to test, consider whether it represents a realistic scenario
+- Use `# pragma: no cover` with `assert_never()` for truly unreachable defensive code
+
+Run coverage reports with: `venv/bin/python -m pytest test_paragrid.py test_push_rotational.py --cov=paragrid --cov-report=term-missing`
