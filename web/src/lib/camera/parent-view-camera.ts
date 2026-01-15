@@ -29,7 +29,7 @@ export function buildViewPath(helper: HierarchyHelper, playerGridId: string): Vi
     ancestorChain.reverse();
 
     if (ancestorChain.length > 1)
-      return ancestorChain;
+      return ancestorChain.slice(-3); // need better heuristic!
 
     // need to check exit chain for e.g. edge has effective self reference, but from
     // inside (see google doc)

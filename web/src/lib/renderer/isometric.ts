@@ -60,7 +60,7 @@ function computeFocusLayer(
   node: CellNode
 ): number | undefined {
   // Only apply to cells in the immediate parent grid of the focused grid
-  if (node.focusDepth >= 0 || !node.focusOffset) {
+  if (node.focusOffset == null || node.focusDepth == null || node.focusDepth >= 0) {
     return undefined;
   }
 
