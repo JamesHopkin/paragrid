@@ -36,11 +36,11 @@ export class AnimatedParentViewCameraController implements CameraController {
    * Handle player entering a grid - animate from previous view.
    * Creates a zoom-in effect as the camera focuses on the entered grid.
    */
-  onPlayerEnter(fromGridId: string, toGridId: string, viaNonPrimaryReference: boolean): ViewUpdate {
-    if (viaNonPrimaryReference) {
+  onPlayerEnter(fromGridId: string, toGridId: string, lastTeleportToGrid?: string): ViewUpdate {
+    if (lastTeleportToGrid !== undefined) {
       const toViewPath = buildViewPath(this.helper, toGridId);
 
-      // pretend we came from the parent if any
+      // Teleport occurred - pretend we came from the parent if any
       return {
         targetView: toViewPath,
         animationStartView: toViewPath.length > 1 ? toViewPath.slice(-1) : undefined

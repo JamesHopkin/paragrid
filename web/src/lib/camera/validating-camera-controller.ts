@@ -67,8 +67,8 @@ export class ValidatingCameraController implements CameraController {
    * Get view update when player enters a new grid.
    * Validates the result before returning.
    */
-  onPlayerEnter(fromGridId: string, toGridId: string, viaNonPrimaryReference: boolean): ViewUpdate {
-    const update = this.controller.onPlayerEnter(fromGridId, toGridId, viaNonPrimaryReference);
+  onPlayerEnter(fromGridId: string, toGridId: string, lastTeleportToGrid?: string): ViewUpdate {
+    const update = this.controller.onPlayerEnter(fromGridId, toGridId, lastTeleportToGrid);
     assertValidViewUpdate(
       this.store,
       update,

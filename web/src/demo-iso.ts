@@ -811,14 +811,14 @@ class IsometricDemo {
       let viewUpdate: ViewUpdate | null = null;
       if (pushChain.length > 1) {
         if (pushChain[1].transition === 'enter') {
-          // Check if a teleport occurred (lastTeleportToGrid will be set to the grid ID)
-          const teleportOccurred = pushChain[1].lastTeleportToGrid !== undefined;
+          // Pass the grid ID of the last teleport target (if any teleport occurred)
+          const lastTeleportToGrid = pushChain[1].lastTeleportToGrid;
 
           viewUpdate = this.safeCallCamera(
             () => this.cameraController.onPlayerEnter(
               playerPos.gridId,
               newPos.gridId,
-              teleportOccurred
+              lastTeleportToGrid
             ),
             'player enter'
           );

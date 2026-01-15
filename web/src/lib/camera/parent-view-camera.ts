@@ -59,7 +59,7 @@ export class ParentViewCameraController implements CameraController {
    * Handle player entering a grid (moving into a reference cell).
    * Typically shows the parent grid zoomed to the entered reference.
    */
-  onPlayerEnter(fromGridId: string, toGridId: string, viaNonPrimaryReference: boolean): ViewUpdate {
+  onPlayerEnter(fromGridId: string, toGridId: string, lastTeleportToGrid?: string): ViewUpdate {
     const viewPath = buildViewPath(this.helper, toGridId);
     return {
       targetView: viewPath,
