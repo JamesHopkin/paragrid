@@ -368,7 +368,17 @@ class TestTranfer:
         )
         run_rotational_test(test, [push, push_simple])
 
-    
+    def test_scaled_transfer_to_non_primary_ref(self) -> None:
+        test = RotationalTestCase(
+            name="scaled_transfer_to_non_primary_ref",
+            grids = '''    
+main: _B|ab
+a: ___|__1|___
+b: 2_|__
+''',
+            variations=[TestVariation(start_grid="a", start_col=2, expected=[("b", 0, 0, "1")])] # also 2 gets pushed
+        )
+        run_rotational_test(test, [push, push_simple])
 
 if __name__ == "__main__":
     # Run the tests

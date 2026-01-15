@@ -269,7 +269,15 @@ LAYOUTS = dict(
         main = '9 9 9 9 9 9 9 9|9 _ _ _ _ _ _ 9|9 _ 2 _ _ _ _ 9|9 _ main _ _ *inner _ 9|9 _ _ _ _ _ _ _|9 _ 1 _ _ _ _ 9|9 ~inner _ _ 9 _ _ 9|9 9 9 9 9 9 9 9',
         inner = '9 9 _ 9 9|9 _ _ _ 9|9 _ _ _ 9|9 _ _ _ 9|9 9 9 9 9'
     ),
-    bug = dict(main = '_ _ 1 2 3 4 _|_ _ _ _ _ _ _')
+    bug = dict(main = '_ _ 1 2 3 4 _|_ _ _ _ _ _ _'),
+    transfer = dict(
+        main = '_ 1 _|_ a _|_ _ b',
+        a = '_ _ _|_ 9 _|_ _ _',
+        b = '_ 9 _|9 9 9|_ 9 _'),
+
+    transfer_from_test = {            "main": "A B",
+            "A": "_|_|_|1|_",  # X at A[0,0] (top row)
+            "B": "_|_|_"}
 )
 
 def main(store: GridStore) -> None:
