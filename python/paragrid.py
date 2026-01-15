@@ -381,6 +381,7 @@ class Navigator:
         self.exit_grid_id: str | None = None  # Grid we exited from (for ancestor mapping)
         self.exit_position: tuple[int, int] | None = None  # (row, col) when last exit occurred
         self.ancestor_grid_id_for_entry: str | None = None  # Ancestor grid where we landed after exit
+        self.ref_chain_from_ancestor: list[tuple[str, int, int, str]] = []  # (parent_grid_id, ref_row, ref_col, child_grid_id)
 
         # Direction deltas
         self.deltas = {
@@ -398,6 +399,7 @@ class Navigator:
         nav.exit_grid_id = self.exit_grid_id
         nav.exit_position = self.exit_position
         nav.ancestor_grid_id_for_entry = self.ancestor_grid_id_for_entry
+        nav.ref_chain_from_ancestor = self.ref_chain_from_ancestor.copy()
         return nav
 
     def try_advance(self) -> bool:
@@ -456,6 +458,8 @@ class Navigator:
                     self.current = CellPosition(parent_grid_id, exit_row, exit_col)
                     # Remember this ancestor for entry calculations
                     self.ancestor_grid_id_for_entry = parent_grid_id
+                    # Clear ref chain since we're now at the ancestor level
+                    self.ref_chain_from_ancestor = []
                     return True
 
                 # Cascading exit - continue from parent
@@ -504,14 +508,19 @@ class Navigator:
                 stop_at_ancestor=ancestor_grid_id,
             )
 
-            # Map down from ancestor to target grid
+            # Build the complete ref chain: existing chain + current ref we're entering
+            complete_ref_chain = self.ref_chain_from_ancestor + [
+                (self.current.grid_id, self.current.row, self.current.col, cell.grid_id)
+            ]
+
+            # Map down from ancestor to target grid using the explicit ref chain
             entry_index = compute_entry_from_ancestor_fraction(
                 self.store,
-                find_primary_ref,
                 cell.grid_id,
                 exit_fraction,
                 dimension_attr,
                 ancestor_grid_id=ancestor_grid_id,
+                ref_chain=complete_ref_chain,
             )
 
             # Construct entry position based on direction
@@ -537,6 +546,15 @@ class Navigator:
             )
 
         self.visited_grids.add(cell.grid_id)
+
+        # Update ref chain to include the ref we just entered
+        # (but only if we used ancestor-based entry - otherwise keep chain as-is for future use)
+        if self.exit_grid_id is not None and self.exit_position is not None:
+            # Capture current ref position before updating self.current
+            self.ref_chain_from_ancestor.append(
+                (self.current.grid_id, self.current.row, self.current.col, cell.grid_id)
+            )
+
         self.current = entry_pos
         return True
 

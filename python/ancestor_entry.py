@@ -177,52 +177,39 @@ def compute_exit_ancestor_fraction(
 
 def compute_entry_from_ancestor_fraction(
     store: GridStore,
-    find_primary_ref_fn: FindPrimaryRefFn,
     target_grid_id: str,
     ancestor_fraction: Fraction,
     dimension_attr: str,  # 'rows' or 'cols'
     ancestor_grid_id: str,
+    ref_chain: list[tuple[str, int, int, str]],  # (parent_grid_id, ref_row, ref_col, child_grid_id)
 ) -> int:
     """
     Compute entry cell index by mapping from ancestor fraction down to target grid.
 
     Args:
         store: Grid store
-        find_primary_ref_fn: Function to find primary ref (returns (parent_id, row, col) | None)
         target_grid_id: Grid to enter
         ancestor_fraction: Position in ancestor's coordinate system
         dimension_attr: 'rows' or 'cols'
-        ancestor_grid_id: Ancestor grid ID to start from (must be in ancestry chain)
+        ancestor_grid_id: Ancestor grid ID to start from
+        ref_chain: Explicit chain of refs from ancestor to target (parent_grid_id, ref_row, ref_col, child_grid_id)
 
     Returns:
         Cell index to enter
     """
-    # Build path from target to specified ancestor
-    path: list[tuple[str, tuple[str, int, int]]] = []
-    current = target_grid_id
+    # The ref_chain should start from ancestor and lead to target
+    # Each entry is (parent_grid_id, ref_row, ref_col, child_grid_id)
 
-    while True:
-        # Stop if we reached the specified ancestor
-        if current == ancestor_grid_id:
-            break
-
-        ref = find_primary_ref_fn(store, current)
-        if ref is None:  # pragma: no cover
-            # Should be unreachable - caller must ensure ancestor_grid_id is in ancestry chain
-            raise AssertionError(
-                f"ancestor_grid_id '{ancestor_grid_id}' is not an ancestor of '{target_grid_id}'"
-            )
-
-        parent_grid_id, ref_row, ref_col = ref
-        path.append((current, ref))
-        current = parent_grid_id
-
-    # Reverse to go from ancestor down to target
-    path.reverse()
+    # Verify the chain starts at ancestor and ends at target
+    if ref_chain:
+        first_parent = ref_chain[0][0]
+        last_child = ref_chain[-1][3]
+        assert first_parent == ancestor_grid_id, f"Chain starts at {first_parent}, expected {ancestor_grid_id}"
+        assert last_child == target_grid_id, f"Chain ends at {last_child}, expected {target_grid_id}"
 
     # Transform fraction down through hierarchy
     fraction = ancestor_fraction
-    for grid_id, (parent_grid_id, ref_row, ref_col) in path:
+    for parent_grid_id, ref_row, ref_col, child_grid_id in ref_chain:
         parent_grid = store[parent_grid_id]
         parent_dimension = getattr(parent_grid, dimension_attr)
 
