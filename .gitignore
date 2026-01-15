@@ -20,7 +20,7 @@ venv/
 .Trashes
 
 # IDE
-.vscode/
+
 .idea/
 *.swp
 *.swo
